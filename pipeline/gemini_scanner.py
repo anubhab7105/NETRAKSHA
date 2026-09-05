@@ -24,12 +24,18 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+from dotenv import load_dotenv
+
+# Load project .env so GEMINI_API_KEY / GEMINI_MODEL are available even
+# when the backend is started without exported environment variables.
+load_dotenv()
+
 # ---------------------------------------------------------------------------
 # Gemini API integration
 # ---------------------------------------------------------------------------
 
 _GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-_GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+_GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
 
 # The structured prompt for multi-task document analysis
 _SYSTEM_PROMPT = """You are an expert border security document forensics AI.
@@ -141,10 +147,11 @@ def _call_gemini(
     timeout: float,
 ) -> dict:
     """Make a real Gemini API call with multi-image input."""
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types
+    from google.genai.errors import ClientError
 
-    genai.configure(api_key=_GEMINI_API_KEY)
-    model = genai.GenerativeModel(_GEMINI_MODEL)
+    client = genai.Client(api_key=_GEMINI_API_KEY)
 
     # Build content parts
     parts = [_SYSTEM_PROMPT]
@@ -152,20 +159,22 @@ def _call_gemini(
     # Image 1: Document
     doc_bytes = _load_image_bytes(document_image_path)
     if doc_bytes:
-        parts.append({
-            "mime_type": _get_mime_type(document_image_path),
-            "data": doc_bytes,
-        })
+        parts.append(
+            types.Part.from_bytes(
+                data=doc_bytes, mime_type=_get_mime_type(document_image_path)
+            )
+        )
     else:
         parts.append("Image 1 (document): Not available")
 
     # Image 2: Live capture
     live_bytes = _load_image_bytes(live_capture_path)
     if live_bytes:
-        parts.append({
-            "mime_type": _get_mime_type(live_capture_path),
-            "data": live_bytes,
-        })
+        parts.append(
+            types.Part.from_bytes(
+                data=live_bytes, mime_type=_get_mime_type(live_capture_path)
+            )
+        )
     else:
         parts.append("Image 2 (live capture): Not available")
 
@@ -173,18 +182,21 @@ def _call_gemini(
     if db_reference_path:
         db_bytes = _load_image_bytes(db_reference_path)
         if db_bytes:
-            parts.append({
-                "mime_type": _get_mime_type(db_reference_path),
-                "data": db_bytes,
-            })
+            parts.append(
+                types.Part.from_bytes(
+                    data=db_bytes, mime_type=_get_mime_type(db_reference_path)
+                )
+            )
+        else:
+            parts.append("Image 3 (database reference): Not available")
 
-    response = model.generate_content(
-        parts,
-        generation_config=genai.GenerationConfig(
+    response = client.models.generate_content(
+        model=_GEMINI_MODEL,
+        contents=parts,
+        config=types.GenerateContentConfig(
             response_mime_type="application/json",
             temperature=0.1,
         ),
-        request_options={"timeout": timeout},
     )
 
     # Parse the JSON response

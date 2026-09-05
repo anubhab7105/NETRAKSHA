@@ -31,6 +31,7 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
+    Request,
     UploadFile,
     status,
 )
@@ -266,10 +267,8 @@ async def login(req: LoginRequest):
 # ---------------------------------------------------------------------------
 
 @app.post("/api/auth/logout")
-async def logout(request: "Request"):
+async def logout(request: Request):
     """Terminate session (audit log only — JWT is stateless)."""
-    from starlette.requests import Request
-
     try:
         officer = await _auth(request)
     except HTTPException:
@@ -292,7 +291,7 @@ async def logout(request: "Request"):
 
 @app.post("/api/screen")
 async def screen_document(
-    request: "Request",
+    request: Request,
     document_image: UploadFile = File(...),
     live_capture: UploadFile = File(None),
 ):
@@ -301,8 +300,6 @@ async def screen_document(
     Accepts multipart form data with document_image and optional live_capture.
     Returns the full screening result with risk verdict.
     """
-    from starlette.requests import Request
-
     start_time = time.perf_counter()
 
     # Auth — mandatory (audit P1 §1)
@@ -513,7 +510,17 @@ async def _run_screening_pipeline(
         await session.flush()
         case_id = case.id
 
-        # Save extracted fields
+        # Save extracted fields — prefer DB comparisons when a citizen
+        # matched, otherwise persist raw AI-extracted demographics so the
+        # officer always sees what was read off the document.
+        _FIELD_DISPLAY_NAMES = {
+            "full_name": "Full Name",
+            "date_of_birth": "Date of Birth",
+            "document_number": "Document Number",
+            "gender": "Gender",
+            "address": "Address",
+            "father_or_spouse_name": "Father/Spouse Name",
+        }
         if demographic_result:
             for comp in demographic_result.get("comparisons", []):
                 session.add(ExtractedField(
@@ -524,6 +531,18 @@ async def _run_screening_pipeline(
                     match_status=comp["status"],
                     confidence=comp.get("confidence"),
                 ))
+        else:
+            for key, display in _FIELD_DISPLAY_NAMES.items():
+                value = demographics.get(key)
+                if value not in (None, ""):
+                    session.add(ExtractedField(
+                        case_id=case_id,
+                        field_name=display,
+                        extracted_value=value,
+                        database_value=None,
+                        match_status=None,
+                        confidence=None,
+                    ))
 
         # Save module results — every module persisted with honest status
         modules = [
@@ -593,7 +612,7 @@ async def _run_screening_pipeline(
 
 @app.get("/api/cases")
 async def list_cases(
-    request: "Request",
+    request: Request,
     verdict: Optional[str] = Query(None, description="Filter by verdict: Green|Yellow|Red"),
     status_filter: Optional[str] = Query(None, alias="status", description="Filter by status"),
     limit: int = Query(50, ge=1, le=200),
@@ -628,9 +647,8 @@ async def list_cases(
 # ---------------------------------------------------------------------------
 
 @app.get("/api/cases/{case_id}")
-async def get_case(case_id: int, request: "Request"):
+async def get_case(case_id: int, request: Request):
     """Get full case report with all module results and extracted fields."""
-    from starlette.requests import Request
     await _auth(request)  # audit P1 §2: require auth
 
     async with async_session() as session:
@@ -682,10 +700,8 @@ async def get_case(case_id: int, request: "Request"):
 # ---------------------------------------------------------------------------
 
 @app.post("/api/cases/{case_id}/override")
-async def override_case(case_id: int, req: OverrideRequest, request: "Request"):
+async def override_case(case_id: int, req: OverrideRequest, request: Request):
     """Record officer decision (clear/deny/escalate) with mandatory reason."""
-    from starlette.requests import Request
-
     if req.action not in ("clear", "deny", "escalate"):
         raise HTTPException(
             status_code=400,
@@ -746,7 +762,7 @@ async def override_case(case_id: int, req: OverrideRequest, request: "Request"):
 
 @app.get("/api/audit")
 async def list_audit(
-    request: "Request",
+    request: Request,
     actor: Optional[str] = Query(None),
     entity: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=500),
