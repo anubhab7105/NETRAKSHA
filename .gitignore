@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+env/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environment Variables
+.env
+.env.*
+!.env.example
+
+# Local databases
+*.db
+*.sqlite3
+screening.db
+supabase.sql
+
+# Frontend
+node_modules/
+dist/
+build/
+.eslintcache
+
+# Local run artifacts
+samples/evidence/
+tests/evidence/
+
+# Vendored large binary assets (model weights, tesseract runtime).
+# These are fetched/extracted by scripts/setup_vendor.sh; do not commit.
+pipeline/vendor/models/
+pipeline/vendor/tesseract/
+
+# Runtime caches / scratch
+*.log
+.DS_Store
+
+# IDEs
+.vscode/
+.idea/
