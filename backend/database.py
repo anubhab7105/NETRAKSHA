@@ -14,6 +14,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 from sqlalchemy.ext.asyncio import (
     AsyncSession,

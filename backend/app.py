@@ -24,6 +24,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import (
     Depends,
     FastAPI,
