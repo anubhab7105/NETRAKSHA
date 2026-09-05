@@ -129,7 +129,7 @@ def scan_document(
             return result
         except Exception as exc:
             print(f"[gemini_scanner] Gemini API call failed: {type(exc).__name__}: {exc}")
-            # Fall through to simulation
+            raise RuntimeError(f"Gemini API Error: {str(exc)}")
 
     # Offline simulation fallback
     result = _simulate_scan(document_image_path, live_capture_path, db_reference_path)

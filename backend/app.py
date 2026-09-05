@@ -336,7 +336,7 @@ async def screen_document(
         print(f"[screen] Screening pipeline failed: {type(exc).__name__}: {exc}")
         raise HTTPException(
             status_code=500,
-            detail=f"Screening pipeline failed: {type(exc).__name__}",
+            detail=f"Screening pipeline failed: {str(exc)}",
         ) from exc
     finally:
         # Cleanup temp files
