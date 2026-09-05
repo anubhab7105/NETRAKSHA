@@ -153,7 +153,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
     "http://localhost:5173",
-    "https://sih-weld-psi.vercel.app/"
+    "https://sih-weld-psi.vercel.app"
     ],
     allow_credentials=True,
     allow_methods=["*"],
