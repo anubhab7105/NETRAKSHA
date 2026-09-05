@@ -153,6 +153,11 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
     "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://[::1]:5173",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://[::1]:8000",
     "https://sih-weld-psi.vercel.app"
     ],
     allow_credentials=True,
@@ -165,10 +170,8 @@ _EVIDENCE_DIR = _PROJECT_ROOT / "samples" / "evidence"
 _EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/evidence", StaticFiles(directory=str(_EVIDENCE_DIR)), name="evidence")
 
-# Mount frontend directory (React SPA)
+# Frontend build directory (served statically via the SPA fallback route)
 _FRONTEND_DIR = _PROJECT_ROOT / "frontend" / "dist"
-if _FRONTEND_DIR.exists():
-    app.mount("/", StaticFiles(directory=str(_FRONTEND_DIR), html=True), name="frontend")
 
 
 
@@ -829,14 +832,28 @@ async def health():
 
 @app.get("/{full_path:path}")
 async def serve_spa(full_path: str):
-    """Serve the React SPA index.html for any unmatched non-API routes."""
+    """Serve the built React SPA — real static files when present, otherwise index.html (SPA fallback).
+
+    IMPORTANT: this catch-all must stay registered AFTER the /api and /evidence
+    routes so those are matched first (a "/" StaticFiles mount would swallow them).
+    """
+    from fastapi.responses import FileResponse
+
     if full_path.startswith("api/"):
         raise HTTPException(status_code=404, detail="API route not found")
-        
-    index_path = _FRONTEND_DIR / "index.html"
-    if index_path.exists():
-        from fastapi.responses import FileResponse
-        return FileResponse(str(index_path))
-    
+
+    if _FRONTEND_DIR.exists():
+        # Serve real static assets (JS/CSS/images) if the file exists.
+        if full_path:
+            file_candidate = (_FRONTEND_DIR / full_path).resolve()
+            # Guard against path traversal outside the frontend dist directory.
+            if file_candidate.is_file() and _FRONTEND_DIR in file_candidate.parents:
+                return FileResponse(str(file_candidate))
+
+        # SPA fallback: route any unmatched path to index.html.
+        index_path = _FRONTEND_DIR / "index.html"
+        if index_path.exists():
+            return FileResponse(str(index_path))
+
     raise HTTPException(status_code=404, detail="Frontend not built")
 
