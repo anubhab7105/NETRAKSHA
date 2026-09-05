@@ -234,6 +234,7 @@ async def _auth(request) -> dict:
 # 1. POST /api/auth/login
 # ---------------------------------------------------------------------------
 
+@app.post("/auth/login", response_model=LoginResponse, include_in_schema=False)
 @app.post("/api/auth/login", response_model=LoginResponse)
 async def login(req: LoginRequest):
     """Authenticate officer, generate JWT session."""
@@ -269,6 +270,7 @@ async def login(req: LoginRequest):
 # 2. POST /api/auth/logout
 # ---------------------------------------------------------------------------
 
+@app.post("/auth/logout", include_in_schema=False)
 @app.post("/api/auth/logout")
 async def logout(request: Request):
     """Terminate session (audit log only — JWT is stateless)."""
@@ -292,6 +294,7 @@ async def logout(request: Request):
 # 3. POST /api/screen — High-speed parallel screening
 # ---------------------------------------------------------------------------
 
+@app.post("/screen", include_in_schema=False)
 @app.post("/api/screen")
 async def screen_document(
     request: Request,
@@ -613,6 +616,7 @@ async def _run_screening_pipeline(
 # 4. GET /api/cases — Filterable dashboard case queue
 # ---------------------------------------------------------------------------
 
+@app.get("/cases", include_in_schema=False)
 @app.get("/api/cases")
 async def list_cases(
     request: Request,
@@ -649,6 +653,7 @@ async def list_cases(
 # 5. GET /api/cases/{id} — Full case report
 # ---------------------------------------------------------------------------
 
+@app.get("/cases/{case_id}", include_in_schema=False)
 @app.get("/api/cases/{case_id}")
 async def get_case(case_id: int, request: Request):
     """Get full case report with all module results and extracted fields."""
@@ -702,6 +707,7 @@ async def get_case(case_id: int, request: Request):
 # 6. POST /api/cases/{id}/override — Officer decision
 # ---------------------------------------------------------------------------
 
+@app.post("/cases/{case_id}/override", include_in_schema=False)
 @app.post("/api/cases/{case_id}/override")
 async def override_case(case_id: int, req: OverrideRequest, request: Request):
     """Record officer decision (clear/deny/escalate) with mandatory reason."""
@@ -763,6 +769,7 @@ async def override_case(case_id: int, req: OverrideRequest, request: Request):
 # 7. GET /api/audit — Append-only audit trail
 # ---------------------------------------------------------------------------
 
+@app.get("/audit", include_in_schema=False)
 @app.get("/api/audit")
 async def list_audit(
     request: Request,
@@ -799,6 +806,7 @@ async def list_audit(
 # Health check
 # ---------------------------------------------------------------------------
 
+@app.get("/health", include_in_schema=False)
 @app.get("/api/health")
 async def health():
     """System health check."""
