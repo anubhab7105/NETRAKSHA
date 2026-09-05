@@ -32,7 +32,13 @@ export default function Scanner() {
       navigate(`/case/${res.data.case_id}`);
     } catch (err) {
       console.error(err);
-      setError("Screening failed. Please ensure the backend is running and try again.");
+      const detail = err.response?.data?.detail || err.response?.data?.message;
+      const status = err.response?.status;
+      setError(
+        detail
+          ? `Screening failed (${status || 'error'}): ${detail}`
+          : "Screening failed. Please ensure the backend is running and try again."
+      );
       setScanning(false);
     }
   };

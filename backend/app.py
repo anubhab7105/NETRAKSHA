@@ -326,6 +326,12 @@ async def screen_document(
 
     try:
         result = await _run_screening_pipeline(doc_tmp, live_tmp, officer_id)
+    except Exception as exc:
+        print(f"[screen] Screening pipeline failed: {type(exc).__name__}: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Screening pipeline failed: {type(exc).__name__}",
+        ) from exc
     finally:
         # Cleanup temp files
         doc_tmp.unlink(missing_ok=True)
