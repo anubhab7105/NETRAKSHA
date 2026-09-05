@@ -35,7 +35,7 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 
 _GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-_GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-1.5-flash")
+_GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.7-flash")
 
 # The structured prompt for multi-task document analysis
 _SYSTEM_PROMPT = """You are an expert border security document forensics AI.
