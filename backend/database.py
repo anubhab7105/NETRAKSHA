@@ -50,6 +50,9 @@ else:
     _engine_kwargs["pool_size"] = int(os.environ.get("DB_POOL_SIZE", "5"))
     _engine_kwargs["max_overflow"] = int(os.environ.get("DB_MAX_OVERFLOW", "10"))
     _engine_kwargs["pool_pre_ping"] = True
+    _engine_kwargs["connect_args"] = {
+        "statement_cache_size": 0
+    }
 
 engine = create_async_engine(DATABASE_URL, **_engine_kwargs)
 
