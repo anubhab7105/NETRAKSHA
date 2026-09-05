@@ -30,6 +30,8 @@ _DEFAULT_SQLITE = f"sqlite+aiosqlite:///{Path(__file__).resolve().parent.parent 
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 if not DATABASE_URL:
     DATABASE_URL = _DEFAULT_SQLITE
+elif DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 # Detect engine type for conditional configuration
 _IS_SQLITE = DATABASE_URL.startswith("sqlite")
