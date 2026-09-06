@@ -105,7 +105,7 @@ export default function CaseReport() {
     return <div className="text-center text-danger mt-10">Case not found.</div>;
   }
 
-  const { case: c, extracted_fields, module_results, citizen } = data;
+  const { case: c, extracted_fields, module_results } = data;
   
   // Find specific modules (audit P2 §5: render ALL)
   const findModule = (name) => module_results.find(m => m.module_name === name);
@@ -118,6 +118,11 @@ export default function CaseReport() {
   
   const geminiData = geminiModule?.raw_output || {};
   const faceMatch = geminiData.three_way_face_match || {};
+
+  // A genuine registry comparison exists only when the backend actually
+  // matched a citizen using trusted extraction (real Gemini or real local OCR)
+  // — reported by the case API as db_record_found.
+  const hasGenuineDbRecord = Boolean(data.db_record_found);
 
   return (
     <div className="space-y-6 animate-fade-in pb-12">
@@ -138,6 +143,21 @@ export default function CaseReport() {
 
       <VerdictBanner verdict={c.verdict || 'Unknown'} />
 
+      {/* No DB record / unverifiable — alert the officer instead of faking a comparison */}
+      {!hasGenuineDbRecord && (
+        <div className="flex items-start gap-4 p-6 rounded-xl border border-warning/50 bg-warning/10">
+          <AlertTriangle size={24} className="text-warning shrink-0 mt-0.5" />
+          <div>
+            <h3 className="text-lg font-bold text-warning">NO DATABASE RECORD FOUND</h3>
+            <p className="text-sm text-warning/80 mt-1">
+              No matching record exists in the citizens registry for this document, or the
+              document could not be read automatically. The identity could not be verified
+              against the database — manual verification by the officer/supervisor is required.
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         
         {/* Demographic Parity Panel */}
@@ -146,8 +166,20 @@ export default function CaseReport() {
             <User className="text-primary" size={20} />
             <h3 className="text-lg font-semibold text-white">Demographic Parity</h3>
             {/* Audit P2 §6: always show mocked badge for citizen registry data */}
-            {citizen && <MockedBadge />}
+            {hasGenuineDbRecord && <MockedBadge />}
+            {!hasGenuineDbRecord && (
+              <span className="ml-auto bg-warning/20 text-warning px-2 py-1 rounded text-xs font-medium border border-warning/30">
+                NO DB RECORD
+              </span>
+            )}
           </div>
+
+          {!hasGenuineDbRecord && (
+            <div className="mb-4 p-3 bg-warning/5 border border-warning/20 text-warning rounded-lg text-sm">
+              No database record is available to compare against. The officer must
+              verify this identity manually against the document.
+            </div>
+          )}
           
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm">

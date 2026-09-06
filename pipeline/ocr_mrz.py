@@ -102,7 +102,7 @@ def _ocr_frame_rgb(pil_rgb) -> str:
 
     return pytesseract.image_to_string(
         pil_rgb,
-        config="--psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789< >-",
+        config="--psm 6 -c tessedit_char_whitelist='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789< >-'",
     )
 
 

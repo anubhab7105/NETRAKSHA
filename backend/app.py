@@ -354,6 +354,35 @@ async def screen_document(
     return result
 
 
+def _ocr_fields_to_demographics(ocr_raw):
+    """Map local OCR output (visible fields + machine-readable MRZ) into the
+    demographics dict used for the registry cross-check. Returns {} when
+    nothing readable was extracted. MRZ values are authoritative over fuzzy
+    printed-field OCR."""
+    by_name = {}
+    for f in (ocr_raw or {}).get("fields") or []:
+        if f.get("readable") and f.get("value"):
+            by_name[f["field_name"]] = f["value"]
+    mrz_fields = ((ocr_raw or {}).get("mrz") or {}).get("fields") or {}
+    for k, v in mrz_fields.items():
+        if v not in (None, "") and by_name.get(k) in (None, ""):
+            by_name[k] = v
+    if not by_name:
+        return {}
+    given = by_name.get("given_names", "")
+    surname = by_name.get("surname", "")
+    full_name = " ".join(x for x in (given, surname) if x).strip()
+    sex = by_name.get("sex", "")
+    return {
+        "document_number": by_name.get("document_number", ""),
+        "full_name": full_name or None,
+        "date_of_birth": by_name.get("date_of_birth") or None,
+        "gender": {"M": "Male", "F": "Female"}.get(sex) if sex else None,
+        "address": None,
+        "father_or_spouse_name": None,
+    }
+
+
 async def _run_screening_pipeline(
     doc_path: Path,
     live_path: Optional[Path],
@@ -375,6 +404,7 @@ async def _run_screening_pipeline(
     from pipeline.deepfake import run_deepfake
     from pipeline.liveness import run_liveness
     from pipeline.gemini_scanner import scan_document
+    from pipeline.ocr_mrz import run_ocr_mrz
     from pipeline.demographic import reconcile_demographics
     from pipeline.watchlist import check_watchlist
     from pipeline.risk_engine import assess_risk
@@ -425,61 +455,84 @@ async def _run_screening_pipeline(
         None, scan_document, str(doc_path), live_str, None
     )
 
+    # Local OCR (system tesseract) — independent, real extraction of the
+    # document. Used for the DB cross-check when Gemini falls back to
+    # simulation (simulated demographics are demo placeholders, never real).
+    ocr_task = loop.run_in_executor(None, run_ocr_mrz, str(doc_path))
+
     # Await all in parallel
-    tamper_result, deepfake_result, liveness_result, gemini_result = await asyncio.gather(
-        tamper_task, deepfake_task, liveness_task, gemini_task
+    ocr_result, tamper_result, deepfake_result, liveness_result, gemini_result = await asyncio.gather(
+        ocr_task, tamper_task, deepfake_task, liveness_task, gemini_task
     )
 
     # --- Post-process Gemini results ---
-    demographics = gemini_result.get("demographics", {})
+    gemini_demographics = gemini_result.get("demographics", {})
     doc_type = gemini_result.get("document_type", "unknown")
     face_match_data = gemini_result.get("three_way_face_match", {})
     photo_tamper = gemini_result.get("photo_tamper_anomaly", False)
     is_simulated = gemini_result.get("is_simulated", False)
 
+    # Map local OCR visible fields to the demographics shape used below.
+    ocr_demographics = _ocr_fields_to_demographics(ocr_result.raw_output)
+
+    # Trusted extraction for the registry comparison:
+    #   - real Gemini output, OR
+    #   - real local OCR output when Gemini was simulated.
+    # Simulation itself never supplies trustworthy document data, so when both
+    # are unavailable there is nothing to compare → "NO DATABASE RECORD".
+    if is_simulated:
+        demographics = ocr_demographics if ocr_demographics else None
+    else:
+        demographics = gemini_demographics
+
     # --- Checksum validation ---
-    doc_number = demographics.get("document_number", "")
+    doc_number = (demographics or {}).get("document_number", "")
     checksum_result = validate_document_number(doc_type, doc_number)
 
     # ------------------------------------------------------------------
     # Step 3: Database demographic cross-check (post-OCR)
     # ------------------------------------------------------------------
+    # The comparison runs whenever we have TRUSTED extraction (real Gemini OR
+    # real local OCR). Simulated demo text never drives a comparison, but a
+    # matching real document still gets its verdict. If no extraction could be
+    # read, the document cannot be verified → officer does a manual check.
     demographic_result = None
-    async with async_session() as session:
-        # Try to find a matching citizen by document number
-        norm_num = doc_number.replace(" ", "").replace("-", "").upper()
-        result = await session.execute(
-            select(CitizenRegistry).where(
-                CitizenRegistry.document_number == norm_num
-            )
-        )
-        citizen = result.scalar_one_or_none()
-
-        if not citizen and doc_number:
-            # Try with original number
+    if demographics and doc_number:
+        async with async_session() as session:
+            # Try to find a matching citizen by document number
+            norm_num = doc_number.replace(" ", "").replace("-", "").upper()
             result = await session.execute(
                 select(CitizenRegistry).where(
-                    CitizenRegistry.document_number == doc_number
+                    CitizenRegistry.document_number == norm_num
                 )
             )
             citizen = result.scalar_one_or_none()
 
-        if citizen:
-            db_record = citizen.to_dict()
-            citizen_id = citizen.id
-            demographic_result = reconcile_demographics(demographics, db_record)
-            # Retrieve DB reference photo path for potential re-scan
-            if citizen.photo_uri:
-                candidate = _PROJECT_ROOT / citizen.photo_uri
-                if candidate.exists():
-                    db_photo_path = str(candidate)
+            if not citizen and doc_number:
+                # Try with original number
+                result = await session.execute(
+                    select(CitizenRegistry).where(
+                        CitizenRegistry.document_number == doc_number
+                    )
+                )
+                citizen = result.scalar_one_or_none()
+
+            if citizen:
+                db_record = citizen.to_dict()
+                citizen_id = citizen.id
+                demographic_result = reconcile_demographics(demographics, db_record)
+                # Retrieve DB reference photo path for potential re-scan
+                if citizen.photo_uri:
+                    candidate = _PROJECT_ROOT / citizen.photo_uri
+                    if candidate.exists():
+                        db_photo_path = str(candidate)
 
     # If we found a DB photo and Gemini was simulated or doc_vs_db is null,
     # we could re-run Gemini with the DB photo. For the MVP, we note this
     # in the output metadata so the officer sees the gap.
 
     # --- Watchlist check ---
-    full_name = demographics.get("full_name", "")
+    full_name = (demographics or {}).get("full_name", "")
     watchlist_result = check_watchlist(name=full_name, id_number=doc_number)
 
     # ------------------------------------------------------------------
@@ -537,8 +590,9 @@ async def _run_screening_pipeline(
         case_id = case.id
 
         # Save extracted fields — prefer DB comparisons when a citizen
-        # matched, otherwise persist raw AI-extracted demographics so the
-        # officer always sees what was read off the document.
+        # matched, otherwise persist raw trusted demographics (real Gemini
+        # OR real local OCR output — never simulated demo placeholders) so
+        # the officer always sees what was read off the document.
         _FIELD_DISPLAY_NAMES = {
             "full_name": "Full Name",
             "date_of_birth": "Date of Birth",
@@ -557,7 +611,10 @@ async def _run_screening_pipeline(
                     match_status=comp["status"],
                     confidence=comp.get("confidence"),
                 ))
-        else:
+        elif demographics:
+            # Trusted extraction is available (real Gemini OR real local OCR)
+            # but no registry record matched → persist what was really read,
+            # with database_value=None so the report clearly shows the gap.
             for key, display in _FIELD_DISPLAY_NAMES.items():
                 value = demographics.get(key)
                 if value not in (None, ""):
@@ -716,6 +773,7 @@ async def get_case(case_id: int, request: Request):
     return {
         "case": case.to_dict(),
         "citizen": citizen_data,
+        "db_record_found": citizen_data is not None,
         "extracted_fields": [f.to_dict() for f in fields],
         "module_results": [m.to_dict() for m in modules],
         "officer_actions": [a.to_dict() for a in actions],

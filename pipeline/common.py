@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import shutil
 import tempfile
 import uuid
 from dataclasses import dataclass, field, asdict
@@ -40,11 +41,34 @@ EVIDENCE_DIR = pathlib.Path(
 # this root, so the pack must live at <root>/models/buffalo_l/.
 INSIGHTFACE_MODEL_ROOT = (_VENDOR / "models").resolve()
 
-# Vendored Tesseract runtime (binary + shared libs + tessdata).
+# Vendored Tesseract runtime (binary + shared libs + tessdata). If the vendored
+# runtime is missing, fall back to a system-wide tesseract install so OCR still
+# works locally (audit P1 §6).
 _TESS_DIR = _VENDOR / "tesseract"
-TESSERACT_BIN = _TESS_DIR / "tesseract"
-TESS_LIB_DIR = _TESS_DIR
-TESS_TESSDATA = _TESS_DIR / "tessdata"
+
+_SYSTEM_TESSDATA = None
+for _cand in (
+    "/usr/share/tesseract-ocr/5/tessdata",
+    "/usr/share/tesseract-ocr/4.00/tessdata",
+    "/usr/share/tessdata",
+    "/opt/homebrew/share/tessdata",
+):
+    if (pathlib.Path(_cand) / "eng.traineddata").exists():
+        _SYSTEM_TESSDATA = pathlib.Path(_cand)
+        break
+
+if (_TESS_DIR / "tesseract").exists() and (_TESS_DIR / "tessdata" / "eng.traineddata").exists():
+    TESSERACT_BIN = _TESS_DIR / "tesseract"
+    TESS_LIB_DIR = _TESS_DIR
+    TESS_TESSDATA = _TESS_DIR / "tessdata"
+elif (_sys_tess := shutil.which("tesseract")) and _SYSTEM_TESSDATA:
+    TESSERACT_BIN = pathlib.Path(_sys_tess)
+    TESS_LIB_DIR = TESSERACT_BIN.parent
+    TESS_TESSDATA = _SYSTEM_TESSDATA
+else:
+    TESSERACT_BIN = _TESS_DIR / "tesseract"
+    TESS_LIB_DIR = _TESS_DIR
+    TESS_TESSDATA = _TESS_DIR / "tessdata"
 
 
 def ensure_evidence_dir() -> pathlib.Path:
