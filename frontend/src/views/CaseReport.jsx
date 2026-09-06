@@ -25,7 +25,7 @@ const VerdictBanner = ({ verdict }) => {
     Red: 'Critical risk flags detected. Escalation recommended for officer review.',
   };
   return (
-    <div className={`flex items-center gap-4 p-6 rounded-xl border ${styles[verdict] || 'bg-slate-800 text-slate-300 border-slate-700'} glass-panel`}>
+    <div className={`flex flex-col gap-4 rounded-xl border p-4 sm:flex-row sm:items-center sm:p-6 ${styles[verdict] || 'bg-slate-800 text-slate-300 border-slate-700'} glass-panel`}>
       <div className="p-3 bg-black/20 rounded-full">
         {icons[verdict]}
       </div>
@@ -39,7 +39,7 @@ const VerdictBanner = ({ verdict }) => {
 
 /** Reusable mocked-data badge */
 const MockedBadge = () => (
-  <span className="ml-auto bg-violet-500/20 text-violet-400 px-2 py-1 rounded text-xs font-medium border border-violet-500/30">
+  <span className="rounded border border-violet-500/30 bg-violet-500/20 px-2 py-1 text-xs font-medium text-violet-400 sm:ml-auto">
     MOCKED DATA
   </span>
 );
@@ -126,14 +126,14 @@ export default function CaseReport() {
 
   return (
     <div className="space-y-6 animate-fade-in pb-12">
-      <div className="flex items-center gap-4">
+      <div className="flex items-start gap-3 sm:items-center sm:gap-4">
         <button onClick={() => navigate('/')} className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors">
           <ArrowLeft size={24} />
         </button>
-        <div>
-          <h2 className="text-2xl font-bold text-white flex items-center gap-3">
+        <div className="min-w-0">
+          <h2 className="flex flex-col gap-2 text-2xl font-bold text-white sm:flex-row sm:items-center sm:gap-3">
             Case #{c.id.toString().padStart(4, '0')}
-            <span className="text-sm font-normal px-2.5 py-1 bg-slate-800 rounded border border-slate-700 text-slate-300 flex items-center gap-2">
+            <span className="inline-flex w-fit items-center gap-2 rounded border border-slate-700 bg-slate-800 px-2.5 py-1 text-sm font-normal text-slate-300">
               <FileText size={14} /> {c.document_type?.toUpperCase() || 'UNKNOWN'}
             </span>
           </h2>
@@ -145,7 +145,7 @@ export default function CaseReport() {
 
       {/* No DB record / unverifiable — alert the officer instead of faking a comparison */}
       {!hasGenuineDbRecord && (
-        <div className="flex items-start gap-4 p-6 rounded-xl border border-warning/50 bg-warning/10">
+        <div className="flex items-start gap-4 rounded-xl border border-warning/50 bg-warning/10 p-4 sm:p-6">
           <AlertTriangle size={24} className="text-warning shrink-0 mt-0.5" />
           <div>
             <h3 className="text-lg font-bold text-warning">NO DATABASE RECORD FOUND</h3>
@@ -161,14 +161,14 @@ export default function CaseReport() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         
         {/* Demographic Parity Panel */}
-        <div className="glass-panel p-6">
-          <div className="flex items-center gap-2 mb-4 border-b border-slate-700/50 pb-4">
+        <div className="glass-panel p-4 sm:p-6">
+          <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-slate-700/50 pb-4">
             <User className="text-primary" size={20} />
             <h3 className="text-lg font-semibold text-white">Demographic Parity</h3>
             {/* Audit P2 §6: always show mocked badge for citizen registry data */}
             {hasGenuineDbRecord && <MockedBadge />}
             {!hasGenuineDbRecord && (
-              <span className="ml-auto bg-warning/20 text-warning px-2 py-1 rounded text-xs font-medium border border-warning/30">
+              <span className="rounded border border-warning/30 bg-warning/20 px-2 py-1 text-xs font-medium text-warning sm:ml-auto">
                 NO DB RECORD
               </span>
             )}
@@ -182,7 +182,7 @@ export default function CaseReport() {
           )}
           
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
+            <table className="w-full min-w-[620px] text-left text-sm">
               <thead>
                 <tr className="text-slate-400 border-b border-slate-700/50">
                   <th className="py-2 font-medium">Field</th>
@@ -218,8 +218,8 @@ export default function CaseReport() {
 
         {/* AI Forensic Panel — 3-Way Face Match */}
         <div className="space-y-6">
-          <div className="glass-panel p-6">
-            <div className="flex items-center gap-2 mb-4 border-b border-slate-700/50 pb-4">
+          <div className="glass-panel p-4 sm:p-6">
+            <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-slate-700/50 pb-4">
               <Scan className="text-accent" size={20} />
               <h3 className="text-lg font-semibold text-white">3-Way Face Match</h3>
               {geminiModule && <StatusBadge status={geminiModule.status} />}
@@ -233,26 +233,26 @@ export default function CaseReport() {
               </div>
             ) : (
               <>
-                <div className="grid grid-cols-2 gap-4 mb-4">
-                  <div className="bg-black/30 p-4 rounded-lg flex items-center justify-between border border-slate-700/50">
+                <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="flex items-center justify-between rounded-lg border border-slate-700/50 bg-black/30 p-4">
                     <span className="text-sm text-slate-400">Live vs Doc</span>
                     {faceMatch.live_vs_doc_match === true ? <span className="text-success flex items-center gap-1 text-sm font-medium"><Check size={16}/> Match</span> : 
                      faceMatch.live_vs_doc_match === false ? <span className="text-danger flex items-center gap-1 text-sm font-medium"><X size={16}/> Mismatch</span> : 
                      <span className="text-slate-500 text-sm">N/A</span>}
                   </div>
-                  <div className="bg-black/30 p-4 rounded-lg flex items-center justify-between border border-slate-700/50">
+                  <div className="flex items-center justify-between rounded-lg border border-slate-700/50 bg-black/30 p-4">
                     <span className="text-sm text-slate-400">Doc vs DB</span>
                     {faceMatch.doc_vs_db_match === true ? <span className="text-success flex items-center gap-1 text-sm font-medium"><Check size={16}/> Match</span> : 
                      faceMatch.doc_vs_db_match === false ? <span className="text-danger flex items-center gap-1 text-sm font-medium"><X size={16}/> Mismatch</span> : 
                      <span className="text-slate-500 text-sm">N/A</span>}
                   </div>
-                  <div className="bg-black/30 p-4 rounded-lg flex items-center justify-between border border-slate-700/50">
+                  <div className="flex items-center justify-between rounded-lg border border-slate-700/50 bg-black/30 p-4">
                     <span className="text-sm text-slate-400">Live vs DB</span>
                     {faceMatch.live_vs_db_match === true ? <span className="text-success flex items-center gap-1 text-sm font-medium"><Check size={16}/> Match</span> : 
                      faceMatch.live_vs_db_match === false ? <span className="text-danger flex items-center gap-1 text-sm font-medium"><X size={16}/> Mismatch</span> : 
                      <span className="text-slate-500 text-sm">N/A</span>}
                   </div>
-                  <div className="bg-black/30 p-4 rounded-lg flex flex-col justify-center border border-slate-700/50 text-center">
+                  <div className="flex flex-col justify-center rounded-lg border border-slate-700/50 bg-black/30 p-4 text-center">
                     <span className="text-xs text-slate-400 mb-1">AI Similarity Score</span>
                     <span className="text-2xl font-bold text-white">{faceMatch.similarity_score != null ? `${(faceMatch.similarity_score * 100).toFixed(1)}%` : 'N/A'}</span>
                   </div>
@@ -269,8 +269,8 @@ export default function CaseReport() {
           </div>
 
           {/* Tamper Detection */}
-          <div className="glass-panel p-6">
-            <div className="flex items-center justify-between mb-4 border-b border-slate-700/50 pb-4">
+          <div className="glass-panel p-4 sm:p-6">
+            <div className="mb-4 flex flex-col gap-3 border-b border-slate-700/50 pb-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-2">
                 <Activity className="text-warning" size={20} />
                 <h3 className="text-lg font-semibold text-white">Tamper Detection</h3>
@@ -303,14 +303,14 @@ export default function CaseReport() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
 
         {/* Deepfake Detection */}
-        <div className="glass-panel p-6">
+        <div className="glass-panel p-4 sm:p-6">
           <div className="flex items-center gap-2 mb-4 border-b border-slate-700/50 pb-4">
             <Fingerprint className="text-purple-400" size={20} />
             <h3 className="text-base font-semibold text-white">Deepfake Detection</h3>
           </div>
           {deepfakeModule ? (
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-3">
                 <span className="text-sm text-slate-400">Status</span>
                 <StatusBadge status={deepfakeModule.status} score={deepfakeModule.score} />
               </div>
@@ -321,15 +321,15 @@ export default function CaseReport() {
               )}
               {deepfakeModule.raw_output?.metrics && (
                 <div className="bg-black/20 rounded p-3 space-y-1">
-                  <div className="flex justify-between text-xs">
+                  <div className="flex justify-between gap-3 text-xs">
                     <span className="text-slate-400">HF Fraction</span>
                     <span className="text-slate-300 font-mono">{deepfakeModule.raw_output.metrics.high_frequency_fraction?.toFixed(4)}</span>
                   </div>
-                  <div className="flex justify-between text-xs">
+                  <div className="flex justify-between gap-3 text-xs">
                     <span className="text-slate-400">Spectral Peakedness</span>
                     <span className="text-slate-300 font-mono">{deepfakeModule.raw_output.metrics.spectral_peakedness?.toFixed(4)}</span>
                   </div>
-                  <div className="flex justify-between text-xs">
+                  <div className="flex justify-between gap-3 text-xs">
                     <span className="text-slate-400">Rolloff Ratio</span>
                     <span className="text-slate-300 font-mono">{deepfakeModule.raw_output.metrics.rolloff_ratio?.toFixed(4)}</span>
                   </div>
@@ -342,19 +342,19 @@ export default function CaseReport() {
         </div>
 
         {/* Liveness Detection */}
-        <div className="glass-panel p-6">
+        <div className="glass-panel p-4 sm:p-6">
           <div className="flex items-center gap-2 mb-4 border-b border-slate-700/50 pb-4">
             <Eye className="text-cyan-400" size={20} />
             <h3 className="text-base font-semibold text-white">Liveness Detection</h3>
           </div>
           {livenessModule ? (
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-3">
                 <span className="text-sm text-slate-400">Status</span>
                 <StatusBadge status={livenessModule.status} score={livenessModule.score} />
               </div>
               {livenessModule.raw_output?.live !== undefined && (
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-3">
                   <span className="text-sm text-slate-400">Result</span>
                   {livenessModule.raw_output.live ? (
                     <span className="text-success flex items-center gap-1 text-sm font-medium"><Radio size={14}/> Live</span>
@@ -365,16 +365,16 @@ export default function CaseReport() {
               )}
               {livenessModule.raw_output?.blink_count !== undefined && (
                 <div className="bg-black/20 rounded p-3 space-y-1">
-                  <div className="flex justify-between text-xs">
+                  <div className="flex justify-between gap-3 text-xs">
                     <span className="text-slate-400">Blink Count</span>
                     <span className="text-slate-300 font-mono">{livenessModule.raw_output.blink_count}</span>
                   </div>
-                  <div className="flex justify-between text-xs">
+                  <div className="flex justify-between gap-3 text-xs">
                     <span className="text-slate-400">Frames Analysed</span>
                     <span className="text-slate-300 font-mono">{livenessModule.raw_output.frames_analysed}</span>
                   </div>
                   {livenessModule.raw_output?.ear_stats && (
-                    <div className="flex justify-between text-xs">
+                    <div className="flex justify-between gap-3 text-xs">
                       <span className="text-slate-400">EAR Swing</span>
                       <span className="text-slate-300 font-mono">{livenessModule.raw_output.ear_stats.swing?.toFixed(4)}</span>
                     </div>
@@ -393,18 +393,18 @@ export default function CaseReport() {
         </div>
 
         {/* Checksum Validation */}
-        <div className="glass-panel p-6">
+        <div className="glass-panel p-4 sm:p-6">
           <div className="flex items-center gap-2 mb-4 border-b border-slate-700/50 pb-4">
             <Hash className="text-emerald-400" size={20} />
             <h3 className="text-base font-semibold text-white">Checksum Validation</h3>
           </div>
           {checksumModule ? (
             <div className="space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-3">
                 <span className="text-sm text-slate-400">Document Type</span>
                 <span className="text-sm text-slate-300">{checksumModule.raw_output?.document_type?.toUpperCase() || '-'}</span>
               </div>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-3">
                 <span className="text-sm text-slate-400">Valid</span>
                 {checksumModule.raw_output?.valid === true ? (
                   <span className="text-success flex items-center gap-1 text-sm font-medium"><Check size={16}/> Pass</span>
@@ -427,8 +427,8 @@ export default function CaseReport() {
       </div>
 
       {/* Watchlist Panel — always shown, even on clear (audit P2 §6) */}
-      <div className={`glass-panel p-6 ${watchlistModule?.raw_output?.is_hit ? 'border-danger/50 bg-danger/5' : 'bg-black/5'}`}>
-        <div className="flex items-center gap-2 mb-4">
+      <div className={`glass-panel p-4 sm:p-6 ${watchlistModule?.raw_output?.is_hit ? 'border-danger/50 bg-danger/5' : 'bg-black/5'}`}>
+        <div className="mb-4 flex flex-wrap items-center gap-2">
           <ShieldAlert className={watchlistModule?.raw_output?.is_hit ? 'text-danger' : 'text-slate-400'} size={24} />
           <h3 className="text-lg font-semibold text-white">
             Watchlist Lookup
@@ -444,7 +444,7 @@ export default function CaseReport() {
           <div className="space-y-2">
             {watchlistModule.raw_output.hits.map((hit, i) => (
               <div key={i} className="bg-black/40 p-4 rounded-lg border border-danger/20">
-                <p className="text-sm font-medium text-white">{hit.name} <span className="text-slate-500 ml-2">ID: {hit.id_number}</span></p>
+                <p className="text-sm font-medium text-white">{hit.name} <span className="ml-0 block text-slate-500 sm:ml-2 sm:inline">ID: {hit.id_number}</span></p>
                 <p className="text-sm text-danger mt-1">{hit.source}</p>
               </div>
             ))}
@@ -456,7 +456,7 @@ export default function CaseReport() {
 
       {/* Officer Action */}
       {c.status === 'pending_review' ? (
-        <div className="glass-panel p-6 mt-6 border-t-4 border-t-primary">
+        <div className="glass-panel mt-6 border-t-4 border-t-primary p-4 sm:p-6">
           <h3 className="text-lg font-semibold text-white mb-4">Officer Adjudication</h3>
           <div className="space-y-4">
             <textarea 
@@ -465,7 +465,7 @@ export default function CaseReport() {
               className="w-full bg-black/20 border border-slate-700 rounded-lg p-4 text-white focus:outline-none focus:border-primary transition-colors text-sm min-h-[100px]"
               placeholder="Mandatory justification for decision..."
             />
-            <div className="flex gap-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
               <button 
                 onClick={() => handleAction('clear')}
                 disabled={actionLoading}
@@ -491,7 +491,7 @@ export default function CaseReport() {
           </div>
         </div>
       ) : (
-        <div className="glass-panel p-6 mt-6 bg-white/5 flex items-center justify-between">
+        <div className="glass-panel mt-6 flex flex-col gap-4 bg-white/5 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
           <div className="flex items-center gap-3 text-slate-300">
             <Shield size={20} className="text-slate-500"/>
             <span className="font-medium">Case Adjudicated</span>

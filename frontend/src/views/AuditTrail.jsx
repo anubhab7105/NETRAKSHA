@@ -52,8 +52,8 @@ export default function AuditTrail() {
       </header>
 
       {/* Filters */}
-      <form onSubmit={handleSearch} className="glass-panel p-4 flex flex-wrap gap-4 items-end">
-        <div className="flex-1 min-w-[200px]">
+      <form onSubmit={handleSearch} className="glass-panel flex flex-col gap-4 p-4 sm:flex-row sm:flex-wrap sm:items-end">
+        <div className="min-w-0 flex-1 sm:min-w-[200px]">
           <label className="block text-xs font-medium text-slate-400 mb-1">Actor</label>
           <input
             type="text"
@@ -63,7 +63,7 @@ export default function AuditTrail() {
             className="w-full bg-black/30 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary transition-colors"
           />
         </div>
-        <div className="flex-1 min-w-[200px]">
+        <div className="min-w-0 flex-1 sm:min-w-[200px]">
           <label className="block text-xs font-medium text-slate-400 mb-1">Entity</label>
           <input
             type="text"
@@ -75,7 +75,7 @@ export default function AuditTrail() {
         </div>
         <button
           type="submit"
-          className="bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+          className="flex items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-4 py-2 text-sm font-medium text-primary transition-colors hover:bg-primary/20"
         >
           <Search size={16} /> Filter
         </button>
@@ -94,7 +94,7 @@ export default function AuditTrail() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm">
+            <table className="w-full min-w-[720px] text-left text-sm">
               <thead>
                 <tr className="text-slate-400 border-b border-slate-700/50 bg-black/20">
                   <th className="px-6 py-3 font-medium">ID</th>
@@ -125,7 +125,7 @@ export default function AuditTrail() {
 
         {/* Pagination */}
         {!loading && count > 0 && (
-          <div className="flex items-center justify-between px-6 py-3 border-t border-slate-700/50 bg-black/10">
+          <div className="flex flex-col gap-3 border-t border-slate-700/50 bg-black/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
             <span className="text-xs text-slate-500">
               Showing {offset + 1}–{Math.min(offset + limit, offset + count)} entries
             </span>
