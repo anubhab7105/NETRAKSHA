@@ -94,9 +94,40 @@ def _get_mime_type(image_path: str | Path) -> str:
     }.get(ext, "image/png")
 
 
+_NO_LIVE_FACE_REASON = (
+    "No live webcam image was provided for comparison. Facial biometric "
+    "matching cannot be evaluated against the document photograph."
+)
+
+
+def _normalize_no_live_face_match(result: dict, has_live: bool) -> dict:
+    """Make the advertised 3-way face-match block consistent with the input.
+
+    Without a live capture the live-vs-* comparisons are meaningless, yet the
+    model may still guess at them (e.g. a mismatch at 0% similarity). Reset
+    those fields to None with an explicit reason so no consumer — the response
+    OR the persisted module raw_output — can manufacture a face verdict.
+    Doc-vs-DB stays as reported when a DB reference photo was supplied.
+    """
+    if has_live:
+        return result
+    fm = result.get("three_way_face_match") or {}
+    if not isinstance(fm, dict):
+        fm = {}
+    fm = {
+        **fm,
+        "live_vs_doc_match": None,
+        "live_vs_db_match": None,
+        "similarity_score": None,
+        "visual_reasoning": _NO_LIVE_FACE_REASON,
+    }
+    result["three_way_face_match"] = fm
+    return result
+
+
 def scan_document(
     document_image_path: str | Path,
-    live_capture_path: str | Path,
+    live_capture_path: Optional[str | Path] = None,
     db_reference_path: Optional[str | Path] = None,
     timeout: float = 10.0,
 ) -> dict:
@@ -112,6 +143,7 @@ def scan_document(
           - `model_used`: str — the model identifier or "offline_simulation"
     """
     start = time.perf_counter()
+    has_live = bool(live_capture_path and _load_image_bytes(live_capture_path))
 
     # Attempt real Gemini call
     if _GEMINI_API_KEY:
@@ -126,7 +158,7 @@ def scan_document(
             result["is_simulated"] = False
             result["latency_ms"] = round(elapsed, 1)
             result["model_used"] = _GEMINI_MODEL
-            return result
+            return _normalize_no_live_face_match(result, has_live)
         except Exception as exc:
             print(f"[gemini_scanner] Gemini API call failed: {type(exc).__name__}: {exc}")
             # Fall through to simulation
@@ -137,7 +169,7 @@ def scan_document(
     result["is_simulated"] = True
     result["latency_ms"] = round(elapsed, 1)
     result["model_used"] = "offline_simulation"
-    return result
+    return _normalize_no_live_face_match(result, has_live)
 
 
 def _call_gemini(
@@ -167,8 +199,8 @@ def _call_gemini(
     else:
         parts.append("Image 1 (document): Not available")
 
-    # Image 2: Live capture
-    live_bytes = _load_image_bytes(live_capture_path)
+    # Image 2: Live capture (optional — no webcam → face match is inconclusive)
+    live_bytes = _load_image_bytes(live_capture_path) if live_capture_path else b""
     if live_bytes:
         parts.append(
             types.Part.from_bytes(
@@ -176,7 +208,7 @@ def _call_gemini(
             )
         )
     else:
-        parts.append("Image 2 (live capture): Not available")
+        parts.append("Image 2 (live capture): Not available — do not compare faces")
 
     # Image 3: DB reference (optional)
     if db_reference_path:
@@ -283,18 +315,22 @@ def _simulate_scan(
 
     # Generate face match results
     has_db = db_reference_path is not None
+    has_live = live_capture_path is not None
     similarity = round(random.uniform(0.88, 0.96), 2)
 
     face_match = {
-        "live_vs_doc_match": True,
+        "live_vs_doc_match": True if has_live else None,
         "doc_vs_db_match": True if has_db else None,
         "live_vs_db_match": True if has_db else None,
-        "similarity_score": similarity,
+        "similarity_score": similarity if has_live else None,
         "visual_reasoning": (
             "Consistent facial structure, identical jawline contour, "
             "matching ear geometry, and consistent interpupillary distance "
             "across live capture and document photo. No evidence of photo "
             "manipulation at photo borders."
+            if has_live
+            else "No live capture was provided — face verification against "
+                 "a live webcam still is not possible."
         ),
     }
 

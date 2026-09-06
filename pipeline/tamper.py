@@ -4,14 +4,17 @@ Approach (Techspec.md §3): BOTH, not either/or.
   * Error Level Analysis (ELA): re-save the image as JPEG at a known quality and
     measure the absolute recompression residual. Genuinely re-encoded regions
     show different error levels than the surrounding image.
-  * ORB keypoint copy-move detection: find matching keypoint pairs that cluster
-    under a near-uniform spatial offset — a signature of duplicated/copied
-    regions (classic copy-move forgery).
+  * Exact-duplicate copy-move detection: hash textured blocks and pair byte-
+    identical blocks displaced by a large two-dimensional offset — a signature
+    of copied/pasted regions (classic copy-move forgery). Genuine horizontal
+    text and decorative-band repeats are discounted so only true 2-D pastes
+    score.
 
 Output contract:
   * raw_output['tamper_score']       : 0-1 combined score (higher = more tamper)
   * raw_output['ela_bright_ratio']   : fraction of pixels with high ELA residual
-  * raw_output['copy_move_region_count'] : number of ORB-clustered copy-move regions
+  * raw_output['copy_move_region_count'] : number of strong 2-D copy-move
+                                           offset clusters
   * evidence_uri                     : path to the real ELA heatmap overlay image,
                                        rendered and saved so the Case Result UI
                                        (Appflow.md §3.4) can display it directly.
@@ -91,85 +94,74 @@ def _render_ela_overlay(rgb_uint8: np.ndarray, residual: np.ndarray, out_path) -
 
 
 # ---------------------------------------------------------------------------
-# ORB copy-move detection
+# Copy-move detection
 # ---------------------------------------------------------------------------
 
-def _downsample(img: np.ndarray, max_dim: int = 320) -> tuple:
-    """Downsample an image so its largest dimension is at most max_dim.
+def _copy_move_detect(
+    gray: np.ndarray,
+    bs: int = 8,
+    stride: int = 8,
+    min_dist: float = 140.0,
+    min_std: float = 10.0,
+) -> dict:
+    """Detect copied-region forgeries by exact-duplicate block hashing.
 
-    Returns (downsampled_image, scale_factor).
-    Optimization: reduces copy-move analysis from ~45s to < 0.8s on CPU.
+    A copy-move forgery pastes a region *exactly* somewhere else on the page,
+    so the pasted content and its source share byte-identical blocks. We hash
+    every textured block on a fine grid and pair up blocks sharing a hash, then
+    group pairs by their spatial offset.
+
+    A stamped page also contains genuine repeats (text rows and decorative
+    bands) — those repeat only *horizontally* (vertical offset ≈ 0), giving a
+    set of small lattice clusters. A real copy-move instead produces one strong
+    two-dimensional cluster (the actual paste displacement). We therefore only
+    count clusters with ``|dy| >= 2`` blocks as copy-move evidence, which cleanly
+    separates a pasted duplicate from a page's natural repeated structure.
+
+    Runs on the native-resolution gray image; sub-0.3s on the specimen pages.
     """
-    import cv2
+    import hashlib
+    from collections import defaultdict
 
-    h, w = img.shape[:2]
-    if max(h, w) <= max_dim:
-        return img, 1.0
-    scale = max_dim / max(h, w)
-    new_w = int(w * scale)
-    new_h = int(h * scale)
-    return cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA), scale
-
-
-def _copy_move_detect(gray: np.ndarray, bs: int = 32, stride: int = 24,
-                      min_corr: float = 0.97, min_off: float = 60.0) -> dict:
-    """Detect copy-move regions via block normalized cross-correlation.
-
-    **Optimized**: downsamples to max 320px dimension and uses stride=24
-    for sub-1.0-second execution on CPU.
-
-    Slides overlapping tiles and finds, for each, its best-correlated *distant*
-    location. An exact duplicated block (pasted copy of textured content)
-    correlates near 1.0 with its source, producing a dominant offset cluster
-    with a large inlier count; non-repeating content yields only weak, scattered
-    matches, so the *strength of the dominant cluster* cleanly separates a
-    forgery from a genuine page.
-
-    (ORB matching was trialed first but hallucinated offset clusters on the
-    structurally-repeating synthetic pages; block NCC is more reliable here.)
-
-    Returns data for scoring copy-move severity.
-    """
-    import cv2
-
-    # Downsample for speed (max_dim=320, stride=24 → < 1.0s)
-    ds_gray, scale = _downsample(gray)
-    H, W = ds_gray.shape
-    g = ds_gray.astype(np.float32)
-
-    # Use min_off directly on downsampled image (already scaled appropriately)
-    scaled_min_off = min_off
-
-    offsets = {}
-    n_matches = 0
+    H, W = gray.shape
+    locs: defaultdict = defaultdict(list)
     for y in range(0, H - bs + 1, stride):
         for x in range(0, W - bs + 1, stride):
-            tile = g[y:y + bs, x:x + bs]
-            if tile.std() < 20:  # skip flat/blank tiles
+            tile = gray[y:y + bs, x:x + bs]
+            if tile.std() < min_std:  # skip flat/blank tiles
                 continue
-            res = cv2.matchTemplate(g, tile, cv2.TM_CCOEFF_NORMED)
-            res[y:y + bs, x:x + bs] = -1.0  # ignore the tile's own location
-            _, best, _, best_loc = cv2.minMaxLoc(res)
-            if best < min_corr:
-                continue
-            dx = best_loc[0] - x
-            dy = best_loc[1] - y
-            if (dx * dx + dy * dy) ** 0.5 < scaled_min_off:
-                continue
-            n_matches += 1
-            key = (round(dx / stride), round(dy / stride))
-            offsets.setdefault(key, 0)
-            offsets[key] += 1
+            key = hashlib.sha1(tile.tobytes()).hexdigest()
+            locs[key].append((x, y))
 
-    groups = sorted(offsets.items(), key=lambda kv: kv[1], reverse=True)
-    dominant = groups[0][1] if groups else 0
-    regions = sum(1 for _, c in groups if c >= 8)
+    offsets: defaultdict = defaultdict(int)
+    horizontal: defaultdict = defaultdict(int)
+    n_matches = 0
+    horiz_pairs = 0
+    for positions in locs.values():
+        for i in range(len(positions)):
+            for j in range(i + 1, len(positions)):
+                dx = positions[j][0] - positions[i][0]
+                dy = positions[j][1] - positions[i][1]
+                if (dx * dx + dy * dy) ** 0.5 < min_dist:
+                    continue
+                key = (round(dx / stride), round(dy / stride))
+                if abs(dy) >= 2:
+                    offsets[key] += 1
+                    n_matches += 1
+                else:
+                    horizontal[key] += 1
+                    horiz_pairs += 1
+
+    top = sorted(offsets.items(), key=lambda kv: kv[1], reverse=True)
+    dominant_key = top[0][0] if top else None
+    dominant_count = top[0][1] if top else 0
     return {
         "blocks_matched": n_matches,
-        "dominant_offset_count": dominant,
-        "regions": regions,
-        "offset_groups": [{"offset": k, "matches": v} for k, v in groups[:6]],
-        "downsampled": scale < 1.0,
+        "dominant_offset": list(dominant_key) if dominant_key else None,
+        "dominant_offset_count": dominant_count,
+        "regions": sum(1 for _, c in top if c >= 8),
+        "horizontal_lattice_pairs": horiz_pairs,
+        "offset_groups": [{"offset": list(k), "matches": v} for k, v in top[:6]],
         "analysis_resolution": f"{W}x{H}",
     }
 
@@ -216,13 +208,13 @@ def run_tamper(document_image, save_evidence: bool = True) -> ModuleResult:
               "blocks_matched": 0, "offset_groups": []}
 
     # --- Aggregate score ----------------------------------------------------
-    # Tamper score combines a dominant copy-move signal with a secondary ELA
-    # signal, both in [0,1]. The copy-move component keys on the *strength of
-    # the dominant offset cluster*: a forged duplicated block yields a large
-    # dominant inlier count, while genuine repeated structure yields only weak,
-    # scattered matches (well below COPY_FLOOR).
-    COPY_FLOOR = 4
-    COPY_SAT = 25
+    # Tamper score combines a dominant 2-D copy-move cluster with a secondary
+    # ELA signal, both in [0,1]. The copy-move component keys on the *strength
+    # of the dominant two-dimensional offset cluster*: a forged pasted region
+    # yields a large inlier count at one 2-D offset, while a genuine page only
+    # produces weak, scattered or purely-horizontal (text/band) repeats.
+    COPY_FLOOR = 10
+    COPY_SAT = 90
     ela_signal = np.clip((ela["mean_residual"] - 1.5) / 2.5, 0.0, 1.0)
     copy_signal = np.clip(
         (cm.get("dominant_offset_count", 0) - COPY_FLOOR) / (COPY_SAT - COPY_FLOOR),
@@ -246,11 +238,14 @@ def run_tamper(document_image, save_evidence: bool = True) -> ModuleResult:
         "ela_bright_ratio": ela["ela_bright_ratio"],
         "copy_move_region_count": cm.get("regions", 0),
         "dominant_offset_count": cm.get("dominant_offset_count", 0),
+        "dominant_offset": cm.get("dominant_offset"),
         "ela": ela,
         "copy_move": {
             "blocks_matched": cm.get("blocks_matched", 0),
+            "dominant_offset": cm.get("dominant_offset"),
             "dominant_offset_count": cm.get("dominant_offset_count", 0),
             "regions": cm.get("regions", 0),
+            "horizontal_lattice_pairs": cm.get("horizontal_lattice_pairs", 0),
             "offset_groups": cm.get("offset_groups", []),
         },
     }

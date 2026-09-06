@@ -449,8 +449,10 @@ async def _run_screening_pipeline(
     )
     liveness_task = loop.run_in_executor(None, run_liveness, liveness_target)
 
-    # Gemini AI call (also in thread pool)
-    live_str = str(live_path) if live_path else str(doc_path)
+    # Gemini AI call (also in thread pool). When no live capture is supplied,
+    # pass None — never reuse the document as the "live" frame (that would
+    # fabricate a face match of the document against itself).
+    live_str = str(live_path) if live_path else None
     gemini_task = loop.run_in_executor(
         None, scan_document, str(doc_path), live_str, None
     )
@@ -472,6 +474,19 @@ async def _run_screening_pipeline(
     photo_tamper = gemini_result.get("photo_tamper_anomaly", False)
     is_simulated = gemini_result.get("is_simulated", False)
 
+    # No live capture → face verification is impossible, not "mismatched".
+    # Strip any live-vs-* claims Gemini may have guessed at so an officer who
+    # only uploads the document gets an honest "inconclusive" (→ Yellow min),
+    # never a fabricated RED face mismatch.
+    if live_path is None:
+        face_match_data = face_match_data or {}
+        face_match_data = {
+            **face_match_data,
+            "live_vs_doc_match": None,
+            "live_vs_db_match": None,
+            "similarity_score": None,
+        }
+
     # Map local OCR visible fields to the demographics shape used below.
     ocr_demographics = _ocr_fields_to_demographics(ocr_result.raw_output)
 
@@ -488,6 +503,28 @@ async def _run_screening_pipeline(
     # --- Checksum validation ---
     doc_number = (demographics or {}).get("document_number", "")
     checksum_result = validate_document_number(doc_type, doc_number)
+
+    # Passports: full ICAO 9303 check requires the MRZ lines, which the local
+    # OCR module already validates. Use its check-digit results so a genuine
+    # passport shows a real Pass/Fail instead of an automatic "unverifiable".
+    mrz_data = (ocr_result.raw_output or {}).get("mrz") or {}
+    mrz_fields = mrz_data.get("fields") or {}
+    mrz_parsed = mrz_data.get("parsed")
+    icao_checks = mrz_data.get("icao_checks") or {}
+    icao_validated = {
+        k: v for k, v in icao_checks.items()
+        if isinstance(v, dict) and "ok" in v and "computed" in v
+    }
+    if mrz_parsed and icao_validated:
+        checksum_result = {
+            "document_type": "passport",
+            "document_number": mrz_fields.get("document_number") or doc_number,
+            "valid": all(v.get("ok") for v in icao_validated.values()),
+            "method": "icao_9303",
+            "algorithm": "ICAO 9303 weighted mod-10 check digits",
+            "detail": f"{len(icao_validated)} MRZ fields check-digit validated",
+            "icao_checks": icao_checks,
+        }
 
     # ------------------------------------------------------------------
     # Step 3: Database demographic cross-check (post-OCR)

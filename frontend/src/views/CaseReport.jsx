@@ -406,10 +406,12 @@ export default function CaseReport() {
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-slate-400">Valid</span>
-                {checksumModule.raw_output?.valid ? (
+                {checksumModule.raw_output?.valid === true ? (
                   <span className="text-success flex items-center gap-1 text-sm font-medium"><Check size={16}/> Pass</span>
-                ) : (
+                ) : checksumModule.raw_output?.valid === false ? (
                   <span className="text-danger flex items-center gap-1 text-sm font-medium"><X size={16}/> Fail</span>
+                ) : (
+                  <span className="text-xs px-2 py-1 bg-slate-700/40 text-slate-300 rounded border border-slate-600">N/A — not digitally verifiable</span>
                 )}
               </div>
               {checksumModule.raw_output?.algorithm && (

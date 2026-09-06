@@ -105,6 +105,20 @@ CITIZENS = [
         "father_or_spouse_name": "Anil Sharma",
         "photo_uri": "samples/faces/person_b.png",
     },
+    # Specimen traveler — matches the shipped sample documents
+    # (samples/genuine_doc.png & samples/tampered_doc.png, ICAO MRZ L898902C3)
+    # so the flagship "clean traveler / tampered" demos hit a DB record and
+    # produce a real demographic cross-check instead of a dead-end.
+    {
+        "document_type": "passport",
+        "document_number": "L898902C3",
+        "full_name": "Jasmine Specimen",
+        "date_of_birth": "1969-12-04",
+        "gender": "F",
+        "address": "221B Specimen Lane, Demo City, AP - 500001",
+        "father_or_spouse_name": None,
+        "photo_uri": "samples/faces/person_a.png",
+    },
 ]
 
 WATCHLIST = [

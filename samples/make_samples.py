@@ -259,10 +259,12 @@ def _eye_boxes(landmarker, img, h, w):
 def make_liveness_bursts(frame_face_bgr) -> None:
     """Write blink_burst (a real blink) and static_burst (no blink) to disk.
 
-    A blink is synthesised by strongly painting the eye regions skin-coloured
-    for a few consecutive frames (EAR drops below the closed threshold), then
-    returning to open frames — this drives the mediapipe EAR across a genuine
-    closed->open transition.
+    A blink is synthesised by painting the eye regions skin-coloured plus a
+    dark closed-lid line for a few consecutive frames. The landmarker must
+    still find the face AND read the eyes as closed, so the face is upscaled
+    to 1024px first (the raw synthetic faces have ~13px eyes where any paint
+    knocks mediapipe offline entirely). The closed-eye paint drops the EAR
+    comfortably below the adaptive closed threshold -> a validated blink.
     """
     from mediapipe.tasks import python as mp_py
     from mediapipe.tasks.python import vision
@@ -276,29 +278,32 @@ def make_liveness_bursts(frame_face_bgr) -> None:
         )
     )
     base = frame_face_bgr
+    if max(base.shape[:2]) < 900:
+        base = cv2.resize(base, (1024, 1024), interpolation=cv2.INTER_CUBIC)
     h, w = base.shape[:2]
     boxes = _eye_boxes(landmarker, base, h, w)
     if not boxes:
         raise RuntimeError("could not detect eyes on the liveness sample face")
 
+    def _close_eyes(img):
+        for (x1, y1, x2, y2) in boxes.values():
+            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+            padx = (x2 - x1) // 2 + 16
+            pady = (y2 - y1) // 2 + 8
+            skin = tuple(int(v) for v in img[cy + pady, cx])  # cheek tone
+            cv2.ellipse(img, (cx, cy), (padx, pady), 0, 0, 360, skin, -1)
+            cv2.line(img, (x1 - padx // 2, cy), (x2 + padx // 2, cy),
+                     (35, 35, 35), 5, cv2.LINE_AA)
+        return img
+
     # --- blink burst -------------------------------------------------------
     blink_frames = []
     # 12 frames: 3 open, 4 closed, 5 open  -> 1 blink
     pattern = ["open"] * 3 + ["closed"] * 4 + ["open"] * 5
-    # pad must be large on a hi-res face so the mediapipe EAR dips below the
-    # closed threshold; too small a fill does not read as 'closed'.
-    pad = int(round(h * 0.085))
     for state in pattern:
         img = base.copy()
         if state == "closed":
-            for (x1, y1, x2, y2) in boxes.values():
-                cv2.rectangle(
-                    img,
-                    (max(0, x1 - pad), max(0, y1 - pad)),
-                    (min(w, x2 + pad), min(h, y2 + pad)),
-                    tuple(int(v) for v in base[y1 + 2, x1 + 2]),
-                    -1,
-                )
+            img = _close_eyes(img)
         blink_frames.append(img)
     _write_burst(blink_frames, LIVE_DIR / "blink_burst")
 

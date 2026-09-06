@@ -32,6 +32,7 @@ def _normalize_date(date_str: Optional[str]) -> str:
       - DD/MM/YYYY
       - DD-MM-YYYY
       - DD.MM.YYYY
+      - Compact YYMMDD (passport MRZ; ICAO century heuristic: 00-39 → 2000s)
     """
     if not date_str:
         return ""
@@ -47,7 +48,24 @@ def _normalize_date(date_str: Optional[str]) -> str:
     if m:
         return f"{int(m.group(3)):04d}-{int(m.group(2)):02d}-{int(m.group(1)):02d}"
 
+    # Compact / MRZ YYMMDD (6 digits, plausible month/day)
+    m = re.match(r"^(\d{2})(\d{2})(\d{2})$", s)
+    if m and 1 <= int(m.group(2)) <= 12 and 1 <= int(m.group(3)) <= 31:
+        yy = int(m.group(1))
+        year = 2000 + yy if yy <= 39 else 1900 + yy
+        return f"{year:04d}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+
     return _normalize(s)
+
+
+def _normalize_gender(value: Optional[str]) -> str:
+    """Canonicalize gender for comparison (M/F vs Male/Female variants)."""
+    s = _normalize(value)
+    if s in ("f", "female", "femelle"):
+        return "f"
+    if s in ("m", "male", "masculin"):
+        return "m"
+    return s
 
 
 def _normalize_doc_number(number: Optional[str]) -> str:
@@ -190,8 +208,8 @@ def reconcile_demographics(extracted: dict, db_record: dict) -> dict:
     })
 
     # --- Gender ---
-    ext_gen = _normalize(extracted.get("gender"))
-    db_gen = _normalize(db_record.get("gender"))
+    ext_gen = _normalize_gender(extracted.get("gender"))
+    db_gen = _normalize_gender(db_record.get("gender"))
     gen_match = ext_gen == db_gen if (ext_gen and db_gen) else None
     comparisons.append({
         "field": "Gender",
