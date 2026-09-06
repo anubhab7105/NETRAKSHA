@@ -26,8 +26,14 @@ _VENDOR = _ROOT / "vendor"
 
 # Where module evidence images are written. Environment-overridable so tests
 # and deployers can point at real object storage / app storage.
+# Treat a blank SCREEN_EVIDENCE_DIR the same as unset — an empty value would
+# otherwise resolve to "." (the process working directory) and litter the
+# project root with evidence PNGs (audit P1 §6).
+_evidence_env = os.environ.get("SCREEN_EVIDENCE_DIR", "").strip()
 EVIDENCE_DIR = pathlib.Path(
-    os.environ.get("SCREEN_EVIDENCE_DIR", str(_ROOT.parent / "samples" / "evidence"))
+    _evidence_env
+    if _evidence_env
+    else str(_ROOT.parent / "samples" / "evidence")
 )
 
 # InsightFace model root (buffalo_l pack). insightface appends `/models` to
