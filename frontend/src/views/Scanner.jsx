@@ -127,27 +127,27 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
   };
 
   return (
-    <div className="flex-1">
+    <div className="flex-1 min-w-0">
       <label className="block text-sm font-medium text-slate-300 mb-2">{label}</label>
-      <div className={`border-2 border-dashed rounded-xl p-5 text-center transition-all min-h-[280px] flex flex-col ${file ? 'border-success/50 bg-success/5' : 'border-slate-700 hover:border-primary/50'}`}>
+      <div className={`flex min-h-[260px] flex-col rounded-xl border-2 border-dashed p-4 text-center transition-all sm:min-h-[280px] sm:p-5 ${file ? 'border-success/50 bg-success/5' : 'border-slate-700 hover:border-primary/50'}`}>
         {file ? (
           <div className="flex flex-col items-center justify-center flex-1">
             {previewUrl && (
-              <img src={previewUrl} alt={label} className="max-h-[180px] object-contain rounded-lg mb-3 border border-slate-700/50" />
+              <img src={previewUrl} alt={label} className="mb-3 max-h-[180px] max-w-full rounded-lg border border-slate-700/50 object-contain" />
             )}
-            <p className="text-sm text-slate-200 font-medium truncate max-w-[200px]">{file.name}</p>
+            <p className="max-w-full truncate text-sm font-medium text-slate-200 sm:max-w-[260px]">{file.name}</p>
             <p className="text-xs text-slate-500 mt-1">{(file.size / 1024).toFixed(1)} KB</p>
-            <div className="flex gap-3 mt-4">
+            <div className="mt-4 flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
               <button
                 onClick={() => { stopStream(); onClear(); }}
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-3 py-2 transition-all"
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-400 transition-all hover:bg-slate-700 hover:text-white"
               >
                 <X size={14} />
                 Clear
               </button>
               <button
                 onClick={startCamera}
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-primary bg-primary/10 hover:bg-primary/20 border border-primary/40 rounded-lg px-3 py-2 transition-all"
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-xs font-medium text-primary transition-all hover:bg-primary/20"
               >
                 <RefreshCw size={14} />
                 Retake
@@ -163,7 +163,7 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
               playsInline
               muted
               onLoadedMetadata={() => setVideoReady(true)}
-              className="w-full h-[180px] object-contain bg-black rounded-lg border border-slate-700/50"
+              className="h-[180px] w-full rounded-lg border border-slate-700/50 bg-black object-contain sm:h-[220px] md:h-[180px]"
             />
             {bursting && (
               <div className="absolute inset-0 rounded-lg bg-black/70 flex flex-col items-center justify-center">
@@ -174,10 +174,10 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
           </div>
             <p className="text-xs text-slate-400 mt-2">{hint}</p>
             {error && <p className="text-xs text-danger mt-2">{error}</p>}
-            <div className="flex items-center justify-center gap-3 mt-3">
+            <div className="mt-3 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
               <button
                 onClick={stopStream}
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-3 py-2 transition-all"
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-400 transition-all hover:bg-slate-700 hover:text-white"
               >
                 <X size={14} />
                 Cancel
@@ -185,7 +185,7 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
               <button
                 onClick={capturePhoto}
                 disabled={!videoReady || bursting}
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-white bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 rounded-lg px-4 py-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-primary to-accent px-4 py-2 text-xs font-medium text-white transition-all hover:from-primary/90 hover:to-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {bursting ? <Loader2 size={14} className="animate-spin" /> : <Camera size={14} />}
                 {bursting ? 'Capturing…' : 'Capture Photo'}
@@ -263,7 +263,7 @@ export default function Scanner() {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in max-w-4xl mx-auto">
+    <div className="mx-auto max-w-4xl space-y-6 animate-fade-in">
       <header>
         <h2 className="text-2xl font-bold text-white">Kiosk Simulator</h2>
         <p className="text-slate-400 text-sm mt-1">Use the webcams to capture the identity document and the traveler's live face.</p>
@@ -275,7 +275,7 @@ export default function Scanner() {
         </div>
       )}
 
-      <div className="glass-panel p-6">
+      <div className="glass-panel p-4 sm:p-6">
         <div className="flex gap-6 mb-8 flex-col md:flex-row">
           <WebcamCapture
             label="1. Document Image (Required)"
@@ -298,11 +298,11 @@ export default function Scanner() {
           />
         </div>
 
-        <div className="flex justify-end pt-4 border-t border-slate-700/50">
+        <div className="flex justify-stretch border-t border-slate-700/50 pt-4 sm:justify-end">
           <button
             onClick={handleScan}
             disabled={scanning || !docFile}
-            className="bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 text-white font-medium px-8 py-3 rounded-lg transition-all shadow-lg shadow-primary/25 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-primary to-accent px-6 py-3 font-medium text-white shadow-lg shadow-primary/25 transition-all hover:from-primary/90 hover:to-accent/90 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:px-8"
           >
             {scanning ? (
               <>

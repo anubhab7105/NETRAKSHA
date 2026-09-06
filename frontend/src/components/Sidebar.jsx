@@ -26,9 +26,9 @@ export default function Sidebar() {
   const showAudit = role === 'supervisor' || role === 'auditor';
 
   return (
-    <aside className="w-64 bg-surface/50 border-r border-slate-700/50 backdrop-blur-xl flex flex-col justify-between z-20">
+    <aside className="z-20 flex w-full flex-col justify-between border-b border-slate-700/50 bg-surface/80 backdrop-blur-xl md:h-screen md:w-64 md:shrink-0 md:border-b-0 md:border-r md:bg-surface/50">
       <div>
-        <div className="p-6 flex items-center gap-3 border-b border-slate-700/50">
+        <div className="flex items-center gap-3 border-b border-slate-700/50 p-4 sm:p-5 md:p-6">
           <div className="bg-primary/20 p-2 rounded-lg text-primary">
             <Shield size={24} />
           </div>
@@ -38,37 +38,37 @@ export default function Sidebar() {
           </div>
         </div>
         
-        <nav className="p-4 space-y-2">
+        <nav className="flex gap-2 overflow-x-auto p-3 sm:p-4 md:block md:space-y-2 md:overflow-visible">
           <NavLink
             to="/"
-            className={({isActive}) => `flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${isActive ? 'bg-primary/10 text-primary font-medium shadow-[inset_2px_0_0_0_currentColor]' : 'text-slate-300 hover:bg-white/5 hover:text-white'}`}
+            className={({isActive}) => `flex shrink-0 items-center gap-2 px-3 py-2.5 rounded-lg text-sm transition-all md:gap-3 md:px-4 md:py-3 md:text-base ${isActive ? 'bg-primary/10 text-primary font-medium shadow-[inset_0_-2px_0_0_currentColor] md:shadow-[inset_2px_0_0_0_currentColor]' : 'text-slate-300 hover:bg-white/5 hover:text-white'}`}
           >
             <List size={20} />
-            Case Dashboard
+            <span className="whitespace-nowrap">Cases</span>
           </NavLink>
           {showScanner && (
             <NavLink
               to="/scan"
-              className={({isActive}) => `flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${isActive ? 'bg-primary/10 text-primary font-medium shadow-[inset_2px_0_0_0_currentColor]' : 'text-slate-300 hover:bg-white/5 hover:text-white'}`}
+              className={({isActive}) => `flex shrink-0 items-center gap-2 px-3 py-2.5 rounded-lg text-sm transition-all md:gap-3 md:px-4 md:py-3 md:text-base ${isActive ? 'bg-primary/10 text-primary font-medium shadow-[inset_0_-2px_0_0_currentColor] md:shadow-[inset_2px_0_0_0_currentColor]' : 'text-slate-300 hover:bg-white/5 hover:text-white'}`}
             >
               <Scan size={20} />
-              Kiosk Scanner
+              <span className="whitespace-nowrap">Scanner</span>
             </NavLink>
           )}
           {showAudit && (
             <NavLink
               to="/audit"
-              className={({isActive}) => `flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${isActive ? 'bg-primary/10 text-primary font-medium shadow-[inset_2px_0_0_0_currentColor]' : 'text-slate-300 hover:bg-white/5 hover:text-white'}`}
+              className={({isActive}) => `flex shrink-0 items-center gap-2 px-3 py-2.5 rounded-lg text-sm transition-all md:gap-3 md:px-4 md:py-3 md:text-base ${isActive ? 'bg-primary/10 text-primary font-medium shadow-[inset_0_-2px_0_0_currentColor] md:shadow-[inset_2px_0_0_0_currentColor]' : 'text-slate-300 hover:bg-white/5 hover:text-white'}`}
             >
               <ScrollText size={20} />
-              Audit Trail
+              <span className="whitespace-nowrap">Audit</span>
             </NavLink>
           )}
         </nav>
       </div>
 
-      <div className="p-4 border-t border-slate-700/50">
-        <div className="flex items-center gap-3 px-4 py-3 mb-2 rounded-lg bg-black/20">
+      <div className="flex items-center gap-2 border-t border-slate-700/50 p-3 sm:p-4 md:block">
+        <div className="mb-0 flex min-w-0 flex-1 items-center gap-3 rounded-lg bg-black/20 px-3 py-2.5 md:mb-2 md:px-4 md:py-3">
           <div className="bg-slate-700 rounded-full p-1">
             <User size={16} className="text-slate-300" />
           </div>
@@ -79,10 +79,10 @@ export default function Sidebar() {
         </div>
         <button 
           onClick={handleLogout}
-          className="w-full flex items-center gap-3 px-4 py-3 rounded-lg text-slate-400 hover:bg-danger/10 hover:text-danger transition-all"
+          className="flex shrink-0 items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm text-slate-400 transition-all hover:bg-danger/10 hover:text-danger md:w-full md:justify-start md:gap-3 md:px-4 md:py-3 md:text-base"
         >
           <LogOut size={20} />
-          Sign Out
+          <span className="hidden sm:inline">Sign Out</span>
         </button>
       </div>
     </aside>

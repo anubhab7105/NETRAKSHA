@@ -45,26 +45,26 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <header className="flex justify-between items-center">
+      <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-2xl font-bold text-white">Case Dashboard</h2>
           <p className="text-slate-400 text-sm mt-1">Monitor and adjudicate recent screenings.</p>
         </div>
-        <button onClick={fetchCases} className="p-2 rounded-lg bg-surface border border-slate-700 hover:bg-slate-700/50 transition-colors text-slate-300">
+        <button onClick={fetchCases} className="inline-flex w-full items-center justify-center rounded-lg border border-slate-700 bg-surface p-2 text-slate-300 transition-colors hover:bg-slate-700/50 sm:w-auto">
           <RefreshCw size={20} className={loading ? "animate-spin" : ""} />
         </button>
       </header>
 
       <div className="glass-panel overflow-hidden">
-        <div className="p-4 border-b border-slate-700/50 flex gap-4">
-          <div className="relative flex-1 max-w-md">
+        <div className="flex gap-4 border-b border-slate-700/50 p-4">
+          <div className="relative w-full sm:max-w-md">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
             <input type="text" placeholder="Search by case ID or document type..." className="w-full bg-black/20 border border-slate-700 rounded-lg pl-10 pr-4 py-2 text-sm text-white focus:outline-none focus:border-primary transition-colors" />
           </div>
         </div>
         
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
+          <table className="w-full min-w-[760px] border-collapse text-left">
             <thead>
               <tr className="bg-black/20 text-slate-400 text-xs uppercase tracking-wider">
                 <th className="px-6 py-4 font-medium">Case ID</th>
