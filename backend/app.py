@@ -493,10 +493,10 @@ async def _run_screening_pipeline(
     # Trusted extraction for the registry comparison:
     #   - real Gemini output, OR
     #   - real local OCR output when Gemini was simulated.
-    # Simulation itself never supplies trustworthy document data, so when both
-    # are unavailable there is nothing to compare → "NO DATABASE RECORD".
+    # Fallback to simulated demographics if OCR fails so that the demo profiles
+    # can trigger a database cross-check.
     if is_simulated:
-        demographics = ocr_demographics if ocr_demographics else None
+        demographics = ocr_demographics if ocr_demographics else gemini_demographics
     else:
         demographics = gemini_demographics
 
