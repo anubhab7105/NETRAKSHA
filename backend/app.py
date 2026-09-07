@@ -365,7 +365,7 @@ def _ocr_fields_to_demographics(ocr_raw):
             by_name[f["field_name"]] = f["value"]
     mrz_fields = ((ocr_raw or {}).get("mrz") or {}).get("fields") or {}
     for k, v in mrz_fields.items():
-        if v not in (None, "") and by_name.get(k) in (None, ""):
+        if v not in (None, ""):
             by_name[k] = v
     if not by_name:
         return {}
@@ -555,7 +555,7 @@ async def _run_screening_pipeline(
     if demographics and doc_number:
         async with async_session() as session:
             # Try to find a matching citizen by document number
-            norm_num = doc_number.replace(" ", "").replace("-", "").upper()
+            norm_num = _normalize_doc_number(doc_number)
             result = await session.execute(
                 select(CitizenRegistry).where(
                     CitizenRegistry.document_number == norm_num
