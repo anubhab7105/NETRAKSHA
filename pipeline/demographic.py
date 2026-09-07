@@ -14,7 +14,7 @@ Key features:
 from __future__ import annotations
 
 import re
-from typing import Any, Optional
+from typing import Optional
 
 
 def _normalize(value: Optional[str]) -> str:

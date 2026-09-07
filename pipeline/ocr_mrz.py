@@ -24,7 +24,6 @@ from __future__ import annotations
 import os
 import re
 import pathlib
-import subprocess
 from typing import List, Optional
 
 from .common import (
