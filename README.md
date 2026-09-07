@@ -187,3 +187,4 @@ python -m pytest tests/ -v
 3. **Physical Tampering:** Tampered/Altered Credential Image ➔ **RED / YELLOW** (Interactive ELA residual heatmap overlay highlights spliced zones)
 4. **Identity Imposter:** Genuine Document + Mismatched Live Face ➔ **RED** (3-way face verification flags biometric discrepancy with explainable forensic analysis)
 5. **Watchlist Hit:** Flagged Subject on Lookout Circular ➔ **RED (HIGH RISK)** (Prominent violet "MOCKED DATA" badge displayed)
+
