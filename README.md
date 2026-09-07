@@ -166,7 +166,15 @@ uv pip install -r requirements.txt
 # DATABASE_URL="postgresql+asyncpg://postgres:[password]@db.[ref].supabase.co:5432/postgres"
 # (If DATABASE_URL is omitted, the system defaults to local offline SQLite: sqlite+aiosqlite:///screening.db)
 
-# 5. Run test suite
+# 5. Verify runtime assets (liveness model + tesseract OCR):
+bash scripts/setup_vendor.sh
+# The liveness model (face_landmarker.task) is committed to the repo; the
+# script re-downloads it only if removed. Tesseract OCR must be installed on
+# the machine (see the apt/winget commands printed by the script) for
+# OCR/MRZ/demographic extraction to work. Without it, OCR and checksum
+# degrade to "inconclusive / N-A" and the document cannot be verified.
+
+# 6. Run test suite
 python -m pytest tests/ -v
 ```
 

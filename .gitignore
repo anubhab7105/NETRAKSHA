@@ -29,9 +29,11 @@ build/
 samples/evidence/
 tests/evidence/
 
-# Vendored large binary assets (model weights, tesseract runtime).
-# These are fetched/extracted by scripts/setup_vendor.sh; do not commit.
-pipeline/vendor/models/
+# Vendored binary assets. The liveness .task model is REQUIRED at runtime and
+# is committed (see scripts/setup_vendor.sh for re-download if it is removed).
+# The tesseract runtime is platform-specific and stays uncommitted.
+pipeline/vendor/models/*
+!pipeline/vendor/models/face_landmarker.task
 pipeline/vendor/tesseract/
 
 # Runtime caches / scratch

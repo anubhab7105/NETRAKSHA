@@ -383,6 +383,14 @@ def run_liveness(frame_burst) -> ModuleResult:
             f"expected a frame burst (>= {MIN_BURST_FRAMES} frames); got {len(frames)}",
         )
 
+    if not os.path.exists(_FACELANDMARKER_TASK):
+        return inconclusive_result(
+            MODULE_NAME,
+            "liveness engine model (face_landmarker.task) is not installed — "
+            "run `bash scripts/setup_vendor.sh` (or re-clone so the committed "
+            "model is present) and retry",
+        )
+
     try:
         stats = _analyse_burst(frames)
     except Exception as exc:  # noqa: BLE001

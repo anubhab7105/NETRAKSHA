@@ -526,6 +526,24 @@ async def _run_screening_pipeline(
             "icao_checks": icao_checks,
         }
 
+    # A checksum "Fail" is only meaningful when a number was actually read and
+    # failed its validation. If neither a document number nor MRZ could be
+    # machine-read (Gemini down + OCR unable), there is nothing to checksum —
+    # report it as not digitally verifiable (valid=None → UI "N/A") instead of
+    # a misleading Fail (audit P2 §4).
+    if checksum_result.get("valid") is False and not doc_number and not icao_validated:
+        checksum_result = {
+            "document_type": checksum_result.get("document_type") or "unknown",
+            "document_number": "",
+            "valid": None,
+            "method": "no_machine_readable_number",
+            "algorithm": None,
+            "detail": (
+                "No document number or MRZ could be machine-read, so the checksum "
+                "cannot be evaluated. Manual inspection required."
+            ),
+        }
+
     # ------------------------------------------------------------------
     # Step 3: Database demographic cross-check (post-OCR)
     # ------------------------------------------------------------------
