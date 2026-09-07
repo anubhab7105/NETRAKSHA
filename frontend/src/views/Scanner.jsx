@@ -304,18 +304,6 @@ export default function Scanner() {
             disabled={scanning || !docFile}
             className="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-primary to-accent px-6 py-3 font-medium text-white shadow-lg shadow-primary/25 transition-all hover:from-primary/90 hover:to-accent/90 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:px-8"
           >
-            {scanning ? (
-              <>
-                <Loader2 size={20} className="animate-spin" />
-                Processing (Avg: 1.5s)...
-              </>
-            ) : (
-              <>
-                <Scan size={20} />
-                Initiate Screening
-              </>
-            )}
-          </button>
         </div>
       </div>
     </div>
