@@ -37,13 +37,6 @@ const VerdictBanner = ({ verdict }) => {
   );
 };
 
-/** Reusable mocked-data badge */
-const MockedBadge = () => (
-  <span className="rounded border border-violet-500/30 bg-violet-500/20 px-2 py-1 text-xs font-medium text-violet-400 sm:ml-auto">
-    MOCKED DATA
-  </span>
-);
-
 /** Module status indicator */
 const StatusBadge = ({ status, score }) => {
   if (status === 'inconclusive') {
@@ -148,7 +141,7 @@ export default function CaseReport() {
         <div className="flex items-start gap-4 rounded-xl border border-warning/50 bg-warning/10 p-4 sm:p-6">
           <AlertTriangle size={24} className="text-warning shrink-0 mt-0.5" />
           <div>
-            <h3 className="text-lg font-bold text-warning">NO DATABASE RECORD FOUND</h3>
+            <h3 className="text-lg font-bold text-warning">NO DOCUMENT FOUND IN THE DATABASE</h3>
             <p className="text-sm text-warning/80 mt-1">
               No matching record exists in the citizens registry for this document, or the
               document could not be read automatically. The identity could not be verified
@@ -165,8 +158,6 @@ export default function CaseReport() {
           <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-slate-700/50 pb-4">
             <User className="text-primary" size={20} />
             <h3 className="text-lg font-semibold text-white">Demographic Parity</h3>
-            {/* Audit P2 §6: always show mocked badge for citizen registry data */}
-            {hasGenuineDbRecord && <MockedBadge />}
             {!hasGenuineDbRecord && (
               <span className="rounded border border-warning/30 bg-warning/20 px-2 py-1 text-xs font-medium text-warning sm:ml-auto">
                 NO DB RECORD
@@ -222,14 +213,15 @@ export default function CaseReport() {
             <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-slate-700/50 pb-4">
               <Scan className="text-accent" size={20} />
               <h3 className="text-lg font-semibold text-white">3-Way Face Match</h3>
-              {geminiModule && <StatusBadge status={geminiModule.status} />}
-              {geminiModule?.is_mocked && <MockedBadge />}
+              {geminiModule && !geminiModule.is_mocked && <StatusBadge status={geminiModule.status} />}
             </div>
             
-            {geminiModule?.status === 'inconclusive' ? (
+            {!geminiModule || geminiModule.status === 'inconclusive' || geminiModule.is_mocked ? (
               <div className="bg-warning/5 border border-warning/20 p-4 rounded-lg text-sm text-warning">
                 <AlertTriangle size={16} className="inline mr-2" />
-                AI module was inconclusive. Face verification results are not available.
+                {geminiModule?.is_mocked
+                  ? 'AI face verification is unavailable in this environment. No simulated results are displayed during document verification.'
+                  : 'AI module was inconclusive. Face verification results are not available.'}
               </div>
             ) : (
               <>
@@ -427,20 +419,23 @@ export default function CaseReport() {
       </div>
 
       {/* Watchlist Panel — always shown, even on clear (audit P2 §6) */}
-      <div className={`glass-panel p-4 sm:p-6 ${watchlistModule?.raw_output?.is_hit ? 'border-danger/50 bg-danger/5' : 'bg-black/5'}`}>
+      <div className={`glass-panel p-4 sm:p-6 ${!watchlistModule?.is_mocked && watchlistModule?.raw_output?.is_hit ? 'border-danger/50 bg-danger/5' : 'bg-black/5'}`}>
         <div className="mb-4 flex flex-wrap items-center gap-2">
-          <ShieldAlert className={watchlistModule?.raw_output?.is_hit ? 'text-danger' : 'text-slate-400'} size={24} />
+          <ShieldAlert className={!watchlistModule?.is_mocked && watchlistModule?.raw_output?.is_hit ? 'text-danger' : 'text-slate-400'} size={24} />
           <h3 className="text-lg font-semibold text-white">
             Watchlist Lookup
           </h3>
-          {watchlistModule?.raw_output?.is_hit ? (
+          {!watchlistModule?.is_mocked && (watchlistModule?.raw_output?.is_hit ? (
             <span className="ml-2 bg-danger/20 text-danger px-2 py-1 rounded text-xs font-medium border border-danger/30">HIT</span>
           ) : (
             <span className="ml-2 bg-success/20 text-success px-2 py-1 rounded text-xs font-medium border border-success/30">CLEAR</span>
-          )}
-          {watchlistModule?.is_mocked && <MockedBadge />}
+          ))}
         </div>
-        {watchlistModule?.raw_output?.is_hit ? (
+        {watchlistModule?.is_mocked ? (
+          <p className="text-sm text-slate-400">
+            Watchlist registry is not connected. Lookout results are unavailable and were not used in this screening.
+          </p>
+        ) : watchlistModule?.raw_output?.is_hit ? (
           <div className="space-y-2">
             {watchlistModule.raw_output.hits.map((hit, i) => (
               <div key={i} className="bg-black/40 p-4 rounded-lg border border-danger/20">
