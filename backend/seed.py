@@ -48,9 +48,9 @@ def _hash_password(plain: str) -> str:
 # ---------------------------------------------------------------------------
 
 OFFICERS = [
-    {"username": "officer1", "password": "Officer@123", "role": "officer"},
-    {"username": "supervisor1", "password": "Supervisor@123", "role": "supervisor"},
-    {"username": "auditor1", "password": "Auditor@123", "role": "auditor"},
+    {"username": os.environ.get("SEED_OFFICER_USER", "officer1"), "password": os.environ.get("SEED_OFFICER_PASS", "Officer@123"), "role": "officer"},
+    {"username": os.environ.get("SEED_SUPERVISOR_USER", "supervisor1"), "password": os.environ.get("SEED_SUPERVISOR_PASS", "Supervisor@123"), "role": "supervisor"},
+    {"username": os.environ.get("SEED_AUDITOR_USER", "auditor1"), "password": os.environ.get("SEED_AUDITOR_PASS", "Auditor@123"), "role": "auditor"},
 ]
 
 CITIZENS = [

@@ -349,7 +349,7 @@ def _analyse_burst(frames: List[np.ndarray]) -> dict:
     finally:
         try:
             landmarker.close()
-        except Exception:  # noqa: BLE001
+        except (RuntimeError, ValueError, IOError):  # noqa: BLE001
             pass
 
 

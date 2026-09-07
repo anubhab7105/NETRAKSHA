@@ -180,8 +180,7 @@ async def startup():
         if _DEMO_MODE:
             print("[startup] WARNING: Using default JWT secret in DEMO_MODE.")
         else:
-            print("[startup] WARNING: JWT_SECRET is set to the default value. "
-                  "Set a strong JWT_SECRET env var for production.")
+            raise RuntimeError("JWT_SECRET must be set for non-demo environments.")
 
     await init_db()
     # Auto-seed if database is empty
@@ -312,17 +311,19 @@ async def screen_document(
     officer = await _auth(request)
     officer_id = int(officer["sub"])
 
-    # Save uploaded files temporarily
     import tempfile
+
     doc_bytes = await document_image.read()
-    doc_tmp = Path(tempfile.mktemp(suffix=".png", prefix="screen_doc_"))
-    doc_tmp.write_bytes(doc_bytes)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix="screen_doc_") as tmp:
+        tmp.write(doc_bytes)
+        doc_tmp = Path(tmp.name)
 
     live_tmp = None
     if live_capture and live_capture.filename:
         live_bytes = await live_capture.read()
-        live_tmp = Path(tempfile.mktemp(suffix=".png", prefix="screen_live_"))
-        live_tmp.write_bytes(live_bytes)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix="screen_live_") as tmp:
+            tmp.write(live_bytes)
+            live_tmp = Path(tmp.name)
 
     # Frame burst for liveness (preferred over single still)
     live_frame_tmps = []
@@ -330,9 +331,9 @@ async def screen_document(
         for i, f in enumerate(live_frames):
             if f and f.filename:
                 fb = await f.read()
-                p = Path(tempfile.mktemp(suffix=".png", prefix=f"screen_burst_{i}_"))
-                p.write_bytes(fb)
-                live_frame_tmps.append(p)
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix=f"screen_burst_{i}_") as tmp:
+                    tmp.write(fb)
+                    live_frame_tmps.append(Path(tmp.name))
 
     burst = [str(p) for p in live_frame_tmps] or (
         [str(live_tmp)] if live_tmp else None

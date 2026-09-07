@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 import os
-import random
+import secrets
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -309,14 +309,14 @@ def _simulate_scan(
     with slight randomization for natural variance.
     """
     # Pick a random profile
-    profile_key = random.choice(list(_DEMO_PROFILES.keys()))
+    profile_key = secrets.choice(list(_DEMO_PROFILES.keys()))
     profile = _DEMO_PROFILES[profile_key].copy()
     demographics = profile["demographics"].copy()
 
     # Generate face match results
     has_db = db_reference_path is not None
     has_live = live_capture_path is not None
-    similarity = round(random.uniform(0.88, 0.96), 2)
+    similarity = round(secrets.SystemRandom().uniform(0.88, 0.96), 2)
 
     face_match = {
         "live_vs_doc_match": True if has_live else None,
@@ -360,7 +360,7 @@ def simulate_mismatch_scan(
         "live_vs_doc_match": False,
         "doc_vs_db_match": False if db_reference_path else None,
         "live_vs_db_match": False if db_reference_path else None,
-        "similarity_score": round(random.uniform(0.15, 0.35), 2),
+        "similarity_score": round(secrets.SystemRandom().uniform(0.15, 0.35), 2),
         "visual_reasoning": (
             "Significant facial discrepancies detected: jawline contour diverges "
             "markedly, interpupillary distance differs by >12%, and ear geometry "
