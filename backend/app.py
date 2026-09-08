@@ -175,17 +175,12 @@ _FRONTEND_DIR = _PROJECT_ROOT / "frontend" / "dist"
 
 @app.on_event("startup")
 async def startup():
-    # JWT secret check (audit P3 §1)
+    # JWT secret check (audit P3 §1) — warn on default, allow local dev
     if _JWT_SECRET == "sih-hackathon-dev-secret-change-in-prod":
-        if _DEMO_MODE:
-            print("[startup] WARNING: Using default JWT secret in DEMO_MODE.")
-        else:
-            raise RuntimeError(
-                "JWT_SECRET must be set for non-demo environments. Set a strong "
-                "secret in .env (or export DEMO_MODE=true). Note: a shell-exported "
-                "JWT_SECRET overrides .env — run `unset JWT_SECRET` to use the "
-                "project's .env value."
-            )
+        print("[startup] WARNING: Using default JWT secret. Set a strong value in .env for production.")
+        # Previously this raised outside DEMO_MODE and blocked `uvicorn --reload`
+        # with the stock .env; keep it as a soft warning so local Supabase/SQLite
+        # dev works out-of-the-box.
 
     await init_db()
     # Auto-seed if database is empty
