@@ -475,6 +475,21 @@ async def _run_screening_pipeline(
     photo_tamper = gemini_result.get("photo_tamper_anomaly", False)
     is_simulated = gemini_result.get("is_simulated", False)
 
+    # When Gemini is simulated (offline/no key), its "document_type" is a random
+    # demo placeholder and must not be shown as the real classification. Prefer
+    # the document type read from the actual document (MRZ / visible fields);
+    # otherwise report it as unknown so no mocked type is displayed.
+    if is_simulated:
+        ocr_type = next(
+            (
+                f.get("value")
+                for f in (ocr_result.raw_output or {}).get("fields") or []
+                if f.get("field_name") == "document_type" and f.get("value")
+            ),
+            None,
+        )
+        doc_type = ocr_type or "unknown"
+
     # No live capture → face verification is impossible, not "mismatched".
     # Strip any live-vs-* claims Gemini may have guessed at so an officer who
     # only uploads the document gets an honest "inconclusive" (→ Yellow min),
