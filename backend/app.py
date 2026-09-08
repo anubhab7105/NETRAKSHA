@@ -180,7 +180,12 @@ async def startup():
         if _DEMO_MODE:
             print("[startup] WARNING: Using default JWT secret in DEMO_MODE.")
         else:
-            raise RuntimeError("JWT_SECRET must be set for non-demo environments.")
+            raise RuntimeError(
+                "JWT_SECRET must be set for non-demo environments. Set a strong "
+                "secret in .env (or export DEMO_MODE=true). Note: a shell-exported "
+                "JWT_SECRET overrides .env — run `unset JWT_SECRET` to use the "
+                "project's .env value."
+            )
 
     await init_db()
     # Auto-seed if database is empty
