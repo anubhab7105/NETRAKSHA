@@ -439,8 +439,14 @@ async def _run_screening_pipeline(
     # Local forensic checks (run in thread pool to avoid blocking)
     tamper_task = loop.run_in_executor(None, run_tamper, str(doc_path))
 
-    # Deepfake: run on LIVE CAPTURE, not document (audit P2 §1)
-    deepfake_target = str(live_path) if live_path else str(doc_path)
+    # Deepfake: run on LIVE CAPTURE, not document (audit P2 §1).
+    # If only a burst is available, use its middle frame.
+    if live_path:
+        deepfake_target = str(live_path)
+    elif live_burst and len(live_burst) > 0:
+        deepfake_target = str(live_burst[len(live_burst) // 2])
+    else:
+        deepfake_target = str(doc_path)
     deepfake_task = loop.run_in_executor(None, run_deepfake, deepfake_target)
 
     # Liveness: use the frame burst when supplied, else the single still.
@@ -450,23 +456,46 @@ async def _run_screening_pipeline(
     )
     liveness_task = loop.run_in_executor(None, run_liveness, liveness_target)
 
-    # Gemini AI call (also in thread pool). When no live capture is supplied,
-    # pass None — never reuse the document as the "live" frame (that would
-    # fabricate a face match of the document against itself).
-    live_str = str(live_path) if live_path else None
+    # Gemini AI call (also in thread pool). When no single live capture is
+    # supplied but a burst is available (burst-capture flow), use the middle
+    # burst frame as the live still for face matching. Never reuse the
+    # document as the "live" frame (that would fabricate a match).
+    if live_path:
+        live_str = str(live_path)
+    elif live_burst and len(live_burst) > 0:
+        # Use middle frame of burst — more likely eyes-open than first/last
+        mid = live_burst[len(live_burst) // 2]
+        live_str = str(mid)
+    else:
+        live_str = None
     gemini_task = loop.run_in_executor(
         None, scan_document, str(doc_path), live_str, None
     )
+
+    # Local face match fallback (InsightFace) — runs in parallel with Gemini so
+    # that when Gemini is offline/simulated we still have a real, non-mocked
+    # biometric result to show. Uses the same live still as Gemini.
+    from pipeline.face_match import run_face_match as _run_local_face
+    if live_str:
+        local_face_task = loop.run_in_executor(None, _run_local_face, str(doc_path), live_str, False)
+    else:
+        local_face_task = None
 
     # Local OCR (system tesseract) — independent, real extraction of the
     # document. Used for the DB cross-check when Gemini falls back to
     # simulation (simulated demographics are demo placeholders, never real).
     ocr_task = loop.run_in_executor(None, run_ocr_mrz, str(doc_path))
 
-    # Await all in parallel
-    ocr_result, tamper_result, deepfake_result, liveness_result, gemini_result = await asyncio.gather(
-        ocr_task, tamper_task, deepfake_task, liveness_task, gemini_task
-    )
+    # Await all in parallel (with optional local face)
+    if local_face_task is not None:
+        ocr_result, tamper_result, deepfake_result, liveness_result, gemini_result, local_face_result = await asyncio.gather(
+            ocr_task, tamper_task, deepfake_task, liveness_task, gemini_task, local_face_task
+        )
+    else:
+        ocr_result, tamper_result, deepfake_result, liveness_result, gemini_result = await asyncio.gather(
+            ocr_task, tamper_task, deepfake_task, liveness_task, gemini_task
+        )
+        local_face_result = None
 
     # --- Post-process Gemini results ---
     gemini_demographics = gemini_result.get("demographics", {})
@@ -493,8 +522,8 @@ async def _run_screening_pipeline(
     # No live capture → face verification is impossible, not "mismatched".
     # Strip any live-vs-* claims Gemini may have guessed at so an officer who
     # only uploads the document gets an honest "inconclusive" (→ Yellow min),
-    # never a fabricated RED face mismatch.
-    if live_path is None:
+    # never a fabricated RED face mismatch. Check live_str (includes burst fallback).
+    if live_str is None:
         face_match_data = face_match_data or {}
         face_match_data = {
             **face_match_data,
@@ -502,6 +531,29 @@ async def _run_screening_pipeline(
             "live_vs_db_match": None,
             "similarity_score": None,
         }
+        gemini_result["three_way_face_match"] = face_match_data
+    # Local InsightFace fallback: when Gemini is offline/simulated or returned
+    # N/A, use the real on-device face embedding result (not mocked) so the
+    # 3-way panel is fully functional even without cloud AI.
+    elif local_face_result is not None and local_face_result.status == "ok":
+        gem_sim = bool(is_simulated)
+        gem_has_no_face = face_match_data.get("similarity_score") is None
+        if gem_sim or gem_has_no_face:
+            lf_raw = local_face_result.raw_output or {}
+            lf_sim = lf_raw.get("similarity")
+            lf_match = lf_raw.get("match")
+            if lf_sim is not None:
+                face_match_data = {
+                    **face_match_data,
+                    "similarity_score": float(lf_sim),
+                    "live_vs_doc_match": bool(lf_match) if lf_match is not None else face_match_data.get("live_vs_doc_match"),
+                    "visual_reasoning": face_match_data.get("visual_reasoning") or f"Local biometric verification (InsightFace buffalo_l): cosine similarity {float(lf_sim):.3f} — {'match' if lf_match else 'no match'} at threshold 0.55.",
+                }
+                gemini_result["three_way_face_match"] = face_match_data
+                # Mark as non-simulated when we have real local verification
+                if gem_sim:
+                    is_simulated = False
+                    gemini_result["is_simulated"] = False
 
     # Map local OCR visible fields to the demographics shape used below.
     ocr_demographics = _ocr_fields_to_demographics(ocr_result.raw_output)

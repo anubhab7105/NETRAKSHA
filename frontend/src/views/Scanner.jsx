@@ -232,7 +232,11 @@ export default function Scanner() {
     const formData = new FormData();
     formData.append('document_image', docFile);
     if (faceFile) {
-      if (Array.isArray(faceFile.burst)) {
+      if (Array.isArray(faceFile.burst) && faceFile.burst.length > 0) {
+        // Send the first frame as live_capture so 3-way face matching works,
+        // plus the full burst as live_frames for liveness blink detection.
+        const bestFrame = faceFile.burst[Math.floor(faceFile.burst.length / 2)] || faceFile.burst[0];
+        formData.append('live_capture', new File([bestFrame], 'live_capture.png', { type: 'image/png' }));
         faceFile.burst.forEach((b, i) =>
           formData.append('live_frames', new File([b], `live_frame_${i}.png`, { type: 'image/png' }))
         );
