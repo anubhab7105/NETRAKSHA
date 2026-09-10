@@ -6,7 +6,6 @@
       "destination": "/index.html"
     }
   ],
-  "errorPage": "/404.html",
   "headers": [
     {
       "source": "/assets/(.*)",
