@@ -35,7 +35,7 @@ export default function Dashboard() {
       const res = await api.get('/cases');
       setCases(res.data.cases);
     } catch (e) {
-      console.error(e);
+      if (import.meta.env.DEV) console.error(e);
     } finally {
       setLoading(false);
     }

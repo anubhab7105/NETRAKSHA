@@ -47,7 +47,7 @@
     <meta name="twitter:image" content="%SITE_URL%/og-image.png" />
     <meta name="twitter:image:alt" content="SSB Sentinel identity screening portal banner with the shield logo on a dark navy background" />
 
-    <!-- Structured data: organization + product -->
+    <!-- Structured data: organization + product + local business -->
     <script type="application/ld+json">
     {
       "@context": "https://schema.org",
@@ -68,6 +68,35 @@
             "addressLocality": "New Delhi",
             "addressRegion": "Delhi",
             "addressCountry": "IN"
+          }
+        },
+        {
+          "@type": "LocalBusiness",
+          "@id": "%SITE_URL%/#localbusiness",
+          "name": "SSB Sentinel — Border Security Screening Portal",
+          "description": "AI-assisted forensic identity document screening system deployed at SSB border checkpoints.",
+          "url": "%SITE_URL%/",
+          "parentOrganization": { "@id": "https://ssb.gov.in/#organization" },
+          "address": {
+            "@type": "PostalAddress",
+            "addressLocality": "New Delhi",
+            "addressRegion": "Delhi",
+            "addressCountry": "IN"
+          },
+          "geo": {
+            "@type": "GeoCoordinates",
+            "latitude": "28.6139",
+            "longitude": "77.2090"
+          },
+          "areaServed": {
+            "@type": "Country",
+            "name": "India"
+          },
+          "serviceType": "Border Security Identity Screening",
+          "availableChannel": {
+            "@type": "ServiceChannel",
+            "serviceUrl": "%SITE_URL%/",
+            "availableLanguage": ["en-IN", "hi-IN"]
           }
         },
         {

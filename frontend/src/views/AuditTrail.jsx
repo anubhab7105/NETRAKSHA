@@ -23,7 +23,7 @@ export default function AuditTrail() {
       setLogs(res.data.audit_logs || []);
       setCount(res.data.count || 0);
     } catch (err) {
-      console.error('Failed to fetch audit logs:', err);
+      if (import.meta.env.DEV) console.error('Failed to fetch audit logs:', err);
     } finally {
       setLoading(false);
     }

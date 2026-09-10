@@ -257,7 +257,7 @@ export default function Scanner() {
       });
       navigate(`/case/${res.data.case_id}`);
     } catch (err) {
-      console.error(err);
+      if (import.meta.env.DEV) console.error(err);
       const detail =
         err.response?.data?.detail ||
         (typeof err.response?.data === 'string' ? err.response.data : null);

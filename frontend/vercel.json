@@ -6,6 +6,7 @@
       "destination": "/index.html"
     }
   ],
+  "errorPage": "/404.html",
   "headers": [
     {
       "source": "/assets/(.*)",
@@ -17,7 +18,7 @@
       ]
     },
     {
-      "source": "/(favicon.ico|favicon.svg|favicon-32x32.png|apple-touch-icon.png|og-image.png|robots.txt|sitemap.xml|llms.txt)",
+      "source": "/(favicon.ico|favicon.svg|favicon-32x32.png|apple-touch-icon.png|og-image.png|robots.txt|sitemap.xml|llms.txt|404.html)",
       "headers": [
         {
           "key": "Cache-Control",

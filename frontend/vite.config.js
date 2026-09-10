@@ -86,16 +86,35 @@ export default defineConfig({
     // Never ship source maps to production (prevents source reconstruction
     // from the published bundle).
     sourcemap: false,
+    cssCodeSplit: true,
+    minify: 'esbuild',
+    chunkSizeWarningLimit: 500,
     rollupOptions: {
       output: {
         // Split heavy vendors out of the app chunk for parallel download
-        // and long-term caching. (Rolldown: advanced chunk groups.)
-        advancedChunks: {
-          groups: [
-            { name: 'react-vendor', test: /node_modules[\\/](react|react-dom|scheduler|react-router|react-router-dom)[\\/]/ },
-            { name: 'icons', test: /node_modules[\\/]lucide-react[\\/]/ },
-            { name: 'http-client', test: /node_modules[\\/](axios)[\\/]/ },
-          ],
+        // and long-term caching.
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom', 'scheduler'],
+          'router': ['react-router', 'react-router-dom'],
+          'icons': ['lucide-react'],
+          'http-client': ['axios'],
+        },
+        // Optimize chunk naming for caching
+        chunkFileNames: 'assets/js/[name]-[hash].js',
+        entryFileNames: 'assets/js/[name]-[hash].js',
+        assetFileNames: (assetInfo) => {
+          const info = assetInfo.name.split('.');
+          const ext = info[info.length - 1];
+          if (/\.(png|jpe?g|gif|svg|webp|avif|ico)$/.test(assetInfo.name)) {
+            return `assets/img/[name]-[hash].${ext}`;
+          }
+          if (/\.(woff2?|ttf|eot)$/.test(assetInfo.name)) {
+            return `assets/fonts/[name]-[hash].${ext}`;
+          }
+          if (/\.css$/.test(assetInfo.name)) {
+            return `assets/css/[name]-[hash].${ext}`;
+          }
+          return `assets/[name]-[hash].${ext}`;
         },
       },
     },
