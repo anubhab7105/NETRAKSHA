@@ -142,7 +142,7 @@ export default defineConfig({
     // from the published bundle).
     sourcemap: false,
     cssCodeSplit: true,
-    minify: 'esbuild',
+    minify: true,
     chunkSizeWarningLimit: 500,
     rollupOptions: {
       output: {
