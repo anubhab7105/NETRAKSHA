@@ -152,7 +152,9 @@ app.add_middleware(
     "http://localhost:8000",
     "http://127.0.0.1:8000",
     "http://[::1]:8000",
-    "https://sih-weld-psi.vercel.app"
+    "https://sih-weld-psi.vercel.app",
+    "https://netraksha.xyz",
+    "https://www.netraksha.xyz"
     ],
     allow_credentials=True,
     allow_methods=["*"],
