@@ -66,7 +66,7 @@ const sitemapXml = () => `<?xml version="1.0" encoding="UTF-8"?>
 </urlset>
 `
 
-const llmsTxt = () => `# Netraksha — AI Identity Document Screening
+const llmsTxt = () => `# Netraksha — See. Verify. Secure.
 # Sashastra Seema Bal, Ministry of Home Affairs (Government of India)
 
 ## Overview

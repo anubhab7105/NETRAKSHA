@@ -7,8 +7,12 @@
 
     <!-- Primary SEO -->
     <title>Page Not Found — Netraksha</title>
-    <meta name="description" content="The requested page does not exist on the Netraksha identity screening portal." />
+    <meta name="description" content="The requested page does not exist on Netraksha." />
     <link rel="canonical" href="https://netraksha.xyz/404" />
+    <meta name="robots" content="noindex" />
+    <meta name="author" content="Sashastra Seema Bal, Ministry of Home Affairs (Government of India)" />
+    <meta name="theme-color" content="#0F172A" />
+    <meta name="color-scheme" content="dark" />
 
     <!-- Icons -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
@@ -20,25 +24,63 @@
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Netraksha" />
     <meta property="og:title" content="Page Not Found — Netraksha" />
-    <meta property="og:description" content="The requested page does not exist on the Netraksha identity screening portal." />
+    <meta property="og:description" content="The requested page does not exist on Netraksha." />
     <meta property="og:url" content="https://netraksha.xyz/404" />
     <meta property="og:image" content="https://netraksha.xyz/og-image.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="Netraksha identity screening portal banner with the shield logo on a dark navy background" />
+    <meta property="og:image:alt" content="Netraksha banner with the shield logo on a dark navy background" />
     <meta property="og:locale" content="en_IN" />
 
     <!-- Twitter / X -->
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Page Not Found — Netraksha" />
-    <meta name="twitter:description" content="The requested page does not exist on the Netraksha identity screening portal." />
+    <meta name="twitter:description" content="The requested page does not exist on Netraksha." />
     <meta name="twitter:image" content="https://netraksha.xyz/og-image.png" />
-    <meta name="twitter:image:alt" content="Netraksha identity screening portal banner with the shield logo on a dark navy background" />
-
+    <meta name="twitter:image:alt" content="Netraksha banner with the shield logo on a dark navy background" />
+    
+    <!-- 
+      Tailwind via CDN (just for the 404 page before the app bundle loads).
+      Using the identical theme configuration as the main app.
+    -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              brand: {
+                50: '#f0f9ff',
+                100: '#e0f2fe',
+                200: '#bae6fd',
+                300: '#7dd3fc',
+                400: '#38bdf8',
+                500: '#0ea5e9',
+                600: '#0284c7',
+                700: '#0369a1',
+                800: '#075985',
+                900: '#0c4a6e',
+                950: '#082f49',
+              },
+            },
+            fontFamily: {
+              sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+            },
+          }
+        }
+      }
+    </script>
+    
     <!-- Structured data -->
     <script type="application/ld+json">
     {
       "@context": "https://schema.org",
+      "@type": "WebPage",
+      "@id": "https://netraksha.xyz/404#webpage",
+      "url": "https://netraksha.xyz/404",
+      "name": "Page Not Found",
+      "description": "The requested page does not exist on Netraksha.",
       "@graph": [
         {
           "@type": "GovernmentOrganization",
