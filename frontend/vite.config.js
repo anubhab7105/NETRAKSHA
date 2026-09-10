@@ -148,11 +148,19 @@ export default defineConfig({
       output: {
         // Split heavy vendors out of the app chunk for parallel download
         // and long-term caching.
-        manualChunks: {
-          'react-vendor': ['react', 'react-dom', 'scheduler'],
-          'router': ['react-router', 'react-router-dom'],
-          'icons': ['lucide-react'],
-          'http-client': ['axios'],
+        manualChunks(id) {
+          if (id.includes('node_modules/react/') || id.includes('node_modules/react-dom/') || id.includes('node_modules/scheduler/')) {
+            return 'react-vendor';
+          }
+          if (id.includes('node_modules/react-router/') || id.includes('node_modules/react-router-dom/')) {
+            return 'router';
+          }
+          if (id.includes('node_modules/lucide-react/')) {
+            return 'icons';
+          }
+          if (id.includes('node_modules/axios/')) {
+            return 'http-client';
+          }
         },
         // Optimize chunk naming for caching
         chunkFileNames: 'assets/js/[name]-[hash].js',
