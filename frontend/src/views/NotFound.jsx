@@ -10,7 +10,7 @@ export default function NotFound() {
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-8">
       <SEO
         title="Page Not Found"
-        description="The requested page does not exist on the Netraksha identity screening portal."
+        description="The requested page does not exist on Netraksha."
         path={window.location.pathname}
         noindex
       />
