@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Camera, Loader2, Scan, RefreshCw, X, Video, Image as ImageIcon } from 'lucide-react';
 import api from '../api';
+import SEO from '../components/SEO';
+import Breadcrumbs from '../components/Breadcrumbs';
 
 function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear, onAllowBurst }) {
   const videoRef = useRef(null);
@@ -133,7 +135,11 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
         {file ? (
           <div className="flex flex-col items-center justify-center flex-1">
             {previewUrl && (
-              <img src={previewUrl} alt={label} className="mb-3 max-h-[180px] max-w-full rounded-lg border border-slate-700/50 object-contain" />
+              <img
+                src={previewUrl}
+                alt={subject === 'document' ? 'Captured identity document preview' : 'Captured live face preview'}
+                className="mb-3 max-h-[180px] max-w-full rounded-lg border border-slate-700/50 object-contain"
+              />
             )}
             <p className="max-w-full truncate text-sm font-medium text-slate-200 sm:max-w-[260px]">{file.name}</p>
             <p className="text-xs text-slate-500 mt-1">{(file.size / 1024).toFixed(1)} KB</p>
@@ -268,8 +274,14 @@ export default function Scanner() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 animate-fade-in">
+      <SEO
+        title="Kiosk Scanner"
+        description="Capture an identity document and the traveler’s live face to run the full forensic screening pipeline and receive a composite risk verdict."
+        path="/scan"
+      />
+      <Breadcrumbs items={[{ label: 'Home', to: '/' }, { label: 'Kiosk Scanner' }]} />
       <header>
-        <h2 className="text-2xl font-bold text-white">Kiosk Simulator</h2>
+        <h1 className="text-2xl font-bold text-white">Kiosk Simulator</h1>
         <p className="text-slate-400 text-sm mt-1">Use the webcams to capture the identity document and the traveler's live face.</p>
       </header>
 

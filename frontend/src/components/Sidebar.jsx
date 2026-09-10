@@ -1,5 +1,5 @@
 import React from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { Shield, Scan, List, LogOut, User, ScrollText } from 'lucide-react';
 import api from '../api';
 
@@ -28,17 +28,18 @@ export default function Sidebar() {
   return (
     <aside className="z-20 flex w-full flex-col justify-between border-b border-slate-700/50 bg-surface/80 backdrop-blur-xl md:h-screen md:w-64 md:shrink-0 md:border-b-0 md:border-r md:bg-surface/50">
       <div>
-        <div className="flex items-center gap-3 border-b border-slate-700/50 p-4 sm:p-5 md:p-6">
+        <Link to="/" className="flex items-center gap-3 border-b border-slate-700/50 p-4 sm:p-5 md:p-6" aria-label="SSB Sentinel — go to Case Dashboard">
           <div className="bg-primary/20 p-2 rounded-lg text-primary">
             <Shield size={24} />
           </div>
           <div>
-            <h1 className="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary to-accent">SSB Sentinel</h1>
+            {/* Site brand — not a page heading (each view owns its own h1). */}
+            <p className="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary to-accent">SSB Sentinel</p>
             <p className="text-xs text-slate-400">Identity Screening</p>
           </div>
-        </div>
-        
-        <nav className="flex gap-2 overflow-x-auto p-3 sm:p-4 md:block md:space-y-2 md:overflow-visible">
+        </Link>
+
+        <nav aria-label="Primary navigation" className="flex gap-2 overflow-x-auto p-3 sm:p-4 md:block md:space-y-2 md:overflow-visible">
           <NavLink
             to="/"
             className={({isActive}) => `flex shrink-0 items-center gap-2 px-3 py-2.5 rounded-lg text-sm transition-all md:gap-3 md:px-4 md:py-3 md:text-base ${isActive ? 'bg-primary/10 text-primary font-medium shadow-[inset_0_-2px_0_0_currentColor] md:shadow-[inset_2px_0_0_0_currentColor]' : 'text-slate-300 hover:bg-white/5 hover:text-white'}`}
@@ -77,8 +78,9 @@ export default function Sidebar() {
             <p className="text-xs text-slate-400 uppercase tracking-wider">{role}</p>
           </div>
         </div>
-        <button 
+        <button
           onClick={handleLogout}
+          aria-label="Sign out"
           className="flex shrink-0 items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm text-slate-400 transition-all hover:bg-danger/10 hover:text-danger md:w-full md:justify-start md:gap-3 md:px-4 md:py-3 md:text-base"
         >
           <LogOut size={20} />

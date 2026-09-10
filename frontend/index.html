@@ -2,9 +2,95 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SSB Sentinel — Identity Screening</title>
+
+    <!-- Primary SEO -->
+    <title>SSB Sentinel — AI Identity Document Screening | Sashastra Seema Bal</title>
+    <meta
+      name="description"
+      content="SSB Sentinel is an AI-assisted forensic screening system for border checkpoints: six-layer document forensics, 3-way biometric face matching and liveness detection with an explainable Green/Yellow/Red risk verdict for authorized officers."
+    />
+    <meta name="robots" content="index, follow" />
+    <meta name="author" content="Sashastra Seema Bal, Ministry of Home Affairs (Government of India)" />
+    <meta name="theme-color" content="#0F172A" />
+    <meta name="color-scheme" content="dark" />
+    <link rel="canonical" href="%SITE_URL%/" />
+
+    <!-- Icons -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="SSB Sentinel" />
+    <meta property="og:title" content="SSB Sentinel — AI Identity Document Screening" />
+    <meta
+      property="og:description"
+      content="Six-layer document forensics, 3-way biometric face matching and liveness detection — real-time, explainable risk verdicts for border-security officers."
+    />
+    <meta property="og:url" content="%SITE_URL%/" />
+    <meta property="og:image" content="%SITE_URL%/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="SSB Sentinel identity screening portal banner with the shield logo on a dark navy background" />
+    <meta property="og:locale" content="en_IN" />
+
+    <!-- Twitter / X -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="SSB Sentinel — AI Identity Document Screening" />
+    <meta
+      name="twitter:description"
+      content="Six-layer document forensics, 3-way biometric face matching and liveness detection — real-time, explainable risk verdicts for border-security officers."
+    />
+    <meta name="twitter:image" content="%SITE_URL%/og-image.png" />
+    <meta name="twitter:image:alt" content="SSB Sentinel identity screening portal banner with the shield logo on a dark navy background" />
+
+    <!-- Structured data: organization + product -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "GovernmentOrganization",
+          "@id": "https://ssb.gov.in/#organization",
+          "name": "Sashastra Seema Bal",
+          "alternateName": "SSB",
+          "url": "https://ssb.gov.in/",
+          "parentOrganization": {
+            "@type": "GovernmentOrganization",
+            "name": "Ministry of Home Affairs, Government of India",
+            "url": "https://www.mha.gov.in/"
+          },
+          "address": {
+            "@type": "PostalAddress",
+            "addressLocality": "New Delhi",
+            "addressRegion": "Delhi",
+            "addressCountry": "IN"
+          }
+        },
+        {
+          "@type": "WebSite",
+          "@id": "%SITE_URL%/#website",
+          "url": "%SITE_URL%/",
+          "name": "SSB Sentinel",
+          "description": "AI-assisted identity document screening portal for border checkpoints.",
+          "publisher": { "@id": "https://ssb.gov.in/#organization" }
+        },
+        {
+          "@type": "SoftwareApplication",
+          "name": "SSB Sentinel",
+          "url": "%SITE_URL%/",
+          "applicationCategory": "SecurityApplication",
+          "operatingSystem": "Web",
+          "description": "Real-time forensic screening of travel credentials: document classification, OCR/MRZ checksum validation, database cross-verification, ELA tamper detection, FFT deepfake analysis, 3-way AI face matching and blink-based liveness detection.",
+          "author": { "@id": "https://ssb.gov.in/#organization" },
+          "offers": { "@type": "Offer", "price": "0", "priceCurrency": "INR" }
+        }
+      ]
+    }
+    </script>
   </head>
   <body>
     <div id="root"></div>

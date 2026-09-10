@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Shield, Lock, User, Loader2 } from 'lucide-react';
 import api from '../api';
+import SEO from '../components/SEO';
 
 export default function Login() {
   const [username, setUsername] = useState('');
@@ -29,6 +30,11 @@ export default function Login() {
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-8">
+      <SEO
+        title="Officer Login"
+        description="Secure sign-in for authorized Sashastra Seema Bal officers to the SSB Sentinel identity document screening portal."
+        path="/login"
+      />
       {/* Background blobs */}
       <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full bg-primary/20 blur-[120px] pointer-events-none"></div>
       <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] rounded-full bg-accent/20 blur-[120px] pointer-events-none"></div>
@@ -50,34 +56,36 @@ export default function Login() {
 
         <form onSubmit={handleLogin} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1">Username</label>
+            <label htmlFor="login-username" className="block text-sm font-medium text-slate-300 mb-1">Username</label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
                 <User size={18} />
               </div>
-              <input 
-                type="text" 
+              <input
+                id="login-username"
+                type="text"
+                autoComplete="username"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 className="w-full bg-black/20 border border-slate-700/50 rounded-lg pl-10 pr-4 py-2.5 text-white focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all"
-                placeholder="officer1"
                 required
               />
             </div>
           </div>
-          
+
           <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1">Password</label>
+            <label htmlFor="login-password" className="block text-sm font-medium text-slate-300 mb-1">Password</label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
                 <Lock size={18} />
               </div>
-              <input 
-                type="password" 
+              <input
+                id="login-password"
+                type="password"
+                autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className="w-full bg-black/20 border border-slate-700/50 rounded-lg pl-10 pr-4 py-2.5 text-white focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all"
-                placeholder="••••••••"
                 required
               />
             </div>

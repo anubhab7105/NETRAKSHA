@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { RefreshCw, Search, ShieldAlert, CheckCircle, AlertTriangle, FileText, ChevronRight } from 'lucide-react';
 import api from '../api';
+import SEO from '../components/SEO';
 
 const VerdictBadge = ({ verdict }) => {
   const styles = {
@@ -25,6 +26,7 @@ const VerdictBadge = ({ verdict }) => {
 export default function Dashboard() {
   const [cases, setCases] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState('');
   const navigate = useNavigate();
 
   const fetchCases = async () => {
@@ -43,14 +45,29 @@ export default function Dashboard() {
     fetchCases();
   }, []);
 
+  const filteredCases = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return cases;
+    return cases.filter((c) => {
+      const id = c.id.toString().padStart(4, '0');
+      const type = (c.document_type || '').toLowerCase();
+      return id.includes(q.replace(/^#/, '')) || type.includes(q);
+    });
+  }, [cases, query]);
+
   return (
     <div className="space-y-6 animate-fade-in">
+      <SEO
+        title="Case Dashboard"
+        description="Monitor and adjudicate identity screening cases: composite Green/Yellow/Red risk verdicts, review status and per-case forensic reports."
+        path="/"
+      />
       <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-white">Case Dashboard</h2>
+          <h1 className="text-2xl font-bold text-white">Case Dashboard</h1>
           <p className="text-slate-400 text-sm mt-1">Monitor and adjudicate recent screenings.</p>
         </div>
-        <button onClick={fetchCases} className="inline-flex w-full items-center justify-center rounded-lg border border-slate-700 bg-surface p-2 text-slate-300 transition-colors hover:bg-slate-700/50 sm:w-auto">
+        <button onClick={fetchCases} aria-label="Refresh case list" className="inline-flex w-full items-center justify-center rounded-lg border border-slate-700 bg-surface p-2 text-slate-300 transition-colors hover:bg-slate-700/50 sm:w-auto">
           <RefreshCw size={20} className={loading ? "animate-spin" : ""} />
         </button>
       </header>
@@ -59,7 +76,14 @@ export default function Dashboard() {
         <div className="flex gap-4 border-b border-slate-700/50 p-4">
           <div className="relative w-full sm:max-w-md">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
-            <input type="text" placeholder="Search by case ID or document type..." className="w-full bg-black/20 border border-slate-700 rounded-lg pl-10 pr-4 py-2 text-sm text-white focus:outline-none focus:border-primary transition-colors" />
+            <input
+              type="search"
+              aria-label="Search cases"
+              placeholder="Search by case ID or document type..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="w-full bg-black/20 border border-slate-700 rounded-lg pl-10 pr-4 py-2 text-sm text-white focus:outline-none focus:border-primary transition-colors"
+            />
           </div>
         </div>
         
@@ -80,12 +104,18 @@ export default function Dashboard() {
                 <tr>
                   <td colSpan="6" className="px-6 py-12 text-center text-slate-500">Loading cases...</td>
                 </tr>
-              ) : cases.length === 0 ? (
+              ) : filteredCases.length === 0 ? (
                 <tr>
-                  <td colSpan="6" className="px-6 py-12 text-center text-slate-500">No cases found. Start a screening!</td>
+                  <td colSpan="6" className="px-6 py-12 text-center text-slate-500">
+                    {cases.length === 0 ? (
+                      <>No cases yet. <Link to="/scan" className="text-primary hover:underline">Start a screening</Link> from the kiosk scanner.</>
+                    ) : (
+                      'No cases match your search.'
+                    )}
+                  </td>
                 </tr>
               ) : (
-                cases.map((c) => (
+                filteredCases.map((c) => (
                   <tr key={c.id} className="hover:bg-white/5 transition-colors group cursor-pointer" onClick={() => navigate(`/case/${c.id}`)}>
                     <td className="px-6 py-4 text-sm font-medium text-slate-300">#{c.id.toString().padStart(4, '0')}</td>
                     <td className="px-6 py-4 text-sm text-slate-400">{new Date(c.timestamp).toLocaleString()}</td>
@@ -104,7 +134,7 @@ export default function Dashboard() {
                       </span>
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <button className="text-slate-400 group-hover:text-white transition-colors">
+                      <button aria-label={`Open case #${c.id.toString().padStart(4, '0')}`} className="text-slate-400 group-hover:text-white transition-colors">
                         <ChevronRight size={20} />
                       </button>
                     </td>

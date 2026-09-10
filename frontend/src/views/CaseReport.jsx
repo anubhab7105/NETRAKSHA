@@ -6,6 +6,8 @@ import {
   Eye, Fingerprint, Hash, Radio
 } from 'lucide-react';
 import api from '../api';
+import SEO from '../components/SEO';
+import Breadcrumbs from '../components/Breadcrumbs';
 
 const VerdictBanner = ({ verdict }) => {
   const styles = {
@@ -30,7 +32,7 @@ const VerdictBanner = ({ verdict }) => {
         {icons[verdict]}
       </div>
       <div>
-        <h3 className="text-lg font-bold">SYSTEM VERDICT: {(verdict || 'UNKNOWN').toUpperCase()}</h3>
+        <h2 className="text-lg font-bold">SYSTEM VERDICT: {(verdict || 'UNKNOWN').toUpperCase()}</h2>
         <p className="text-sm opacity-90 mt-1">{descriptions[verdict] || 'Unable to determine risk level.'}</p>
       </div>
     </div>
@@ -59,7 +61,9 @@ export default function CaseReport() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
+  const [actionError, setActionError] = useState('');
   const [reason, setReason] = useState('');
+  const caseLabel = `Case #${(id ?? '').toString().padStart(4, '0')}`;
 
   useEffect(() => {
     const fetchCase = async () => {
@@ -77,15 +81,16 @@ export default function CaseReport() {
 
   const handleAction = async (action) => {
     if (reason.length < 3) {
-      alert("Please provide a reason (min 3 chars).");
+      setActionError('Please provide a justification (minimum 3 characters) before submitting a decision.');
       return;
     }
+    setActionError('');
     setActionLoading(true);
     try {
       await api.post(`/cases/${id}/override`, { action, reason });
       navigate('/');
-    } catch (err) {
-      alert("Failed to submit action.");
+    } catch {
+      setActionError('Failed to submit the decision. Check your connection and try again.');
       setActionLoading(false);
     }
   };
@@ -93,7 +98,7 @@ export default function CaseReport() {
   if (loading) {
     return <div className="flex h-64 items-center justify-center text-slate-400"><Loader2 className="animate-spin mr-2" /> Loading case report...</div>;
   }
-  
+
   if (!data || !data.case) {
     return <div className="text-center text-danger mt-10">Case not found.</div>;
   }
@@ -119,17 +124,24 @@ export default function CaseReport() {
 
   return (
     <div className="space-y-6 animate-fade-in pb-12">
+      <SEO
+        title={caseLabel}
+        description={`Forensic screening report for ${caseLabel}: demographic parity, 3-way face verification, tamper and deepfake analysis, liveness and watchlist results.`}
+        path={`/case/${id}`}
+        noindex
+      />
+      <Breadcrumbs items={[{ label: 'Home', to: '/' }, { label: 'Cases', to: '/' }, { label: caseLabel }]} />
       <div className="flex items-start gap-3 sm:items-center sm:gap-4">
-        <button onClick={() => navigate('/')} className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors">
+        <button onClick={() => navigate('/')} aria-label="Back to case dashboard" className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors">
           <ArrowLeft size={24} />
         </button>
         <div className="min-w-0">
-          <h2 className="flex flex-col gap-2 text-2xl font-bold text-white sm:flex-row sm:items-center sm:gap-3">
-            Case #{c.id.toString().padStart(4, '0')}
+          <h1 className="flex flex-col gap-2 text-2xl font-bold text-white sm:flex-row sm:items-center sm:gap-3">
+            {caseLabel}
             <span className="inline-flex w-fit items-center gap-2 rounded border border-slate-700 bg-slate-800 px-2.5 py-1 text-sm font-normal text-slate-300">
               <FileText size={14} /> {c.document_type?.toUpperCase() || 'UNKNOWN'}
             </span>
-          </h2>
+          </h1>
           <p className="text-slate-400 text-sm mt-1">{new Date(c.timestamp).toLocaleString()}</p>
         </div>
       </div>
