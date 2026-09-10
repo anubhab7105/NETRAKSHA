@@ -9,7 +9,7 @@ import { defineConfig } from 'vite'
 
 const BUILD_DATE = new Date().toISOString().slice(0, 10)
 
-const robotsTxt = () => `# SSB Sentinel — Identity Screening Portal
+const robotsTxt = () => `# Netraksha — See. Verify. Secure.
 # Public crawl policy. All application data sits behind officer authentication.
 
 User-agent: *
@@ -66,11 +66,11 @@ const sitemapXml = () => `<?xml version="1.0" encoding="UTF-8"?>
 </urlset>
 `
 
-const llmsTxt = () => `# SSB Sentinel — AI Identity Document Screening
+const llmsTxt = () => `# Netraksha — AI Identity Document Screening
 # Sashastra Seema Bal, Ministry of Home Affairs (Government of India)
 
 ## Overview
-SSB Sentinel is an AI-assisted forensic screening system for border checkpoints. It provides six-layer document forensics, 3-way biometric face matching, and liveness detection with an explainable Green/Yellow/Red risk verdict for authorized officers.
+Netraksha is an AI-assisted forensic screening system for border checkpoints. It provides six-layer document forensics, 3-way biometric face matching, and liveness detection with an explainable Green/Yellow/Red risk verdict for authorized officers.
 
 ## Key Pages
 - Home / Case Dashboard: ${SITE_URL}/ — Monitor and adjudicate identity screening cases

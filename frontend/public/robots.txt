@@ -1,4 +1,4 @@
-# SSB Sentinel — AI Identity Document Screening
+# Netraksha — AI Identity Document Screening
 # Sashastra Seema Bal, Ministry of Home Affairs (Government of India)
 
 User-agent: *
