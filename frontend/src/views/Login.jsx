@@ -32,7 +32,7 @@ export default function Login() {
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-8">
       <SEO
         title="Officer Login"
-        description="Secure sign-in for authorized Sashastra Seema Bal officers to the SSB Sentinel identity document screening portal."
+        description="Secure sign-in for authorized Sashastra Seema Bal officers to the Netraksha identity document screening portal."
         path="/login"
       />
       {/* Background blobs */}
@@ -44,8 +44,8 @@ export default function Login() {
           <div className="w-16 h-16 bg-gradient-to-br from-primary to-accent rounded-2xl flex items-center justify-center shadow-lg shadow-primary/20 mb-4">
             <Shield size={32} className="text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-white">SSB Sentinel</h1>
-          <p className="text-slate-400 text-sm mt-1">Identity Screening Portal</p>
+<h1 className="text-2xl font-bold text-white">Netraksha</h1>
+           <p className="text-slate-400 text-sm mt-1">See. Verify. Secure.</p>
         </div>
 
         {error && (

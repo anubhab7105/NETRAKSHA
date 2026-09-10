@@ -43,7 +43,7 @@ export default function AuditTrail() {
     <div className="space-y-6 animate-fade-in">
       <SEO
         title="Audit Trail"
-        description="Immutable, append-only event ledger of every automated screening check, officer decision and override across the SSB Sentinel system."
+        description="Immutable, append-only event ledger of every automated screening check, officer decision and override across the Netraksha system."
         path="/audit"
       />
       <Breadcrumbs items={[{ label: 'Home', to: '/' }, { label: 'Audit Trail' }]} />

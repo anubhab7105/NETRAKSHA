@@ -28,14 +28,14 @@ export default function Sidebar() {
   return (
     <aside className="z-20 flex w-full flex-col justify-between border-b border-slate-700/50 bg-surface/80 backdrop-blur-xl md:h-screen md:w-64 md:shrink-0 md:border-b-0 md:border-r md:bg-surface/50">
       <div>
-        <Link to="/" className="flex items-center gap-3 border-b border-slate-700/50 p-4 sm:p-5 md:p-6" aria-label="SSB Sentinel — go to Case Dashboard">
+        <Link to="/" className="flex items-center gap-3 border-b border-slate-700/50 p-4 sm:p-5 md:p-6" aria-label="Netraksha — go to Case Dashboard">
           <div className="bg-primary/20 p-2 rounded-lg text-primary">
             <Shield size={24} />
           </div>
           <div>
             {/* Site brand — not a page heading (each view owns its own h1). */}
-            <p className="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary to-accent">SSB Sentinel</p>
-            <p className="text-xs text-slate-400">Identity Screening</p>
+            <p className="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary to-accent">Netraksha</p>
+            <p className="text-xs text-slate-400">See. Verify. Secure.</p>
           </div>
         </Link>
 

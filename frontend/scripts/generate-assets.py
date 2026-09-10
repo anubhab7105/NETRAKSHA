@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate SSB Sentinel brand assets for the web frontend.
+"""Generate Netraksha brand assets for the web frontend.
 
 Outputs (written into frontend/public):
   favicon.svg          - copy of the hand-authored SVG mark (kept in sync here)
@@ -29,7 +29,7 @@ ACCENT = (139, 92, 246)      # #8B5CF6
 TEXT = (241, 245, 249)       # slate-100
 MUTED = (148, 163, 184)      # slate-400
 
-FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="SSB Sentinel">
+FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Netraksha">
   <defs>
     <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#3B82F6"/>
@@ -155,8 +155,8 @@ def generate_og_image(path):
     f_sub = load_font(["segoeui.ttf", "arial.ttf"], 38)
     f_small = load_font(["segoeui.ttf", "arial.ttf"], 27)
 
-    d.text((244, 118), "SSB SENTINEL", font=f_brand, fill=TEXT)
-    d.text((244, 172), "Identity Screening Portal", font=f_small, fill=MUTED)
+    d.text((244, 118), "NETRAKSHA", font=f_brand, fill=TEXT)
+    d.text((244, 172), "See. Verify. Secure.", font=f_small, fill=MUTED)
 
     d.text((96, 276), "AI Identity Document", font=f_title, fill=TEXT)
     d.text((96, 384), "Screening", font=f_title, fill=TEXT)
