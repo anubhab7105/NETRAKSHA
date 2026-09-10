@@ -146,6 +146,19 @@ def run_face_match(document_photo, live_capture, save_evidence: bool = True) -> 
     try:
         doc_face, doc_norm, doc_n = _detect_faces(app, doc)
         live_face, live_norm, live_n = _detect_faces(app, live)
+        # Document photos (Aadhaar etc.) have small faces — retry upscaled if needed
+        if doc_norm is None:
+            import cv2
+            h, w = doc.shape[:2]
+            if max(h, w) < 800:
+                doc_up = cv2.resize(doc, (int(w*1.8), int(h*1.8)), interpolation=cv2.INTER_CUBIC)
+                doc_face, doc_norm, doc_n = _detect_faces(app, doc_up)
+        if live_norm is None:
+            import cv2
+            h, w = live.shape[:2]
+            if max(h, w) < 500:
+                live_up = cv2.resize(live, (int(w*1.6), int(h*1.6)), interpolation=cv2.INTER_CUBIC)
+                live_face, live_norm, live_n = _detect_faces(app, live_up)
     except Exception as exc:  # noqa: BLE001
         return inconclusive_result(MODULE_NAME, exc)
 
