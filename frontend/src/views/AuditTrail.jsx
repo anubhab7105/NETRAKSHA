@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Loader2, ScrollText, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import api from '../api';
+import SEO from '../components/SEO';
+import Breadcrumbs from '../components/Breadcrumbs';
 
 export default function AuditTrail() {
   const [logs, setLogs] = useState([]);
@@ -39,13 +41,19 @@ export default function AuditTrail() {
 
   return (
     <div className="space-y-6 animate-fade-in">
+      <SEO
+        title="Audit Trail"
+        description="Immutable, append-only event ledger of every automated screening check, officer decision and override across the SSB Sentinel system."
+        path="/audit"
+      />
+      <Breadcrumbs items={[{ label: 'Home', to: '/' }, { label: 'Audit Trail' }]} />
       <header>
-        <h2 className="text-2xl font-bold text-white flex items-center gap-3">
+        <h1 className="text-2xl font-bold text-white flex items-center gap-3">
           <div className="bg-primary/20 p-2 rounded-lg text-primary">
             <ScrollText size={24} />
           </div>
           Audit Trail
-        </h2>
+        </h1>
         <p className="text-slate-400 text-sm mt-1">
           Immutable event ledger — every automated check and officer decision.
         </p>
@@ -54,22 +62,24 @@ export default function AuditTrail() {
       {/* Filters */}
       <form onSubmit={handleSearch} className="glass-panel flex flex-col gap-4 p-4 sm:flex-row sm:flex-wrap sm:items-end">
         <div className="min-w-0 flex-1 sm:min-w-[200px]">
-          <label className="block text-xs font-medium text-slate-400 mb-1">Actor</label>
+          <label htmlFor="audit-actor" className="block text-xs font-medium text-slate-400 mb-1">Actor</label>
           <input
+            id="audit-actor"
             type="text"
             value={actorFilter}
             onChange={(e) => setActorFilter(e.target.value)}
-            placeholder="e.g. officer1, system"
+            placeholder="Filter by officer username"
             className="w-full bg-black/30 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary transition-colors"
           />
         </div>
         <div className="min-w-0 flex-1 sm:min-w-[200px]">
-          <label className="block text-xs font-medium text-slate-400 mb-1">Entity</label>
+          <label htmlFor="audit-entity" className="block text-xs font-medium text-slate-400 mb-1">Entity</label>
           <input
+            id="audit-entity"
             type="text"
             value={entityFilter}
             onChange={(e) => setEntityFilter(e.target.value)}
-            placeholder="e.g. case:1, officer:2"
+            placeholder="e.g. case:12"
             className="w-full bg-black/30 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary transition-colors"
           />
         </div>
@@ -133,6 +143,7 @@ export default function AuditTrail() {
               <button
                 onClick={() => setOffset(Math.max(0, offset - limit))}
                 disabled={offset === 0}
+                aria-label="Previous page"
                 className="p-1.5 rounded text-slate-400 hover:text-white hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
               >
                 <ChevronLeft size={16} />
@@ -140,6 +151,7 @@ export default function AuditTrail() {
               <button
                 onClick={() => setOffset(offset + limit)}
                 disabled={count < limit}
+                aria-label="Next page"
                 className="p-1.5 rounded text-slate-400 hover:text-white hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
               >
                 <ChevronRight size={16} />

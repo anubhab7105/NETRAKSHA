@@ -153,7 +153,7 @@ export default function CaseReport() {
         <div className="flex items-start gap-4 rounded-xl border border-warning/50 bg-warning/10 p-4 sm:p-6">
           <AlertTriangle size={24} className="text-warning shrink-0 mt-0.5" />
           <div>
-            <h3 className="text-lg font-bold text-warning">NO DOCUMENT FOUND IN THE DATABASE</h3>
+            <h2 className="text-lg font-bold text-warning">NO DOCUMENT FOUND IN THE DATABASE</h2>
             <p className="text-sm text-warning/80 mt-1">
               No matching record exists in the citizens registry for this document, or the
               document could not be read automatically. The identity could not be verified
@@ -169,7 +169,7 @@ export default function CaseReport() {
         <div className="glass-panel p-4 sm:p-6">
           <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-slate-700/50 pb-4">
             <User className="text-primary" size={20} />
-            <h3 className="text-lg font-semibold text-white">Demographic Parity</h3>
+            <h2 className="text-lg font-semibold text-white">Demographic Parity</h2>
             {!hasGenuineDbRecord && (
               <span className="rounded border border-warning/30 bg-warning/20 px-2 py-1 text-xs font-medium text-warning sm:ml-auto">
                 NO DB RECORD
@@ -224,7 +224,7 @@ export default function CaseReport() {
           <div className="glass-panel p-4 sm:p-6">
             <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-slate-700/50 pb-4">
               <Scan className="text-accent" size={20} />
-              <h3 className="text-lg font-semibold text-white">3-Way Face Match</h3>
+              <h2 className="text-lg font-semibold text-white">3-Way Face Match</h2>
               {geminiModule && !geminiModule.is_mocked && <StatusBadge status={geminiModule.status} />}
             </div>
             
@@ -264,7 +264,7 @@ export default function CaseReport() {
                 
                 {faceMatch.visual_reasoning && (
                   <div className="bg-primary/5 border border-primary/20 p-4 rounded-lg">
-                    <h4 className="text-xs font-semibold text-primary uppercase tracking-wider mb-2">Forensic Reasoning</h4>
+                    <h3 className="text-xs font-semibold text-primary uppercase tracking-wider mb-2">Forensic Reasoning</h3>
                     <p className="text-sm text-slate-300 leading-relaxed">{faceMatch.visual_reasoning}</p>
                   </div>
                 )}
@@ -277,15 +277,15 @@ export default function CaseReport() {
             <div className="mb-4 flex flex-col gap-3 border-b border-slate-700/50 pb-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-2">
                 <Activity className="text-warning" size={20} />
-                <h3 className="text-lg font-semibold text-white">Tamper Detection</h3>
+                <h2 className="text-lg font-semibold text-white">Tamper Detection</h2>
               </div>
               {tamperModule && <StatusBadge status={tamperModule.status} score={tamperModule.score} />}
             </div>
             {tamperModule?.evidence_uri ? (
               <div className="relative rounded-lg overflow-hidden border border-slate-700 group">
-                <img 
-                  src={`${(import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api').replace('/api', '')}/evidence/${tamperModule.evidence_uri.split('/').pop()}`} 
-                  alt="Tamper Evidence" 
+                <img
+                  src={`${(import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api').replace('/api', '')}/evidence/${tamperModule.evidence_uri.split('/').pop()}`}
+                  alt="Error Level Analysis heatmap overlay highlighting suspected tampered regions of the submitted identity document"
                   className="w-full h-auto object-cover opacity-80 group-hover:opacity-100 transition-opacity"
                   onError={(e) => { e.target.style.display = 'none'; }}
                 />
@@ -310,7 +310,7 @@ export default function CaseReport() {
         <div className="glass-panel p-4 sm:p-6">
           <div className="flex items-center gap-2 mb-4 border-b border-slate-700/50 pb-4">
             <Fingerprint className="text-purple-400" size={20} />
-            <h3 className="text-base font-semibold text-white">Deepfake Detection</h3>
+            <h2 className="text-base font-semibold text-white">Deepfake Detection</h2>
           </div>
           {deepfakeModule ? (
             <div className="space-y-3">
@@ -349,7 +349,7 @@ export default function CaseReport() {
         <div className="glass-panel p-4 sm:p-6">
           <div className="flex items-center gap-2 mb-4 border-b border-slate-700/50 pb-4">
             <Eye className="text-cyan-400" size={20} />
-            <h3 className="text-base font-semibold text-white">Liveness Detection</h3>
+            <h2 className="text-base font-semibold text-white">Liveness Detection</h2>
           </div>
           {livenessModule ? (
             <div className="space-y-3">
@@ -400,7 +400,7 @@ export default function CaseReport() {
         <div className="glass-panel p-4 sm:p-6">
           <div className="flex items-center gap-2 mb-4 border-b border-slate-700/50 pb-4">
             <Hash className="text-emerald-400" size={20} />
-            <h3 className="text-base font-semibold text-white">Checksum Validation</h3>
+            <h2 className="text-base font-semibold text-white">Checksum Validation</h2>
           </div>
           {checksumModule ? (
             <div className="space-y-3">
@@ -434,9 +434,9 @@ export default function CaseReport() {
       <div className={`glass-panel p-4 sm:p-6 ${!watchlistModule?.is_mocked && watchlistModule?.raw_output?.is_hit ? 'border-danger/50 bg-danger/5' : 'bg-black/5'}`}>
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <ShieldAlert className={!watchlistModule?.is_mocked && watchlistModule?.raw_output?.is_hit ? 'text-danger' : 'text-slate-400'} size={24} />
-          <h3 className="text-lg font-semibold text-white">
+          <h2 className="text-lg font-semibold text-white">
             Watchlist Lookup
-          </h3>
+          </h2>
           {!watchlistModule?.is_mocked && (watchlistModule?.raw_output?.is_hit ? (
             <span className="ml-2 bg-danger/20 text-danger px-2 py-1 rounded text-xs font-medium border border-danger/30">HIT</span>
           ) : (
@@ -464,14 +464,23 @@ export default function CaseReport() {
       {/* Officer Action */}
       {c.status === 'pending_review' ? (
         <div className="glass-panel mt-6 border-t-4 border-t-primary p-4 sm:p-6">
-          <h3 className="text-lg font-semibold text-white mb-4">Officer Adjudication</h3>
+          <h2 className="text-lg font-semibold text-white mb-4">Officer Adjudication</h2>
           <div className="space-y-4">
-            <textarea 
+            <label htmlFor="adjudication-reason" className="block text-sm font-medium text-slate-300">
+              Decision justification <span className="text-slate-500">(required, minimum 3 characters)</span>
+            </label>
+            <textarea
+              id="adjudication-reason"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               className="w-full bg-black/20 border border-slate-700 rounded-lg p-4 text-white focus:outline-none focus:border-primary transition-colors text-sm min-h-[100px]"
-              placeholder="Mandatory justification for decision..."
+              placeholder="Record the grounds for this decision..."
             />
+            {actionError && (
+              <div role="alert" className="bg-danger/10 border border-danger/50 text-danger rounded-lg p-3 text-sm">
+                {actionError}
+              </div>
+            )}
             <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
               <button 
                 onClick={() => handleAction('clear')}

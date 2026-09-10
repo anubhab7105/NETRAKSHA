@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { SITE_URL, SITE_NAME, DEFAULT_DESCRIPTION, OG_IMAGE } from '../config/site';
+import { SITE_URL, SITE_NAME, SITE_TAGLINE, DEFAULT_DESCRIPTION, OG_IMAGE } from '../config/site';
 
 // Upserts a <meta> or <link> tag in <head>, keyed by name/property/rel.
 function upsert(selector, create) {
