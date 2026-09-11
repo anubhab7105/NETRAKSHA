@@ -48,6 +48,13 @@ from .common import (
 
 MODULE_NAME = "liveness"
 
+# Active challenge types — randomized per session
+CHALLENGE_TYPES = ["blink", "head_turn", "mouth_open"]
+# Minimum yaw (from face_quality yaw_proxy) for head_turn
+HEAD_YAW_THRESHOLD = 0.30  # ~25 degrees
+# Minimum mouth opening (normalized) for mouth_open
+MOUTH_OPEN_THRESHOLD = 0.04
+
 # minimum number of frames required to be considered a real burst
 MIN_BURST_FRAMES = 3
 # minimum fraction of frames with a detected face before we trust analysis
