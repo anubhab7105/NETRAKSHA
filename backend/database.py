@@ -77,6 +77,58 @@ async def init_db() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    # Post-fix columns on a pre-existing table are NOT added by create_all —
+    # backfill them so deployed SQLite/Postgres DBs pick up trust metadata
+    # with just a restart (no manual migration).
+    try:
+        await ensure_registry_trust_columns()
+    except Exception as e:
+        print(f"[init_db] registry trust-column migration warning: {e}")
+
+
+# Trust columns added to citizens_registry after the enrollment audit.
+# (name, DDL fragment used for ALTER TABLE on both SQLite and Postgres.)
+_REGISTRY_TRUST_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("source", "VARCHAR(30)"),
+    ("source_ref", "TEXT"),
+    ("verification_method", "VARCHAR(80)"),
+    ("photo_hash", "VARCHAR(64)"),
+    ("enrolled_by", "VARCHAR(100)"),
+    ("approved_by", "VARCHAR(100)"),
+    ("last_reconciled_at", "TIMESTAMP"),
+    ("reconciliation_status", "VARCHAR(30)"),
+)
+
+
+async def ensure_registry_trust_columns() -> dict:
+    """Add missing controlled-enrollment columns to citizens_registry.
+
+    Safe to run on every startup (idempotent). Returns {"added": [...]}.
+    """
+    added: list[str] = []
+    if _IS_SQLITE:
+        from sqlalchemy import text as _text
+        async with engine.begin() as conn:
+            res = await conn.execute(_text("PRAGMA table_info(citizens_registry)"))
+            existing = {row[1] for row in res.all()}
+            for name, ddl in _REGISTRY_TRUST_COLUMNS:
+                if name not in existing:
+                    await conn.execute(_text(f"ALTER TABLE citizens_registry ADD COLUMN {name} {ddl}"))
+                    added.append(name)
+    else:
+        from sqlalchemy import text as _text
+        async with engine.begin() as conn:
+            for name, ddl in _REGISTRY_TRUST_COLUMNS:
+                try:
+                    await conn.execute(_text(
+                        f"ALTER TABLE citizens_registry ADD COLUMN IF NOT EXISTS {name} {ddl}"
+                    ))
+                    added.append(name)
+                except Exception:
+                    pass
+    if added:
+        print(f"[init_db] citizens_registry trust columns added: {added}")
+    return {"added": added}
 
 
 async def drop_db() -> None:

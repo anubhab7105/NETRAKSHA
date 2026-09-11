@@ -189,6 +189,11 @@ async def seed_all() -> dict:
                 summary["officers_existed"] += 1
 
         # --- Citizens Registry ---
+        # Seed rows predate the dual-approval control: they are marked
+        # source=legacy_seed so screening treats them as `legacy`
+        # (grandfathered, Green still possible) while the reconciliation
+        # report flags them for authority re-verification. New enrollments
+        # must go through the dual-approval queue or a signed import.
         for c in CITIZENS:
             existing = await session.execute(
                 select(CitizenRegistry).where(
@@ -196,7 +201,21 @@ async def seed_all() -> dict:
                 )
             )
             if existing.scalar_one_or_none() is None:
-                session.add(CitizenRegistry(**c))
+                row = dict(c)
+                row.setdefault("source", "legacy_seed")
+                row.setdefault("source_ref", "seed-bootstrap")
+                row.setdefault("verification_method", "seed_bootstrap:authority re-verification owed")
+                row.setdefault("enrolled_by", "system:seed")
+                try:
+                    session.add(CitizenRegistry(**row))
+                except TypeError:
+                    # Older DB without trust columns (migration runs in
+                    # init_db before seed, so this is belt-and-braces).
+                    for k in ("source", "source_ref", "verification_method", "enrolled_by",
+                              "approved_by", "photo_hash", "last_reconciled_at",
+                              "reconciliation_status"):
+                        row.pop(k, None)
+                    session.add(CitizenRegistry(**row))
                 summary["citizens_created"] += 1
             else:
                 summary["citizens_existed"] += 1

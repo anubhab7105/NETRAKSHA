@@ -59,9 +59,11 @@ from backend.models import (
     AuditLog,
     CitizenRegistry,
     ExtractedField,
+    IdempotencyRecord,
     ModuleResultDB,
     Officer,
     OfficerAction,
+    RegistryEnrollment,
     ScreeningCase,
 )
 
@@ -170,6 +172,7 @@ def collect_provenance(file_hashes: Optional[dict] = None, extra: Optional[dict]
             "face_match": {"name": "insightface/buffalo_l", "threshold": _face_thr, "providers": "CPUExecutionProvider"},
             "liveness": {"name": "mediapipe/face_landmarker", "model": "face_landmarker.task"},
             "tamper": {"ela_threshold": 8.0, "copy_floor": _copy_floor, "copy_sat": _copy_sat},
+            "physical_forgery": {"method": "layout+mrz_font+photo_frame+printscan_moire+qr+hologram_inventory"},
             "deepfake": {"method": "fft_frequency_artifact_heuristic"},
             "gemini": {"model": os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")},
             "risk_engine": {"version": "1.0", "rules": "Green<0.35<Yellow<0.65<Red"},
@@ -178,6 +181,8 @@ def collect_provenance(file_hashes: Optional[dict] = None, extra: Optional[dict]
             "face_match": _face_thr,
             "tamper_high": 0.7,
             "tamper_moderate": 0.4,
+            "physical_high": 0.7,
+            "physical_moderate": 0.4,
             "deepfake_high": 0.7,
             "liveness": 0.45,
         },
@@ -262,6 +267,8 @@ async def startup():
         # dev works out-of-the-box.
 
     await init_db()
+    if _REGISTRY_IMPORT_SECRET_FALLBACK:
+        print("[startup] WARNING: REGISTRY_IMPORT_SECRET not set — authority imports are signed with JWT_SECRET. Set a dedicated REGISTRY_IMPORT_SECRET in .env for production.")
     # Auto-seed if database is empty
     try:
         from backend.seed import seed_all
@@ -400,7 +407,91 @@ async def logout(request: Request):
 
 # ---------------------------------------------------------------------------
 # 3. POST /api/screen — High-speed parallel screening
+#   Idempotency: requires `Idempotency-Key` header (or `idempotency_key`
+#   form field fallback). Deduplicates by (officer, session, input hash, key).
 # ---------------------------------------------------------------------------
+
+import re as _re
+
+_IDEMPOTENCY_KEY_RE = _re.compile(r"^[A-Za-z0-9\-_:.]{8,128}$")
+# Second-layer dedup window: same officer + session + input hash with a
+# *different* key still returns the original case (double-click guard).
+# Short window so a legitimate re-screen later creates a fresh case.
+_IDEMPOTENCY_HASH_WINDOW_MINUTES = 10
+
+
+def _extract_idempotency_key(request: Request, form_fallback: Optional[str] = None) -> str:
+    """Require a client-supplied idempotency key.
+
+    Accepts `Idempotency-Key` (standard) or `X-Idempotency-Key`, falling back
+    to the multipart `idempotency_key` form field for non-JS clients.
+    Raises 422 when missing or malformed.
+    """
+    key = (
+        request.headers.get("Idempotency-Key")
+        or request.headers.get("X-Idempotency-Key")
+        or (form_fallback or "")
+    )
+    key = (key or "").strip()
+    if not key:
+        raise HTTPException(
+            status_code=422,
+            detail="Missing Idempotency-Key: include a UUID v4 in the "
+                   "`Idempotency-Key` header (reuse the same key on retry).",
+        )
+    if not _IDEMPOTENCY_KEY_RE.match(key):
+        raise HTTPException(
+            status_code=422,
+            detail="Invalid Idempotency-Key: must be 8-128 chars of "
+                   "letters, digits, hyphen, underscore, colon or dot "
+                   "(UUID v4 recommended).",
+        )
+    return key
+
+
+def _compute_input_hash(file_hashes: dict) -> str:
+    """Stable SHA-256 over the sorted per-file hashes (officer/session-independent)."""
+    try:
+        canonical = json.dumps(file_hashes or {}, sort_keys=True).encode()
+    except Exception:
+        canonical = str(sorted((file_hashes or {}).items())).encode()
+    return hashlib.sha256(canonical).hexdigest()
+
+
+async def _load_case_result_payload(case_id: int) -> Optional[dict]:
+    """Rebuild the screening response body for an already-completed case.
+
+    Used for idempotent replays when no snapshot was stored (e.g. legacy
+    rows). Returns None if the case no longer exists.
+    """
+    async with async_session() as session:
+        res = await session.execute(select(ScreeningCase).where(ScreeningCase.id == case_id))
+        case = res.scalar_one_or_none()
+        if not case:
+            return None
+        fields_res = await session.execute(
+            select(ExtractedField).where(ExtractedField.case_id == case_id)
+        )
+        mods_res = await session.execute(
+            select(ModuleResultDB).where(ModuleResultDB.case_id == case_id)
+        )
+        mod_rows = mods_res.scalars().all()
+        modules = {m.module_name: m.to_dict() for m in mod_rows}
+        gem_raw = (modules.get("gemini_ai") or {}).get("raw_output") or {}
+        face = (gem_raw.get("three_way_face_match") if isinstance(gem_raw, dict) else None) or {}
+        return {
+            "case_id": case.id,
+            "document_type": case.document_type,
+            "risk_assessment": {
+                "verdict": case.verdict,
+                "risk_score": case.risk_score,
+            },
+            "module_results": list(modules.values()),
+            "extracted_fields": [f.to_dict() for f in fields_res.scalars().all()],
+            "face_verification": face,
+            "is_demo": bool((modules.get("gemini_ai") or {}).get("is_mocked")),
+        }
+
 
 @app.post("/screen", include_in_schema=False)
 @app.post("/api/screen")
@@ -409,6 +500,7 @@ async def screen_document(
     document_image: UploadFile = File(...),
     live_capture: UploadFile = File(None),
     live_frames: List[UploadFile] = File(None),
+    idempotency_key: Optional[str] = Form(None),
 ):
     """Execute parallel local CV + Gemini AI screening pipeline.
 
@@ -416,12 +508,20 @@ async def screen_document(
     live_capture, and/or an optional live_frames burst (multiple frames) so the
     liveness module receives enough frames for blink/EAR detection.
     Returns the full screening result with risk verdict.
+
+    Idempotency (duplicate-retry guard): the caller MUST send an
+    `Idempotency-Key` header. Retries with the same key + same officer +
+    same session + same input bytes return the original case instead of
+    creating a duplicate.
     """
     start_time = time.perf_counter()
 
     # Auth — mandatory (audit P1 §1)
     officer = await _auth(request)
     officer_id = int(officer["sub"])
+    session_id = officer.get("jti") or officer.get("session_id") or ""
+    # Idempotency key is REQUIRED — clients must reuse it on retry.
+    key = _extract_idempotency_key(request, idempotency_key)
     # Enriched audit context
     import hashlib, uuid as _uuid
     request_id = request.headers.get("X-Request-ID") or _uuid.uuid4().hex
@@ -435,7 +535,7 @@ async def screen_document(
     import tempfile
 
     doc_bytes = await document_image.read()
-    # Hash input files for audit trail
+    # Hash input files for audit trail + idempotency input hash
     doc_hash = hashlib.sha256(doc_bytes).hexdigest()
     file_hashes = {"document": doc_hash}
     with tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix="screen_doc_") as tmp:
@@ -465,6 +565,174 @@ async def screen_document(
         [str(live_tmp)] if live_tmp else None
     )
 
+    input_hash = _compute_input_hash(file_hashes)
+
+    # --- Idempotency check #1: exact key replay -------------------------
+    # Same (officer, key) seen before → return original, never a new case.
+    # Same key with a different session/input → 422 (client bug).
+    async with async_session() as _idem_session:
+        _existing = await _idem_session.execute(
+            select(IdempotencyRecord).where(
+                (IdempotencyRecord.officer_id == officer_id)
+                & (IdempotencyRecord.idempotency_key == key)
+            )
+        )
+        _row = _existing.scalar_one_or_none()
+        if _row is not None:
+            if (_row.session_id or "") != (session_id or "") or _row.input_hash != input_hash:
+                for p in [doc_tmp, live_tmp, *live_frame_tmps]:
+                    try:
+                        if p:
+                            p.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                raise HTTPException(
+                    status_code=422,
+                    detail="Idempotency-Key was already used with different "
+                           "session or input bytes. Generate a fresh key for a new screening.",
+                )
+            if _row.case_id is None:
+                # Stale in-progress claims (crash/killed worker) must not block
+                # the key forever — expire after 5 min and allow a fresh attempt.
+                try:
+                    _created_at = _row.created_at
+                    if _created_at is not None and _created_at.tzinfo is None:
+                        _created_at = _created_at.replace(tzinfo=timezone.utc)
+                    _age = (datetime.now(timezone.utc) - _created_at).total_seconds() if _created_at else 0
+                except Exception:
+                    _age = 0
+                if _age > 300:
+                    try:
+                        await _idem_session.delete(_row)
+                        await _idem_session.commit()
+                    except Exception:
+                        await _idem_session.rollback()
+                    # Fall through to claim + process below.
+                else:
+                    for p in [doc_tmp, live_tmp, *live_frame_tmps]:
+                        try:
+                            if p:
+                                p.unlink(missing_ok=True)
+                        except Exception:
+                            pass
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Screening with this Idempotency-Key is already in progress. "
+                               "Wait for the original request to finish instead of retrying.",
+                    )
+                _row = None  # stale claim purged — treat as first attempt below
+            if _row is not None and _row.case_id is not None:
+                # Completed replay — return the stored snapshot verbatim.
+                try:
+                    snapshot = json.loads(_row.response_snapshot) if _row.response_snapshot else None
+                except Exception:
+                    snapshot = None
+                if snapshot is None:
+                    snapshot = await _load_case_result_payload(_row.case_id) or {"case_id": _row.case_id}
+                if isinstance(snapshot, dict):
+                    snapshot = {**snapshot, "deduplicated": True, "idempotency_key": key}
+                for p in [doc_tmp, live_tmp, *live_frame_tmps]:
+                    try:
+                        if p:
+                            p.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                return snapshot
+            # _row is None here (no prior key, or stale claim just purged) —
+            # fall through to check #2 + claim below.
+
+        # --- Idempotency check #2: same officer + session + input bytes ----
+        # Catches double-clicks / parallel retries that minted a fresh key.
+        try:
+            _cutoff = datetime.now(timezone.utc) - timedelta(minutes=_IDEMPOTENCY_HASH_WINDOW_MINUTES)
+        except Exception:
+            _cutoff = None
+        _dup_q = (
+            select(IdempotencyRecord)
+            .where(
+                (IdempotencyRecord.officer_id == officer_id)
+                & (IdempotencyRecord.session_id == (session_id or ""))
+                & (IdempotencyRecord.input_hash == input_hash)
+                & (IdempotencyRecord.case_id.is_not(None))
+            )
+            .order_by(IdempotencyRecord.id.desc())
+            .limit(5)
+        )
+        _dup_res = await _idem_session.execute(_dup_q)
+        for _cand in _dup_res.scalars().all():
+            try:
+                _created = _cand.created_at
+                if _created is not None and _created.tzinfo is None:
+                    _created = _created.replace(tzinfo=timezone.utc)
+                if _cutoff is not None and _created is not None and _created < _cutoff:
+                    continue
+            except Exception:
+                pass
+            try:
+                snapshot = json.loads(_cand.response_snapshot) if _cand.response_snapshot else None
+            except Exception:
+                snapshot = None
+            if snapshot is None:
+                snapshot = await _load_case_result_payload(_cand.case_id) or {"case_id": _cand.case_id}
+            if isinstance(snapshot, dict):
+                snapshot = {
+                    **snapshot,
+                    "deduplicated": True,
+                    "idempotency_key": key,
+                    "duplicate_of_key": _cand.idempotency_key,
+                }
+            for p in [doc_tmp, live_tmp, *live_frame_tmps]:
+                try:
+                    if p:
+                        p.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            return snapshot
+
+        # --- Claim the key BEFORE running the pipeline --------------------
+        # The UNIQUE(officer_id, idempotency_key) constraint makes concurrent
+        # duplicates fail here; the loser returns the winner's case.
+        _claim = IdempotencyRecord(
+            idempotency_key=key,
+            officer_id=officer_id,
+            session_id=session_id or "",
+            input_hash=input_hash,
+            case_id=None,
+        )
+        _idem_session.add(_claim)
+        try:
+            await _idem_session.commit()
+        except Exception:
+            await _idem_session.rollback()
+            _race = await _idem_session.execute(
+                select(IdempotencyRecord).where(
+                    (IdempotencyRecord.officer_id == officer_id)
+                    & (IdempotencyRecord.idempotency_key == key)
+                )
+            )
+            _winner = _race.scalar_one_or_none()
+            for p in [doc_tmp, live_tmp, *live_frame_tmps]:
+                try:
+                    if p:
+                        p.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            if _winner is not None and _winner.case_id is not None:
+                try:
+                    snapshot = json.loads(_winner.response_snapshot) if _winner.response_snapshot else None
+                except Exception:
+                    snapshot = None
+                if snapshot is None:
+                    snapshot = await _load_case_result_payload(_winner.case_id) or {"case_id": _winner.case_id}
+                if isinstance(snapshot, dict):
+                    snapshot = {**snapshot, "deduplicated": True, "idempotency_key": key}
+                return snapshot
+            raise HTTPException(
+                status_code=409,
+                detail="Screening with this Idempotency-Key is already in progress. "
+                       "Wait for the original request to finish instead of retrying.",
+            )
+
     # Resolve officer unit for location scoping (least-privilege)
     officer_unit = officer.get("unit") or "BORDER_UNIT_1"
     if not officer.get("unit"):
@@ -480,12 +748,31 @@ async def screen_document(
         audit_context = {
             "officer_id": officer_id,
             "username": officer.get("username", "unknown"),
-            "session_id": officer.get("jti") or officer.get("session_id") or "",
+            "session_id": session_id,
             "request_id": request_id,
             "device_info": device_info,
             "file_hashes": file_hashes,
         }
         result = await _run_screening_pipeline(doc_tmp, live_tmp, officer_id, officer_unit, burst, audit_context)
+    except Exception:
+        # Pipeline failed — release the key immediately so a retry with the
+        # SAME key can proceed instead of hitting 409 for 5 minutes.
+        try:
+            async with async_session() as _fail_session:
+                _res = await _fail_session.execute(
+                    select(IdempotencyRecord).where(
+                        (IdempotencyRecord.officer_id == officer_id)
+                        & (IdempotencyRecord.idempotency_key == key)
+                        & (IdempotencyRecord.case_id.is_(None))
+                    )
+                )
+                _failed = _res.scalar_one_or_none()
+                if _failed is not None:
+                    await _fail_session.delete(_failed)
+                    await _fail_session.commit()
+        except Exception:
+            pass
+        raise
     finally:
         # Cleanup temp files
         doc_tmp.unlink(missing_ok=True)
@@ -497,7 +784,10 @@ async def screen_document(
     elapsed = (time.perf_counter() - start_time) * 1000
     result["total_latency_ms"] = round(elapsed, 1)
     result["request_id"] = request_id
-    result["session_id"] = officer.get("jti") or ""
+    result["session_id"] = session_id
+    result["idempotency_key"] = key
+    result["input_hash"] = input_hash
+    result["deduplicated"] = False
     # Also expose request_id as a response header for tracing (if using JSONResponse, set header)
     try:
         from fastapi.responses import JSONResponse
@@ -506,6 +796,27 @@ async def screen_document(
         pass
     except Exception:
         pass
+
+    # --- Complete the idempotency claim with the new case -----------------
+    try:
+        async with async_session() as _done_session:
+            _res = await _done_session.execute(
+                select(IdempotencyRecord).where(
+                    (IdempotencyRecord.officer_id == officer_id)
+                    & (IdempotencyRecord.idempotency_key == key)
+                )
+            )
+            _rec = _res.scalar_one_or_none()
+            if _rec is not None:
+                _rec.case_id = result.get("case_id")
+                try:
+                    _rec.response_snapshot = json.dumps(result, default=str)
+                except Exception:
+                    _rec.response_snapshot = json.dumps({"case_id": result.get("case_id")})
+                await _done_session.commit()
+    except Exception as e:
+        # Never fail the screening response because the dedup bookkeeping failed.
+        print(f"[idempotency] failed to complete claim for key {key[:8]}...: {e}")
 
     return result
 
@@ -559,6 +870,7 @@ async def _run_screening_pipeline(
 
     # Import pipeline modules
     from pipeline.tamper import run_tamper
+    from pipeline.physical_forgery import run_physical_forgery
     from pipeline.deepfake import run_deepfake
     from pipeline.liveness import run_liveness
     from pipeline.gemini_scanner import scan_document
@@ -571,30 +883,81 @@ async def _run_screening_pipeline(
     loop = asyncio.get_event_loop()
 
     # ------------------------------------------------------------------
-    # Step 1: Citizen DB lookup BEFORE Gemini (audit P1 §4)
-    #   → retrieve reference photo so Gemini gets all 3 images
+    # Step 0: live-still resolution (shared by every face comparison)
+    # ------------------------------------------------------------------
+    # When no single live capture is supplied but a burst is available
+    # (burst-capture flow), use the middle burst frame as the live still
+    # for face matching. Never reuse the document as the "live" frame
+    # (that would fabricate a match).
+    if live_path:
+        live_str = str(live_path)
+    elif live_burst and len(live_burst) > 0:
+        # Use middle frame of burst — more likely eyes-open than first/last
+        mid = live_burst[len(live_burst) // 2]
+        live_str = str(mid)
+    else:
+        live_str = None
+
+    # ------------------------------------------------------------------
+    # Step 1: REGISTRY FIRST — fast local OCR pre-pass → citizen lookup →
+    # reference photo, BEFORE any face verification runs (three-way fix).
+    # The DB photo feeds Gemini as Image 3 AND the local three-way matcher,
+    # so document↔live, document↔registry and live↔registry are all real
+    # comparisons instead of nulls/guesses.
     # ------------------------------------------------------------------
     db_record = None
     citizen_id = None
     db_photo_path = None
+    hint_key: tuple = (None, None)
 
-    # We need a preliminary doc number hint. For the initial lookup we
-    # cannot rely on Gemini (it hasn't run yet), so we do a broad lookup
-    # after Gemini. But we CAN pre-fetch a citizen if we have any prior
-    # context. For the MVP, we run Gemini in two logical steps:
-    #   a) Classification + OCR (fast, no face images needed)
-    #   b) 3-way face match (needs DB photo)
-    # Since the Gemini single-call bundles both, we accept that the
-    # first scan may lack the DB photo. If a citizen IS found post-OCR,
-    # the face match data from Gemini will still have live_vs_doc.
-    # The DB photo is passed when available.
+    ocr_result = await loop.run_in_executor(None, run_ocr_mrz, str(doc_path))
+    try:
+        _hint_demographics = _ocr_fields_to_demographics(ocr_result.raw_output)
+    except Exception:
+        _hint_demographics = {}
+    _hint_number = (_hint_demographics or {}).get("document_number", "")
+    # The OCR hint rarely yields a document_type; fall back to the MRZ slot.
+    _hint_type = next(
+        (
+            f.get("value")
+            for f in (ocr_result.raw_output or {}).get("fields") or []
+            if f.get("field_name") == "document_type" and f.get("value")
+        ),
+        None,
+    )
+    if not _hint_type:
+        _mrz_hint = ((ocr_result.raw_output or {}).get("mrz") or {}).get("fields") or {}
+        _mt = str(_mrz_hint.get("document_type") or "").strip().upper()
+        if _mt == "P":
+            _hint_type = "passport"
+        elif _mt.lower() in ("aadhaar", "pan", "voter_id", "passport"):
+            _hint_type = _mt.lower()
+    if _hint_number and _hint_type:
+        hint_key = ((_hint_type or "").strip().lower(), _normalize_doc_number(_hint_number))
+        _hint_citizen = await _find_citizen_by_number(hint_key[0], hint_key[1])
+        if _hint_citizen is not None:
+            citizen_id = _hint_citizen.id
+            try:
+                db_record = _hint_citizen.to_dict()
+            except Exception:
+                db_record = None
+            if _hint_citizen.photo_uri:
+                _candidate = _PROJECT_ROOT / _hint_citizen.photo_uri
+                if _candidate.exists():
+                    db_photo_path = str(_candidate)
 
     # ------------------------------------------------------------------
-    # Step 2: Parallel execution — local CV + Gemini AI
+    # Step 2: Parallel execution — local CV + Gemini AI + local 3-way
     # ------------------------------------------------------------------
 
     # Local forensic checks (run in thread pool to avoid blocking)
     tamper_task = loop.run_in_executor(None, run_tamper, str(doc_path))
+
+    # Physical forgery checks (layout/font/photo-frame/print-scan/QR/
+    # security print) — document-type aware via the Step-1 OCR hint.
+    physical_task = loop.run_in_executor(
+        None, run_physical_forgery, str(doc_path), _hint_type, _hint_number or None, True,
+    )
 
     # Deepfake: run on LIVE CAPTURE, not document (audit P2 §1).
     # If only a burst is available, use its middle frame.
@@ -624,46 +987,36 @@ async def _run_screening_pipeline(
 
         liveness_task = asyncio.create_task(_no_liveness())
 
-    # Gemini AI call (also in thread pool). When no single live capture is
-    # supplied but a burst is available (burst-capture flow), use the middle
-    # burst frame as the live still for face matching. Never reuse the
-    # document as the "live" frame (that would fabricate a match).
-    if live_path:
-        live_str = str(live_path)
-    elif live_burst and len(live_burst) > 0:
-        # Use middle frame of burst — more likely eyes-open than first/last
-        mid = live_burst[len(live_burst) // 2]
-        live_str = str(mid)
-    else:
-        live_str = None
+    # Gemini AI call (also in thread pool) — now WITH the registry photo as
+    # Image 3 whenever Step 1 found one, so its doc_vs_db / live_vs_db
+    # verdicts are grounded instead of guessed-or-null.
     gemini_task = loop.run_in_executor(
-        None, scan_document, str(doc_path), live_str, None
+        None, scan_document, str(doc_path), live_str, db_photo_path
     )
 
-    # Local face match fallback (InsightFace) — runs in parallel with Gemini so
-    # that when Gemini is offline/simulated we still have a real, non-mocked
-    # biometric result to show. Uses the same live still as Gemini.
-    from pipeline.face_match import run_face_match as _run_local_face
-    if live_str:
-        local_face_task = loop.run_in_executor(None, _run_local_face, str(doc_path), live_str, False)
-    else:
-        local_face_task = None
+    # Local three-way face match (InsightFace, evidence-backed) — all three
+    # pairs in one worker: doc↔live, doc↔registry, live↔registry. Runs in
+    # parallel with Gemini; authoritative for scoring whenever ok.
+    from pipeline.face_match import run_three_way_match as _run_local_three_way
 
-    # Local OCR (system tesseract) — independent, real extraction of the
-    # document. Used for the DB cross-check when Gemini falls back to
-    # simulation (simulated demographics are demo placeholders, never real).
-    ocr_task = loop.run_in_executor(None, run_ocr_mrz, str(doc_path))
+    def _three_way_job():
+        try:
+            return run_three_way_match(str(doc_path), live_str, db_photo_path, save_evidence=False)
+        except Exception as exc:  # noqa: BLE001 — never fail screening on biometrics
+            return {
+                "pairs": {}, "completeness": "unavailable",
+                "db_pairs_unavailable_reason": f"comparison_failed: {type(exc).__name__}",
+                "recapture_requested": False, "recapture_target": None,
+                "recapture_reasons": [], "primary": {"similarity": None, "match": None},
+            }
 
-    # Await all in parallel (with optional local face)
-    if local_face_task is not None:
-        ocr_result, tamper_result, deepfake_result, liveness_result, gemini_result, local_face_result = await asyncio.gather(
-            ocr_task, tamper_task, deepfake_task, liveness_task, gemini_task, local_face_task
-        )
-    else:
-        ocr_result, tamper_result, deepfake_result, liveness_result, gemini_result = await asyncio.gather(
-            ocr_task, tamper_task, deepfake_task, liveness_task, gemini_task
-        )
-        local_face_result = None
+    local_three_way_task = loop.run_in_executor(None, _three_way_job)
+
+    # Await all in parallel (OCR already completed in Step 1 and is reused).
+    tamper_result, physical_result, deepfake_result, liveness_result, gemini_result, local_three_way = await asyncio.gather(
+        tamper_task, physical_task, deepfake_task, liveness_task, gemini_task, local_three_way_task
+    )
+    local_face_result = None  # legacy single-pair slot: superseded by local_three_way
 
     # --- Post-process Gemini results ---
     gemini_demographics = gemini_result.get("demographics", {})
@@ -699,47 +1052,115 @@ async def _run_screening_pipeline(
         doc_type = (ocr_type or "unknown").strip().lower()
 
     face_is_real_via_local = False
-    # No live capture → face verification is impossible, not "mismatched".
-    # Strip any live-vs-* claims Gemini may have guessed at so an officer who
-    # only uploads the document gets an honest "inconclusive" (→ Yellow min),
-    # never a fabricated RED face mismatch. Check live_str (includes burst fallback).
+    # --- Merge the three-way comparison (registry-first) ---
+    # Local InsightFace pairs are evidence-backed and authoritative for the
+    # registry legs: a local ok-result ALWAYS overwrites Gemini's
+    # doc_vs_db / live_vs_db (previously an unevidenced guess could stick).
+    # For the live↔doc leg, a real (non-simulated) Gemini verdict keeps
+    # precedence as before; the local pair fills in when Gemini is
+    # simulated or silent. No live capture → live legs are impossible.
+    tw = local_three_way if isinstance(local_three_way, dict) else {}
+    tw_pairs = tw.get("pairs") or {}
+    tw_live = tw_pairs.get("live_vs_doc") or {}
+    tw_docdb = tw_pairs.get("doc_vs_db") or {}
+    tw_livedb = tw_pairs.get("live_vs_db") or {}
+    pair_sources: dict = {}
+    face_match_data = face_match_data or {}
+
     if live_str is None:
-        face_match_data = face_match_data or {}
+        # Face verification is impossible, not "mismatched" (→ Yellow min).
         face_match_data = {
             **face_match_data,
             "live_vs_doc_match": None,
             "live_vs_db_match": None,
+            "live_vs_doc_similarity": None,
+            "live_vs_db_similarity": None,
             "similarity_score": None,
         }
+        pair_sources.update({"live_vs_doc": "none", "live_vs_db": "none"})
+    else:
+        gem_sim_live = face_match_data.get("similarity_score")
+        gem_match_live = face_match_data.get("live_vs_doc_match")
+        if not is_simulated and gem_sim_live is not None:
+            pair_sources["live_vs_doc"] = "gemini"
+            if tw_live.get("status") == "ok":
+                pair_sources["live_vs_doc"] = "gemini+local_agree" if bool(tw_live.get("match")) == bool(gem_match_live) else "gemini+local_disagree"
+                face_match_data["local_live_vs_doc_similarity"] = tw_live.get("similarity")
+        elif tw_live.get("status") == "ok" and tw_live.get("similarity") is not None:
+            face_match_data = {
+                **face_match_data,
+                "similarity_score": float(tw_live["similarity"]),
+                "live_vs_doc_match": bool(tw_live["match"]) if tw_live.get("match") is not None else face_match_data.get("live_vs_doc_match"),
+                "live_vs_doc_similarity": float(tw_live["similarity"]),
+                "visual_reasoning": face_match_data.get("visual_reasoning") or f"Local biometric verification (InsightFace buffalo_l): cosine similarity {float(tw_live['similarity']):.3f} — {'match' if tw_live.get('match') else 'no match'} at threshold 0.55.",
+            }
+            pair_sources["live_vs_doc"] = "local"
+            gemini_result["face_is_real_via_local"] = True
+            face_is_real_via_local = True
+        else:
+            pair_sources["live_vs_doc"] = "none"
+    gemini_result["three_way_face_match"] = face_match_data
+
+    # Registry legs: local evidence wins outright (fixes unevidenced guesses).
+    for _key, _pair, _mkey, _skey in (
+        ("doc_vs_db", tw_docdb, "doc_vs_db_match", "doc_vs_db_similarity"),
+        ("live_vs_db", tw_livedb, "live_vs_db_match", "live_vs_db_similarity"),
+    ):
+        if _pair.get("status") == "ok":
+            face_match_data[_mkey] = bool(_pair["match"]) if _pair.get("match") is not None else None
+            face_match_data[_skey] = float(_pair["similarity"]) if _pair.get("similarity") is not None else None
+            pair_sources[_key] = "local"
+        elif not is_simulated and face_match_data.get(_mkey) is not None:
+            pair_sources[_key] = pair_sources.get(_key) or "gemini"
+        else:
+            face_match_data[_mkey] = None
+            face_match_data[_skey] = None
+            pair_sources[_key] = pair_sources.get(_key) or "none"
+    gemini_result["three_way_face_match"] = face_match_data
+
+    # Face quality gate → recapture signal. The local three-way reports
+    # quality failures as inconclusive + recapture_requested (never a fake
+    # match/mismatch). Surface that on the 3-way panel (persisted inside the
+    # gemini payload) and as top-level response fields so the UI can prompt
+    # a recapture. A recapture is actionable only when no trustworthy real
+    # face verdict exists from either engine.
+    face_quality_block = None
+    recapture_requested = False
+    recapture_reasons: list = []
+    recapture_target = None
+    try:
+        _warnings: list = []
+        for _p in (tw_live, tw_docdb, tw_livedb):
+            _warnings.extend(_p.get("warnings") or [])
+            if isinstance(_p.get("face_quality"), dict):
+                for _side in ("live", "document"):
+                    _warnings.extend(((_p["face_quality"].get(_side) or {}).get("warnings") or []))
+        _gate = "passed" if (tw_live.get("status") == "ok") else "partial"
+        if tw.get("recapture_requested"):
+            _gate = "failed"
+        face_quality_block = {
+            "engine": "insightface_local",
+            "gate": _gate,
+            "pair_status": {k: (tw_pairs.get(k) or {}).get("status") for k in ("live_vs_doc", "doc_vs_db", "live_vs_db")},
+            "warnings": _warnings,
+        }
+        face_match_data = {**(face_match_data or {}), "face_quality": face_quality_block}
         gemini_result["three_way_face_match"] = face_match_data
-    # Local InsightFace fallback: when Gemini is offline/simulated or returned
-    # N/A, use the real on-device face embedding result (not mocked) so the
-    # 3-way panel is fully functional even without cloud AI.
-    elif local_face_result is not None and local_face_result.status == "ok":
-        gem_sim = bool(is_simulated)
-        gem_has_no_face = face_match_data.get("similarity_score") is None
-        if gem_sim or gem_has_no_face:
-            lf_raw = local_face_result.raw_output or {}
-            lf_sim = lf_raw.get("similarity")
-            lf_match = lf_raw.get("match")
-            if lf_sim is not None:
+        if tw.get("recapture_requested"):
+            gem_has_verdict = face_match_data.get("similarity_score") is not None
+            if not gem_has_verdict:
+                recapture_requested = True
+                recapture_reasons = list(tw.get("recapture_reasons") or [])
+                recapture_target = tw.get("recapture_target")
                 face_match_data = {
-                    **face_match_data,
-                    "similarity_score": float(lf_sim),
-                    "live_vs_doc_match": bool(lf_match) if lf_match is not None else face_match_data.get("live_vs_doc_match"),
-                    "visual_reasoning": face_match_data.get("visual_reasoning") or f"Local biometric verification (InsightFace buffalo_l): cosine similarity {float(lf_sim):.3f} — {'match' if lf_match else 'no match'} at threshold 0.55.",
+                    **(face_match_data or {}),
+                    "recapture_requested": True,
+                    "recapture_target": recapture_target,
+                    "recapture_reasons": recapture_reasons,
                 }
                 gemini_result["three_way_face_match"] = face_match_data
-                # Keep is_simulated for demographics (still simulated) but mark face as real
-                # so risk can include it and UI can show it even though gemini is mocked.
-                gemini_result["face_is_real_via_local"] = True
-                face_is_real_via_local = True
-            else:
-                face_is_real_via_local = False
-        else:
-            face_is_real_via_local = False
-    else:
-        face_is_real_via_local = False
+    except Exception:
+        pass
 
     # Map local OCR visible fields to the demographics shape used below.
     ocr_demographics = _ocr_fields_to_demographics(ocr_result.raw_output)
@@ -799,93 +1220,126 @@ async def _run_screening_pipeline(
         }
 
     # ------------------------------------------------------------------
-    # Step 3: Database demographic cross-check (post-OCR)
+    # Step 3: Database demographic cross-check (final demographics)
     # ------------------------------------------------------------------
     # The comparison runs whenever we have TRUSTED extraction (real Gemini OR
     # real local OCR). Simulated demo text never drives a comparison, but a
     # matching real document still gets its verdict. If no extraction could be
     # read, the document cannot be verified → officer does a manual check.
+    # The Step-1 registry hit is reused when the final (type, number) key
+    # matches the OCR hint; otherwise we re-query (real Gemini can correct
+    # a misread hint).
     demographic_result = None
+    registry_trust = None
+    db_photo_late = False
     norm_type = (doc_type or "").strip().lower()
     if demographics and doc_number and norm_type and norm_type != "unknown":
-        async with async_session() as session:
-            # Registry lookup MUST be on (type + number) — a PAN number must
-            # never match an Aadhaar record with the same digits.
-            norm_num = _normalize_doc_number(doc_number)
-            result = await session.execute(
-                select(CitizenRegistry).where(
-                    (CitizenRegistry.document_type == norm_type)
-                    & (CitizenRegistry.document_number == norm_num)
-                )
-            )
-            citizen = result.scalar_one_or_none()
-
-            if not citizen and doc_number:
-                # Try with original (unnormalized) number but still scoped to type
+        final_key = (norm_type, _normalize_doc_number(doc_number))
+        citizen = None
+        if final_key == hint_key and citizen_id is not None and db_record is not None:
+            # Reuse the Step-1 hit (same identity the face pairs used).
+            async with async_session() as session:
                 result = await session.execute(
-                    select(CitizenRegistry).where(
-                        (CitizenRegistry.document_type == norm_type)
-                        & (CitizenRegistry.document_number == doc_number)
-                    )
+                    select(CitizenRegistry).where(CitizenRegistry.id == citizen_id)
                 )
                 citizen = result.scalar_one_or_none()
+                if citizen is None:
+                    # Row vanished mid-screening — fall back to a fresh lookup.
+                    citizen = await _find_citizen_by_number(final_key[0], doc_number)
+                else:
+                    try:
+                        db_record = citizen.to_dict()
+                    except Exception:
+                        pass
+        else:
+            citizen = await _find_citizen_by_number(final_key[0], doc_number)
 
-            if citizen:
-                db_record = citizen.to_dict()
-                citizen_id = citizen.id
-                demographic_result = reconcile_demographics(demographics, db_record)
-                # Retrieve DB reference photo path for potential re-scan
-                if citizen.photo_uri:
-                    candidate = _PROJECT_ROOT / citizen.photo_uri
-                    if candidate.exists():
-                        db_photo_path = str(candidate)
-
-    # If we found a DB photo and Gemini was simulated or doc_vs_db is null,
-    # we could re-run Gemini with the DB photo. For the MVP, we note this
-    # in the output metadata so the officer sees the gap.
-    # --- Local 3-way DB enrichment: compute Doc vs DB / Live vs DB via InsightFace ---
-    if db_photo_path:
-        need_doc_db = face_match_data.get("doc_vs_db_match") is None
-        need_live_db = face_match_data.get("live_vs_db_match") is None and live_str is not None
-        if need_doc_db or need_live_db:
-            enrich_tasks = []
-            if need_doc_db:
-                enrich_tasks.append(loop.run_in_executor(None, _run_local_face, str(doc_path), db_photo_path, False))
-            else:
-                enrich_tasks.append(None)
-            if need_live_db:
-                enrich_tasks.append(loop.run_in_executor(None, _run_local_face, live_str, db_photo_path, False))
-            else:
-                enrich_tasks.append(None)
+        if citizen is not None:
+            citizen_id = citizen.id
             try:
-                results = []
-                for t in enrich_tasks:
-                    if t is None:
-                        results.append(None)
-                    else:
-                        results.append(await t)
-                doc_db_res, live_db_res = results[0], results[1]
-                if doc_db_res is not None and doc_db_res.status == "ok":
-                    raw = doc_db_res.raw_output or {}
-                    face_match_data["doc_vs_db_match"] = bool(raw.get("match"))
-                    face_match_data["doc_vs_db_similarity"] = float(raw.get("similarity")) if raw.get("similarity") is not None else None
-                    gemini_result["three_way_face_match"] = face_match_data
-                if live_db_res is not None and live_db_res.status == "ok":
-                    raw = live_db_res.raw_output or {}
-                    face_match_data["live_vs_db_match"] = bool(raw.get("match"))
-                    face_match_data["live_vs_db_similarity"] = float(raw.get("similarity")) if raw.get("similarity") is not None else None
-                    gemini_result["three_way_face_match"] = face_match_data
-                if (doc_db_res is not None and doc_db_res.status == "ok") or (live_db_res is not None and live_db_res.status == "ok"):
-                    extra = []
-                    if doc_db_res is not None and doc_db_res.status == "ok":
-                        extra.append(f"Doc vs DB local {doc_db_res.raw_output.get('similarity'):.3f}")
-                    if live_db_res is not None and live_db_res.status == "ok":
-                        extra.append(f"Live vs DB local {live_db_res.raw_output.get('similarity'):.3f}")
-                    if extra:
-                        face_match_data["visual_reasoning"] = (face_match_data.get("visual_reasoning") or "") + " | " + ", ".join(extra)
+                db_record = citizen.to_dict()
+            except Exception:
+                pass
+            demographic_result = reconcile_demographics(demographics, db_record)
+            # Controlled-enrollment trust: an untrusted registry row must
+            # not vouch for an identity (risk floors these at Yellow).
+            try:
+                registry_trust = _registry_trust_for(citizen)
+            except Exception:
+                registry_trust = {"level": "unverified", "verified": False, "reasons": ["trust evaluation failed"]}
+            try:
+                demographic_result["registry_trust"] = registry_trust
+            except Exception:
+                pass
+            # Late registry hit: the OCR hint missed but final demographics
+            # found a record with a photo AFTER the parallel phase — compute
+            # the registry legs now so the comparison is still complete.
+            # (Gemini didn't see this photo; pair_sources records that.)
+            if not db_photo_path and citizen.photo_uri:
+                candidate = _PROJECT_ROOT / citizen.photo_uri
+                if candidate.exists():
+                    db_photo_path = str(candidate)
+                    db_photo_late = True
+                    try:
+                        from pipeline.face_match import run_three_way_match as _late_three_way
+                        _late = await loop.run_in_executor(
+                            None, _late_three_way, str(doc_path), live_str, db_photo_path, False
+                        )
+                        _late_pairs = (_late or {}).get("pairs") or {}
+                        for _key, _mkey, _skey in (
+                            ("doc_vs_db", "doc_vs_db_match", "doc_vs_db_similarity"),
+                            ("live_vs_db", "live_vs_db_match", "live_vs_db_similarity"),
+                        ):
+                            _p = _late_pairs.get(_key) or {}
+                            if _p.get("status") == "ok":
+                                face_match_data[_mkey] = bool(_p["match"]) if _p.get("match") is not None else None
+                                face_match_data[_skey] = float(_p["similarity"]) if _p.get("similarity") is not None else None
+                                pair_sources[_key] = "local_late"
+                        tw_pairs.update({k: v for k, v in _late_pairs.items() if (v or {}).get("status") == "ok"})
                         gemini_result["three_way_face_match"] = face_match_data
-            except Exception as e:
-                print(f"[enrich] DB enrich exception {e}")
+                    except Exception as e:
+                        print(f"[three-way] late DB-pair exception {e}")
+
+    # --- Three-way completeness: honest partial/complete reporting ---
+    # Every advertised pair must be traceable to evidence (local), a real
+    # cloud verdict (gemini), or an explicit unavailable reason — never a
+    # silent null.
+    try:
+        _computed = sum(1 for k in ("live_vs_doc", "doc_vs_db", "live_vs_db")
+                        if face_match_data.get(f"{k}_match") is not None
+                        or (k == "live_vs_doc" and face_match_data.get("similarity_score") is not None))
+        if live_str is None:
+            _expected = 1  # only doc_vs_db can exist without a live still
+            _db_reason = None if face_match_data.get("doc_vs_db_match") is not None else (
+                "no_registry_match" if citizen_id is None else "no_registry_photo")
+        else:
+            _expected = 3 if citizen_id is not None and db_photo_path else (1 if citizen_id is None else 2)
+            _db_reason = None
+            if citizen_id is None:
+                _db_reason = "no_registry_match"
+            elif not db_photo_path:
+                _db_reason = "no_registry_photo"
+        face_match_data["pair_sources"] = dict(pair_sources)
+        face_match_data["comparison_completeness"] = (
+            "complete" if _computed >= _expected and _expected == 3
+            else ("partial" if _computed > 0 else "unavailable"))
+        face_match_data["db_pairs_unavailable_reason"] = _db_reason
+        if db_photo_late:
+            face_match_data["db_photo_late"] = True
+        # Annotate the reasoning with the evidence-backed DB similarities.
+        try:
+            _extra = []
+            if isinstance(face_match_data.get("doc_vs_db_similarity"), (int, float)):
+                _extra.append(f"Doc vs DB local {float(face_match_data['doc_vs_db_similarity']):.3f}")
+            if isinstance(face_match_data.get("live_vs_db_similarity"), (int, float)):
+                _extra.append(f"Live vs DB local {float(face_match_data['live_vs_db_similarity']):.3f}")
+            if _extra:
+                face_match_data["visual_reasoning"] = (face_match_data.get("visual_reasoning") or "") + " | " + ", ".join(_extra)
+        except Exception:
+            pass
+        gemini_result["three_way_face_match"] = face_match_data
+    except Exception:
+        pass
 
     # --- Watchlist check ---
     full_name = (demographics or {}).get("full_name", "")
@@ -925,10 +1379,30 @@ async def _run_screening_pipeline(
         gemini_face_for_risk = face_match_data
         gemini_tamper_for_risk = photo_tamper
 
+    # Evidence-backed registry pairs for the risk engine. Evidence counts
+    # as "local" only when every registry leg carrying a verdict came from
+    # a local InsightFace ok-run; Gemini guesses and simulated values are
+    # "other" so the Red rule ignores them.
+    try:
+        _local_legs = [s for s in (pair_sources.get("doc_vs_db"), pair_sources.get("live_vs_db"))
+                       if s in ("local", "local_late")]
+        _verdict_legs = [k for k in ("doc_vs_db_match", "live_vs_db_match")
+                         if face_match_data.get(k) is not None]
+        _db_evidence = "local" if _verdict_legs and len(_local_legs) >= len(_verdict_legs) else "other"
+        db_face_pairs = {
+            "doc_vs_db_match": face_match_data.get("doc_vs_db_match"),
+            "live_vs_db_match": face_match_data.get("live_vs_db_match"),
+            "evidence": _db_evidence,
+        }
+    except Exception:
+        db_face_pairs = None
+
     risk = assess_risk(
         demographic_result=demographic_result,
         tamper_score=tamper_result.score if tamper_result.status == "ok" else None,
         tamper_status=tamper_result.status,
+        physical_score=physical_result.score if physical_result.status == "ok" else None,
+        physical_status=physical_result.status,
         deepfake_score=deepfake_result.score if deepfake_result.status == "ok" else None,
         deepfake_status=deepfake_result.status,
         face_similarity=face_sim,
@@ -941,6 +1415,8 @@ async def _run_screening_pipeline(
         watchlist_result=watchlist_result.to_dict(),
         gemini_face_match=gemini_face_for_risk,
         gemini_photo_tamper=gemini_tamper_for_risk,
+        registry_trust=registry_trust,
+        db_face_pairs=db_face_pairs,
     )
     # Demo cases: force at least Yellow (needs human review) and tag the
     # assessment so the UI can show a prominent "DEMO ONLY" banner.
@@ -953,6 +1429,20 @@ async def _run_screening_pipeline(
                 "Demo mode: Gemini AI was offline, so face/tamper AI results were simulated and excluded from scoring. "
                 "Manual officer review required — this verdict is DEMO ONLY."
             )
+    # Face quality recapture: the capture was too poor to match (never a
+    # verdict). Flag it explicitly so the officer knows the fix is a
+    # recapture, not a mismatch investigation. (Verdict is already ≥Yellow
+    # via the inconclusive face status.)
+    if recapture_requested:
+        if "FACE_QUALITY_RECAPTURE" not in risk.flags:
+            risk.flags.append("FACE_QUALITY_RECAPTURE")
+        if risk.verdict == "Green":
+            risk.verdict = "Yellow"
+        detail = "; ".join(recapture_reasons[:3]) if recapture_reasons else "face image quality too poor"
+        risk.recommendations.append(
+            f"Recapture requested ({recapture_target or 'face image'}): {detail} "
+            f"No biometric verdict was produced — retake and re-screen."
+        )
 
     # ------------------------------------------------------------------
     # Step 5: Persist to database
@@ -972,6 +1462,12 @@ async def _run_screening_pipeline(
         "citizen_id": citizen_id,
         "verdict": risk.verdict,
         "risk_score": risk.risk_score,
+        "registry_trust": (registry_trust or {}).get("level"),
+        "three_way_completeness": (face_match_data or {}).get("comparison_completeness"),
+        "three_way_sources": (face_match_data or {}).get("pair_sources"),
+        "db_photo_late": bool(db_photo_late),
+        "face_quality_gate": (face_quality_block or {}).get("gate"),
+        "recapture_requested": recapture_requested,
     }
     _file_hashes = {}
     try:
@@ -1041,6 +1537,8 @@ async def _run_screening_pipeline(
         modules = [
             ("tamper", tamper_result.score, tamper_result.status,
              tamper_result.raw_output, tamper_result.evidence_uri, False),
+            ("physical_forgery", physical_result.score, physical_result.status,
+             physical_result.raw_output, physical_result.evidence_uri, False),
             ("deepfake", deepfake_result.score, deepfake_result.status,
              deepfake_result.raw_output, deepfake_result.evidence_uri, False),
             ("liveness", liveness_result.score, liveness_result.status,
@@ -1110,7 +1608,12 @@ async def _run_screening_pipeline(
         "checksum": checksum_result,
         "demographic_parity": demographic_result,
         "face_verification": face_match_data,
+        "face_quality": face_quality_block,
+        "recapture_requested": recapture_requested,
+        "recapture_target": recapture_target,
+        "recapture_reasons": recapture_reasons,
         "tamper": tamper_result.to_json(),
+        "physical_forgery": physical_result.to_json(),
         "deepfake": deepfake_result.to_json(),
         "liveness": liveness_result.to_json(),
         "watchlist": watchlist_result.to_dict(),
@@ -1464,11 +1967,39 @@ async def list_audit(
 
 
 # ---------------------------------------------------------------------------
-# 8. Citizen Registry management (supervisor-managed reference database)
+# 8. Citizen Registry management — CONTROLLED ENROLLMENT WORKFLOW
+#
+# The registry is the authoritative reference for demographic & face
+# verification. A single-supervisor direct write could make a false identity
+# look legitimate, so:
+#   * POST /api/citizens creates a PENDING enrollment (never a live row).
+#     A DIFFERENT supervisor must approve it (dual approval / four-eyes).
+#   * Source verification runs at request time: document checksum, real-image
+#     photo check + SHA-256, mandatory source / source_ref / method / reason.
+#   * Signed authority imports (HMAC) bypass the queue — the authority
+#     signature is the second factor — but are still validated + audited.
+#   * Reconciliation endpoints diff the registry on a schedule against the
+#     issuing authority and re-verify checksums / photo integrity.
+#   * Screening treats non-trusted registry matches as Yellow-floor
+#     (UNVERIFIED_REGISTRY_SOURCE); legacy pre-fix rows are grandfathered as
+#     `legacy` (Green still possible) but flagged for re-verification.
 # ---------------------------------------------------------------------------
 
 _DOC_TYPES = {"aadhaar", "pan", "voter_id", "passport"}
 _REGISTRY_FACES_DIR = _PROJECT_ROOT / "samples" / "faces" / "uploads"
+
+# Authority-import signing secret. Dedicated env var preferred; falls back to
+# the JWT secret so existing deployments keep working (logged at startup).
+_REGISTRY_IMPORT_SECRET = os.environ.get("REGISTRY_IMPORT_SECRET", "").strip()
+_REGISTRY_IMPORT_SECRET_FALLBACK = False
+if not _REGISTRY_IMPORT_SECRET:
+    _REGISTRY_IMPORT_SECRET = _JWT_SECRET
+    _REGISTRY_IMPORT_SECRET_FALLBACK = True
+
+# Enrollment sources & verification methods accepted for manual requests.
+# `legacy_seed` is never accepted from clients — only set by seed/bootstrap.
+_ENROLL_SOURCES = {"verified_enrollment", "authority_import"}
+_ENROLL_SOURCE_LABELS = sorted(_ENROLL_SOURCES)
 
 
 def _require_role(officer: dict, role: str) -> None:
@@ -1480,9 +2011,185 @@ def _require_role(officer: dict, role: str) -> None:
         )
 
 
+def _require_supervisor_or_reject(officer: dict) -> None:
+    if officer.get("role") != "supervisor":
+        raise HTTPException(status_code=403, detail="Access denied: 'supervisor' role required")
+
+
 def _normalize_doc_number(number: str) -> str:
     """Normalize a document number the same way screening lookups do."""
     return (number or "").strip().replace(" ", "").replace("-", "").upper()
+
+
+async def _find_citizen_by_number(doc_type: str, doc_number: str):
+    """Registry lookup scoped to (type + number). Returns CitizenRegistry or None.
+
+    A PAN must never match an Aadhaar holding the same digits, so every
+    attempt is type-scoped; both the normalized and the raw number forms
+    are tried (legacy rows predate normalization).
+    """
+    if not doc_type or not doc_number:
+        return None
+    candidates = [doc_number]
+    try:
+        norm = _normalize_doc_number(doc_number)
+        if norm and norm != doc_number:
+            candidates.insert(0, norm)
+    except Exception:
+        pass
+    async with async_session() as session:
+        for cand in candidates:
+            result = await session.execute(
+                select(CitizenRegistry).where(
+                    (CitizenRegistry.document_type == doc_type)
+                    & (CitizenRegistry.document_number == cand)
+                )
+            )
+            citizen = result.scalar_one_or_none()
+            if citizen is None:
+                continue
+            # Touch the columns we need while bound, then detach.
+            try:
+                _ = (citizen.id, citizen.photo_uri, citizen.document_type, citizen.document_number)
+            except Exception:
+                continue
+            try:
+                session.expunge(citizen)
+            except Exception:
+                pass
+            return citizen
+    return None
+
+
+def _validate_enrollment_doc_number(doc_type: str, doc_number: str) -> dict:
+    """Source-verification gate: reject document numbers that fail checksums.
+
+    Returns the checksum result dict. Raises 400 when the number is
+    affirmatively INVALID. `valid=None` (e.g. passport without MRZ lines —
+    cannot be algorithmically verified) is allowed but flagged so the
+    approver and reconciliation know a manual authority check is owed.
+    """
+    try:
+        from pipeline.checksums import validate_document_number as _validate
+    except Exception:
+        return {"valid": None, "method": "validator_unavailable"}
+    result = _validate(doc_type, doc_number)
+    if result.get("valid") is False:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Source verification failed: {doc_type} number failed "
+                   f"{result.get('method', 'checksum')} validation "
+                   f"({result.get('detail', 'invalid')}). Verify against the "
+                   f"issuing authority before enrolling.",
+        )
+    return result
+
+
+def _verify_enrollment_photo(photo_bytes: bytes, filename: str = "") -> str:
+    """Verify an enrollment face photo is a real image. Returns its SHA-256.
+
+    Raises 400 for empty, oversized (>5MB), undecodable, or degenerately
+    small (<80px on either side) images. A face-presence probe via the local
+    InsightFace bundle is attempted when available but is advisory only —
+    the hard gate is genuine-image integrity, enforced with Pillow.
+    """
+    if not photo_bytes:
+        raise HTTPException(status_code=400, detail="Photo is required for verified enrollment (face reference).")
+    if len(photo_bytes) > 5_000_000:
+        raise HTTPException(status_code=400, detail="Photo too large (max 5 MB)")
+    try:
+        from PIL import Image as _Image
+        import io as _io
+        img = _Image.open(_io.BytesIO(photo_bytes))
+        img.verify()
+        img = _Image.open(_io.BytesIO(photo_bytes))
+        img.load()
+        w, h = img.size
+        if min(w, h) < 80:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Photo too small ({w}x{h}); minimum 80px on each side for face verification.",
+            )
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=400, detail="Photo is not a decodable image (PNG/JPG/WEBP required).")
+    return hashlib.sha256(photo_bytes).hexdigest()
+
+
+def _registry_trust_for(citizen) -> dict:
+    """Classify how much screening may trust a registry row.
+
+    Levels:
+      * authority_verified — signed authority import (HMAC second factor).
+      * dual_approved     — requested by one supervisor, approved by another.
+      * legacy            — pre-fix row (NULL trust columns / legacy_seed):
+                            grandfathered for demo continuity, flagged for
+                            authority re-verification, Green still possible.
+      * unverified        — anything else (self-approved, missing source,
+                            single-writer). Screening floors these at Yellow.
+    """
+    try:
+        source = (getattr(citizen, "source", None) or "").strip()
+        enrolled = (getattr(citizen, "enrolled_by", None) or "").strip()
+        approved = (getattr(citizen, "approved_by", None) or "").strip()
+        method = (getattr(citizen, "verification_method", None) or "").strip()
+    except Exception:
+        source, enrolled, approved, method = "", "", "", ""
+    if source == "authority_import" and method == "authority_signed_import":
+        return {"level": "authority_verified", "verified": True, "reasons": ["signed authority import"]}
+    if enrolled and approved and enrolled != approved:
+        return {"level": "dual_approved", "verified": True,
+                "reasons": [f"requested by {enrolled}, approved by {approved}"]}
+    if not source or source == "legacy_seed":
+        return {"level": "legacy", "verified": False,
+                "reasons": ["enrolled before dual-approval control — authority re-verification owed"]}
+    reasons = []
+    if not source:
+        reasons.append("missing enrollment source")
+    if not approved:
+        reasons.append("missing second-supervisor approval")
+    if enrolled and approved and enrolled == approved:
+        reasons.append("self-approved (requester == approver)")
+    return {"level": "unverified", "verified": False, "reasons": reasons or ["untrusted enrollment"]}
+
+
+def _verify_import_signature(raw_body: bytes, signature: str) -> None:
+    """Verify HMAC-SHA256 of the raw import body. Raises 401 on failure."""
+    import hmac as _hmac
+    sig = (signature or "").strip().lower()
+    if not sig:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing X-Import-Signature: authority imports must be "
+                   "HMAC-SHA256 signed (see scripts/sign_registry_import.py).",
+        )
+    expected = _hmac.new(_REGISTRY_IMPORT_SECRET.encode(), raw_body or b"", hashlib.sha256).hexdigest()
+    if not _hmac.compare_digest(expected, sig):
+        raise HTTPException(status_code=401, detail="Invalid import signature (authority authentication failed).")
+
+
+def _secure_delete_file(path: Optional[Path]) -> bool:
+    """Overwrite-with-zeros + unlink. Returns True if the file is gone."""
+    try:
+        if path is None or not path.is_file():
+            return True
+        size = path.stat().st_size
+        with open(path, "r+b") as f:
+            f.write(b"\x00" * size)
+            f.flush()
+            try:
+                import os as _os
+                _os.fsync(f.fileno())
+            except Exception:
+                pass
+        path.unlink()
+        return not path.is_file()
+    except FileNotFoundError:
+        return True
+    except Exception as e:
+        print(f"[retention] failed to securely delete {path}: {e}")
+        return False
 
 
 @app.get("/citizens", include_in_schema=False)
@@ -1560,15 +2267,27 @@ async def create_citizen(
     gender: str = Form(None),
     address: str = Form(None),
     father_or_spouse_name: str = Form(None),
-    photo: UploadFile = File(None),
+    source: str = Form("verified_enrollment"),
+    source_ref: str = Form(...),
+    verification_method: str = Form(...),
+    request_reason: str = Form(...),
+    photo: UploadFile = File(...),
 ):
-    """Register a new citizen record (supervisor only)."""
+    """Request enrollment of a citizen record (supervisor only).
+
+    Controlled enrollment — this creates a PENDING request, NOT a live
+    registry row. A DIFFERENT supervisor must approve it
+    (POST /api/citizens/requests/{id}/approve) before the record becomes
+    authoritative for screening. Source verification (checksum + real-image
+    photo + provenance fields) runs here so bad data never enters the queue.
+    """
     officer = await _auth(request)
     _require_role(officer, "supervisor")
     username = officer.get("username", "unknown")
+    officer_id = int(officer["sub"])
 
     # --- validate input ---
-    doc_type = document_type.strip().lower()
+    doc_type = (document_type or "").strip().lower()
     if doc_type not in _DOC_TYPES:
         raise HTTPException(
             status_code=400,
@@ -1579,41 +2298,82 @@ async def create_citizen(
     if not doc_number:
         raise HTTPException(status_code=400, detail="document_number is required")
 
-    name = full_name.strip()
+    name = (full_name or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="full_name is required")
 
     if gender and gender.strip().upper() not in ("M", "F", "OTHER"):
         raise HTTPException(status_code=400, detail="gender must be M, F or Other")
 
-    # --- optional photo upload ---
-    photo_uri = None
-    if photo and photo.filename:
-        _REGISTRY_FACES_DIR.mkdir(parents=True, exist_ok=True)
-        suffix = Path(photo.filename).suffix.lower() or ".png"
-        if suffix not in (".png", ".jpg", ".jpeg", ".webp"):
-            suffix = ".png"
-        photo_bytes = await photo.read()
-        if len(photo_bytes) > 5_000_000:
-            raise HTTPException(status_code=400, detail="Photo too large (max 5 MB)")
-        rel = Path("samples") / "faces" / "uploads" / f"{uuid.uuid4().hex}{suffix}"
-        (_PROJECT_ROOT / rel).write_bytes(photo_bytes)
-        photo_uri = rel.as_posix()
+    # --- provenance gates (source verification) ---
+    src = (source or "").strip().lower()
+    if src not in _ENROLL_SOURCES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"source must be one of: {_ENROLL_SOURCE_LABELS} "
+                   f"(how was this identity verified against the issuing authority?)",
+        )
+    src_ref = (source_ref or "").strip()
+    if len(src_ref) < 3:
+        raise HTTPException(status_code=400, detail="source_ref is required (min 3 chars): authority batch / file / reference ID.")
+    method = (verification_method or "").strip()
+    if len(method) < 3:
+        raise HTTPException(status_code=400, detail="verification_method is required (min 3 chars): how was this record verified?")
+    reason = (request_reason or "").strip()
+    if len(reason) < 10:
+        raise HTTPException(status_code=400, detail="request_reason is required (min 10 chars): why does this identity belong in the master registry?")
+
+    # --- source verification: document checksum ---
+    checksum = _validate_enrollment_doc_number(doc_type, doc_number)
+    checksum_unverifiable = checksum.get("valid") is None
+
+    # --- source verification: face photo (mandatory + real-image check) ---
+    if not photo or not photo.filename:
+        raise HTTPException(status_code=400, detail="Photo is required for verified enrollment (face reference).")
+    suffix = Path(photo.filename).suffix.lower() or ".png"
+    if suffix not in (".png", ".jpg", ".jpeg", ".webp"):
+        raise HTTPException(status_code=400, detail="Photo must be PNG, JPG/JPEG or WEBP.")
+    photo_bytes = await photo.read()
+    photo_hash = _verify_enrollment_photo(photo_bytes, photo.filename)
+    _REGISTRY_FACES_DIR.mkdir(parents=True, exist_ok=True)
+    rel = Path("samples") / "faces" / "uploads" / f"pending_{uuid.uuid4().hex}{suffix}"
+    (_PROJECT_ROOT / rel).write_bytes(photo_bytes)
+    staged_uri = rel.as_posix()
 
     async with async_session() as session:
-        # unique document number (normalized comparison)
+        # Duplicate in the LIVE registry (type-scoped — a PAN must never
+        # collide with an Aadhaar holding the same digits).
         existing = await session.execute(
             select(CitizenRegistry).where(
-                CitizenRegistry.document_number == doc_number
+                (CitizenRegistry.document_type == doc_type)
+                & (CitizenRegistry.document_number == doc_number)
             )
         )
         if existing.scalar_one_or_none() is not None:
+            _secure_delete_file(_PROJECT_ROOT / rel)
             raise HTTPException(
                 status_code=409,
-                detail=f"A citizen with document number {doc_number} already exists",
+                detail=f"A citizen with {doc_type}:{doc_number} already exists in the registry",
+            )
+        # Duplicate already waiting in the approval queue.
+        pending = await session.execute(
+            select(RegistryEnrollment).where(
+                (RegistryEnrollment.status == "pending")
+                & (RegistryEnrollment.action == "create")
+                & (RegistryEnrollment.document_type == doc_type)
+                & (RegistryEnrollment.document_number == doc_number)
+            )
+        )
+        if pending.scalar_one_or_none() is not None:
+            _secure_delete_file(_PROJECT_ROOT / rel)
+            raise HTTPException(
+                status_code=409,
+                detail=f"An enrollment request for {doc_type}:{doc_number} is already pending approval",
             )
 
-        citizen = CitizenRegistry(
+        req = RegistryEnrollment(
+            action="create",
+            status="pending",
             document_type=doc_type,
             document_number=doc_number,
             full_name=name,
@@ -1621,34 +2381,548 @@ async def create_citizen(
             gender=(gender or "").strip().upper() or None,
             address=(address or "").strip() or None,
             father_or_spouse_name=(father_or_spouse_name or "").strip() or None,
-            photo_uri=photo_uri,
+            photo_uri=staged_uri,
+            photo_hash=photo_hash,
+            source=src,
+            source_ref=src_ref,
+            verification_method=method,
+            request_reason=reason,
+            requested_by_id=officer_id,
+            requested_by=username,
         )
-        session.add(citizen)
+        session.add(req)
         await session.flush()
-        citizen_id = citizen.id
+        enrollment_id = req.id
 
-        # Audit log
         session.add(AuditLog(
             actor=username,
-            action="citizen_registered",
-            entity=f"citizen:{citizen_id}:{doc_type}:{doc_number}",
+            action="enrollment_requested:create",
+            entity=f"enrollment:{enrollment_id}:{doc_type}:{doc_number}",
+            officer_id=officer_id,
         ))
         await session.commit()
 
+    msg = f"Enrollment request #{enrollment_id} for {name} ({doc_type.upper()}) is PENDING — a different supervisor must approve it."
+    if checksum_unverifiable:
+        msg += " Note: document number is not algorithmically verifiable; the approver must confirm it against the issuing authority."
     return {
-        "status": "ok",
-        "citizen": citizen.to_dict(),
-        "message": f"Registered {name} ({doc_type.upper()})",
+        "status": "pending",
+        "enrollment_id": enrollment_id,
+        "message": msg,
     }
+
+
+class _ReviewNote(BaseModel):
+    review_note: Optional[str] = None
+
+
+@app.get("/api/citizens/requests", include_in_schema=False)
+@app.get("/api/citizens/requests/list", include_in_schema=False)
+async def list_enrollment_requests(
+    request: Request,
+    status_filter: Optional[str] = Query(None, alias="status"),
+    action: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    """List controlled-enrollment requests (supervisor + auditor)."""
+    officer = await _auth(request)
+    if officer.get("role") not in ("supervisor", "auditor"):
+        raise HTTPException(status_code=403, detail="Access denied: supervisor or auditor role required")
+    async with async_session() as session:
+        query = select(RegistryEnrollment).order_by(RegistryEnrollment.created_at.desc())
+        if status_filter:
+            if status_filter not in ("pending", "approved", "rejected"):
+                raise HTTPException(status_code=400, detail="status must be pending|approved|rejected")
+            query = query.where(RegistryEnrollment.status == status_filter)
+        if action:
+            if action not in ("create", "delete"):
+                raise HTTPException(status_code=400, detail="action must be create|delete")
+            query = query.where(RegistryEnrollment.action == action)
+        total = len((await session.execute(query)).scalars().all())
+        result = await session.execute(query.limit(limit).offset(offset))
+        rows = result.scalars().all()
+    return {"requests": [r.to_dict() for r in rows], "count": len(rows), "total": total}
+
+
+def _require_different_supervisor(officer: dict, req: RegistryEnrollment) -> tuple[int, str]:
+    """Enforce four-eyes: approver must be a supervisor other than the requester."""
+    _require_role(officer, "supervisor")
+    officer_id = int(officer["sub"])
+    username = officer.get("username", "unknown")
+    if req.status != "pending":
+        raise HTTPException(status_code=409, detail=f"Request #{req.id} is already {req.status}")
+    if officer_id == req.requested_by_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Separation of duties: the requesting supervisor cannot approve their own enrollment — a different supervisor must review it.",
+        )
+    return officer_id, username
+
+
+@app.post("/api/citizens/requests/{enrollment_id}/approve")
+async def approve_enrollment(enrollment_id: int, request: Request):
+    """Approve a pending enrollment (second supervisor). Creates the live row."""
+    officer = await _auth(request)
+    async with async_session() as session:
+        result = await session.execute(select(RegistryEnrollment).where(RegistryEnrollment.id == enrollment_id))
+        req = result.scalar_one_or_none()
+        if not req:
+            raise HTTPException(status_code=404, detail="Enrollment request not found")
+        approver_id, approver = _require_different_supervisor(officer, req)
+
+        if req.action == "create":
+            # Re-verify at approval time (data may have changed since request).
+            _validate_enrollment_doc_number(req.document_type or "", req.document_number or "")
+            dup = await session.execute(
+                select(CitizenRegistry).where(
+                    (CitizenRegistry.document_type == req.document_type)
+                    & (CitizenRegistry.document_number == req.document_number)
+                )
+            )
+            if dup.scalar_one_or_none() is not None:
+                raise HTTPException(status_code=409, detail="A citizen with this document already exists (created while pending)")
+            # Staged photo must still exist and match its recorded hash.
+            if not req.photo_uri:
+                raise HTTPException(status_code=400, detail="Staged photo missing — request a fresh enrollment")
+            staged = (_PROJECT_ROOT / req.photo_uri)
+            if not staged.is_file():
+                raise HTTPException(status_code=400, detail="Staged photo file is gone — request a fresh enrollment")
+            try:
+                actual_hash = hashlib.sha256(staged.read_bytes()).hexdigest()
+            except Exception:
+                raise HTTPException(status_code=400, detail="Cannot read staged photo — request a fresh enrollment")
+            if req.photo_hash and actual_hash != req.photo_hash:
+                raise HTTPException(status_code=400, detail="Staged photo integrity mismatch (hash changed) — possible tampering; request a fresh enrollment")
+
+            citizen = CitizenRegistry(
+                document_type=req.document_type,
+                document_number=req.document_number,
+                full_name=req.full_name,
+                date_of_birth=req.date_of_birth,
+                gender=req.gender,
+                address=req.address,
+                father_or_spouse_name=req.father_or_spouse_name,
+                photo_uri=req.photo_uri,
+                source=req.source,
+                source_ref=req.source_ref,
+                verification_method=req.verification_method,
+                photo_hash=req.photo_hash or actual_hash,
+                enrolled_by=req.requested_by,
+                approved_by=approver,
+            )
+            session.add(citizen)
+            await session.flush()
+            req.status = "approved"
+            req.approved_by_id = approver_id
+            req.approved_by = approver
+            req.resulting_citizen_id = citizen.id
+            req.decided_at = datetime.now(timezone.utc)
+            session.add(AuditLog(actor=approver, action="enrollment_approved:create",
+                                 entity=f"enrollment:{req.id}:citizen:{citizen.id}",
+                                 officer_id=approver_id))
+            session.add(AuditLog(actor=approver, action="citizen_registered",
+                                 entity=f"citizen:{citizen.id}:{citizen.document_type}:{citizen.document_number}",
+                                 officer_id=approver_id))
+            await session.commit()
+            return {"status": "ok", "citizen": citizen.to_dict(),
+                    "message": f"Approved: {citizen.full_name} ({citizen.document_type.upper()}) enrolled by {approver} (requested by {req.requested_by})"}
+
+        elif req.action == "delete":
+            # Second-supervisor approval executes the removal.
+            target = None
+            if req.target_citizen_id:
+                res = await session.execute(select(CitizenRegistry).where(CitizenRegistry.id == req.target_citizen_id))
+                target = res.scalar_one_or_none()
+            if not target:
+                raise HTTPException(status_code=404, detail="Target citizen no longer exists")
+            detail = f"{target.full_name}:{target.document_type}:{target.document_number}"
+            photo_uri = target.photo_uri
+            photo_path = None
+            if photo_uri:
+                try:
+                    candidate = (_PROJECT_ROOT / photo_uri).resolve()
+                    uploads_dir = (_PROJECT_ROOT / "samples" / "faces" / "uploads").resolve()
+                    if uploads_dir in candidate.parents or candidate.parent.resolve() == uploads_dir:
+                        photo_path = candidate
+                    elif "uploads" in photo_uri:
+                        photo_path = candidate
+                except Exception:
+                    photo_path = None
+            await session.delete(target)
+            req.status = "approved"
+            req.approved_by_id = approver_id
+            req.approved_by = approver
+            req.decided_at = datetime.now(timezone.utc)
+            session.add(AuditLog(actor=approver, action="enrollment_approved:delete",
+                                 entity=f"enrollment:{req.id}:citizen:{req.target_citizen_id}:{detail}",
+                                 officer_id=approver_id))
+            session.add(AuditLog(actor=approver, action="citizen_removed",
+                                 entity=f"citizen:{req.target_citizen_id}:{detail}",
+                                 officer_id=approver_id))
+            if photo_uri:
+                session.add(AuditLog(actor=approver, action="biometric_retention:deleted",
+                                     entity=f"citizen:{req.target_citizen_id}:photo:{photo_uri}",
+                                     officer_id=approver_id))
+            await session.commit()
+            _secure_delete_file(photo_path)
+            return {"status": "ok", "deleted_id": req.target_citizen_id,
+                    "message": f"Approved deletion of {detail} (requested by {req.requested_by}, approved by {approver})"}
+        else:
+            raise HTTPException(status_code=400, detail=f"Unknown enrollment action: {req.action}")
+
+
+@app.post("/api/citizens/requests/{enrollment_id}/reject")
+async def reject_enrollment(enrollment_id: int, req_body: _ReviewNote, request: Request):
+    """Reject a pending enrollment (second supervisor). Staged photo is purged."""
+    officer = await _auth(request)
+    note = ((req_body.review_note if req_body else "") or "").strip()
+    if len(note) < 3:
+        raise HTTPException(status_code=400, detail="review_note is required (min 3 chars): why is this enrollment rejected?")
+    async with async_session() as session:
+        result = await session.execute(select(RegistryEnrollment).where(RegistryEnrollment.id == enrollment_id))
+        req = result.scalar_one_or_none()
+        if not req:
+            raise HTTPException(status_code=404, detail="Enrollment request not found")
+        approver_id, approver = _require_different_supervisor(officer, req)
+        staged = (_PROJECT_ROOT / req.photo_uri) if (req.action == "create" and req.photo_uri) else None
+        req.status = "rejected"
+        req.approved_by_id = approver_id
+        req.approved_by = approver
+        req.review_note = note
+        req.decided_at = datetime.now(timezone.utc)
+        session.add(AuditLog(actor=approver, action=f"enrollment_rejected:{req.action}",
+                             entity=f"enrollment:{req.id}", officer_id=approver_id))
+        await session.commit()
+    if staged is not None:
+        _secure_delete_file(staged)
+    return {"status": "ok", "enrollment_id": enrollment_id, "message": f"Request #{enrollment_id} rejected by {approver}"}
+
+
+class _ImportRecord(BaseModel):
+    document_type: str
+    document_number: str
+    full_name: str
+    date_of_birth: Optional[str] = None
+    gender: Optional[str] = None
+    address: Optional[str] = None
+    father_or_spouse_name: Optional[str] = None
+    photo_uri: Optional[str] = None
+    photo_hash: Optional[str] = None
+    source_ref: Optional[str] = None
+    verification_method: Optional[str] = None
+
+
+class _ImportBody(BaseModel):
+    batch_ref: str
+    records: List[_ImportRecord]
+
+
+@app.post("/api/citizens/import")
+async def import_authority_citizens(request: Request):
+    """Bulk import from the issuing authority (supervisor + HMAC signature).
+
+    The request body must be signed: header `X-Import-Signature` =
+    hex(HMAC-SHA256(raw_body, REGISTRY_IMPORT_SECRET)). The authority
+    signature is the second factor, so validated records are enrolled
+    directly as `authority_import` (still checksum-verified + audited).
+    Sign bodies with scripts/sign_registry_import.py.
+    """
+    officer = await _auth(request)
+    _require_role(officer, "supervisor")
+    username = officer.get("username", "unknown")
+    officer_id = int(officer["sub"])
+
+    raw_body = await request.body()
+    _verify_import_signature(raw_body, request.headers.get("X-Import-Signature", ""))
+    try:
+        payload = json.loads(raw_body.decode() or "{}")
+        body = _ImportBody(**payload)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid import body: {e}")
+
+    batch_ref = (body.batch_ref or "").strip()
+    if len(batch_ref) < 3:
+        raise HTTPException(status_code=400, detail="batch_ref is required (min 3 chars): authority batch identifier.")
+    if not body.records:
+        raise HTTPException(status_code=400, detail="records must not be empty (max 500 per batch).")
+    if len(body.records) > 500:
+        raise HTTPException(status_code=400, detail="Batch too large (max 500 records per import).")
+
+    created, skipped, errors = 0, 0, []
+    async with async_session() as session:
+        for i, rec in enumerate(body.records):
+            try:
+                doc_type = (rec.document_type or "").strip().lower()
+                if doc_type not in _DOC_TYPES:
+                    raise ValueError(f"document_type must be one of {sorted(_DOC_TYPES)}")
+                doc_number = _normalize_doc_number(rec.document_number)
+                if not doc_number:
+                    raise ValueError("document_number is required")
+                name = (rec.full_name or "").strip()
+                if not name:
+                    raise ValueError("full_name is required")
+                _validate_enrollment_doc_number(doc_type, doc_number)
+                dup = await session.execute(
+                    select(CitizenRegistry).where(
+                        (CitizenRegistry.document_type == doc_type)
+                        & (CitizenRegistry.document_number == doc_number)
+                    )
+                )
+                if dup.scalar_one_or_none() is not None:
+                    skipped += 1
+                    continue
+                # Photo reference must resolve to a real file when supplied.
+                photo_hash = (rec.photo_hash or "").strip() or None
+                if rec.photo_uri:
+                    cand = (_PROJECT_ROOT / rec.photo_uri)
+                    if not cand.is_file():
+                        raise ValueError(f"photo_uri not found on server: {rec.photo_uri}")
+                    try:
+                        actual = hashlib.sha256(cand.read_bytes()).hexdigest()
+                    except Exception:
+                        raise ValueError(f"cannot read photo_uri: {rec.photo_uri}")
+                    if photo_hash and photo_hash != actual:
+                        raise ValueError(f"photo_hash mismatch for {doc_number}")
+                    photo_hash = actual
+                citizen = CitizenRegistry(
+                    document_type=doc_type,
+                    document_number=doc_number,
+                    full_name=name,
+                    date_of_birth=(rec.date_of_birth or "").strip() or None,
+                    gender=(rec.gender or "").strip().upper() or None,
+                    address=(rec.address or "").strip() or None,
+                    father_or_spouse_name=(rec.father_or_spouse_name or "").strip() or None,
+                    photo_uri=(rec.photo_uri or "").strip() or None,
+                    source="authority_import",
+                    source_ref=(rec.source_ref or "").strip() or batch_ref,
+                    verification_method=(rec.verification_method or "").strip() or "authority_signed_import",
+                    photo_hash=photo_hash,
+                    enrolled_by=username,
+                    approved_by=f"authority:{batch_ref}",
+                )
+                session.add(citizen)
+                await session.flush()
+                session.add(AuditLog(
+                    actor=username,
+                    action="citizen_imported:authority_signed",
+                    entity=f"citizen:{citizen.id}:{doc_type}:{doc_number}:batch:{batch_ref}",
+                    officer_id=officer_id,
+                ))
+                created += 1
+            except HTTPException as e:
+                errors.append({"index": i, "error": e.detail})
+            except Exception as e:
+                errors.append({"index": i, "error": str(e)})
+        session.add(AuditLog(
+            actor=username,
+            action="authority_import_batch",
+            entity=f"batch:{batch_ref}:created:{created}:skipped:{skipped}:errors:{len(errors)}",
+            officer_id=officer_id,
+        ))
+        await session.commit()
+    return {"status": "ok", "batch_ref": batch_ref, "created": created,
+            "skipped_duplicates": skipped, "errors": errors}
+
+
+def _reconcile_citizen_row(citizen, authority_by_key: Optional[dict] = None) -> dict:
+    """Run all integrity checks for one registry row. Pure (no DB writes)."""
+    issues: list[str] = []
+    doc_type = (citizen.document_type or "").strip().lower()
+    doc_number = (citizen.document_number or "").strip()
+    key = (doc_type, _normalize_doc_number(doc_number))
+    # 1. checksum
+    try:
+        from pipeline.checksums import validate_document_number as _validate
+        chk = _validate(doc_type, doc_number)
+        if chk.get("valid") is False:
+            issues.append(f"checksum_invalid:{chk.get('method', '?')}")
+    except Exception:
+        chk = {"valid": None}
+    # 2. photo existence + hash
+    if not citizen.photo_uri:
+        issues.append("photo_missing")
+    else:
+        try:
+            p = (_PROJECT_ROOT / citizen.photo_uri)
+            if not p.is_file():
+                issues.append("photo_file_missing")
+            elif citizen.photo_hash:
+                try:
+                    if hashlib.sha256(p.read_bytes()).hexdigest() != citizen.photo_hash:
+                        issues.append("photo_hash_mismatch")
+                except Exception:
+                    issues.append("photo_unreadable")
+        except Exception:
+            issues.append("photo_unreadable")
+    # 3. trust / enrollment provenance
+    trust = _registry_trust_for(citizen)
+    if trust["level"] == "legacy":
+        issues.append("legacy_unreverified:enrolled before dual-approval — re-verify against authority")
+    elif trust["level"] == "unverified":
+        issues.append(f"unverified_enrollment:{';'.join(trust['reasons'])}")
+    # 4. authority snapshot diff (when the operator supplies one)
+    if authority_by_key is not None:
+        auth = authority_by_key.get(key)
+        if auth is None:
+            issues.append("missing_in_authority_snapshot")
+        else:
+            try:
+                if (auth.get("full_name", "") or "").strip().lower() != (citizen.full_name or "").strip().lower():
+                    issues.append("authority_name_mismatch")
+                if (auth.get("date_of_birth", "") or "").strip() != ((citizen.date_of_birth or "").strip()):
+                    issues.append("authority_dob_mismatch")
+            except Exception:
+                pass
+    return {"citizen_id": citizen.id, "document_type": doc_type, "document_number": doc_number,
+            "trust_level": trust["level"], "issues": issues,
+            "status": "ok" if not issues else "needs_review"}
+
+
+def _parse_authority_snapshot(snapshot) -> Optional[dict]:
+    """Normalize an operator-supplied authority export to {(type, number): row}."""
+    if not snapshot:
+        return None
+    if not isinstance(snapshot, list):
+        raise HTTPException(status_code=400, detail="authority_snapshot must be a list of {document_type, document_number, full_name, date_of_birth}.")
+    if len(snapshot) > 5000:
+        raise HTTPException(status_code=400, detail="authority_snapshot too large (max 5000 rows).")
+    out = {}
+    for row in snapshot:
+        try:
+            t = str(row.get("document_type", "")).strip().lower()
+            n = _normalize_doc_number(str(row.get("document_number", "")))
+            if t and n:
+                out[(t, n)] = row
+        except Exception:
+            continue
+    return out
+
+
+async def _build_reconciliation_report(authority_snapshot=None) -> dict:
+    """Scan the whole registry and grade every row. Read-only."""
+    authority_by_key = _parse_authority_snapshot(authority_snapshot)
+    async with async_session() as session:
+        result = await session.execute(select(CitizenRegistry).order_by(CitizenRegistry.id.asc()))
+        citizens = result.scalars().all()
+        pend = await session.execute(select(RegistryEnrollment).where(RegistryEnrollment.status == "pending"))
+        pending_count = len(pend.scalars().all())
+    rows = [_reconcile_citizen_row(c, authority_by_key) for c in citizens]
+    needs = [r for r in rows if r["status"] == "needs_review"]
+    by_trust: dict[str, int] = {}
+    for c in citizens:
+        lvl = _registry_trust_for(c)["level"]
+        by_trust[lvl] = by_trust.get(lvl, 0) + 1
+    extra = []
+    if authority_by_key is not None:
+        live_keys = {( (c.document_type or '').strip().lower(), _normalize_doc_number(c.document_number or '')) for c in citizens}
+        for k in authority_by_key:
+            if k not in live_keys:
+                extra.append({"document_type": k[0], "document_number": k[1], "issue": "in_authority_missing_in_registry"})
+    return {"generated_at": datetime.now(timezone.utc).isoformat(),
+            "total": len(citizens), "ok": len(rows) - len(needs), "needs_review": len(needs),
+            "pending_enrollments": pending_count, "by_trust": by_trust,
+            "rows": rows, "authority_extra": extra}
+
+
+@app.get("/api/citizens/reconciliation/report")
+async def reconciliation_report(
+    request: Request,
+    limit: int = Query(200, ge=1, le=2000),
+    offset: int = Query(0, ge=0),
+):
+    """Integrity + authority-diff report for the master registry (read-only).
+
+    Supervisor/auditor. For a full authority diff, POST to
+    /api/citizens/reconciliation/run with an `authority_snapshot` export.
+    """
+    officer = await _auth(request)
+    if officer.get("role") not in ("supervisor", "auditor"):
+        raise HTTPException(status_code=403, detail="Access denied: supervisor or auditor role required")
+    report = await _build_reconciliation_report(None)
+    rows = report["rows"]
+    report["rows"] = rows[offset:offset + limit]
+    report["limit"], report["offset"] = limit, offset
+    return report
+
+
+@app.post("/api/citizens/reconciliation/run")
+async def reconciliation_run(request: Request):
+    """Re-verify the registry and persist per-row status (supervisor).
+
+    Optional JSON body: {"authority_snapshot": [...]} — an export from the
+    issuing authority to diff against. Each run stamps `last_reconciled_at` /
+    `reconciliation_status` and writes an audit entry, giving the periodic
+    cadence (e.g. weekly) an auditable trail.
+    """
+    officer = await _auth(request)
+    _require_role(officer, "supervisor")
+    username = officer.get("username", "unknown")
+    officer_id = int(officer["sub"])
+    try:
+        body = await request.json()
+        snapshot = (body or {}).get("authority_snapshot") if isinstance(body, dict) else None
+    except Exception:
+        snapshot = None
+    authority_by_key = _parse_authority_snapshot(snapshot)
+    async with async_session() as session:
+        result = await session.execute(select(CitizenRegistry).order_by(CitizenRegistry.id.asc()))
+        citizens = result.scalars().all()
+        now = datetime.now(timezone.utc)
+        n_ok, n_review = 0, 0
+        for c in citizens:
+            check = _reconcile_citizen_row(c, authority_by_key)
+            c.reconciliation_status = check["status"]
+            c.last_reconciled_at = now
+            if check["status"] == "ok":
+                n_ok += 1
+            else:
+                n_review += 1
+        session.add(AuditLog(
+            actor=username,
+            action="registry_reconciled",
+            entity=f"registry:total:{len(citizens)}:ok:{n_ok}:needs_review:{n_review}"
+                   + (":with_authority_snapshot" if authority_by_key is not None else ":integrity_only"),
+            officer_id=officer_id,
+        ))
+        await session.commit()
+    report = await _build_reconciliation_report(snapshot)
+    return {"status": "ok", "reconciled": len(citizens), "ok": n_ok,
+            "needs_review": n_review, "report": report}
 
 
 @app.delete("/citizens/{citizen_id}", include_in_schema=False)
 @app.delete("/api/citizens/{citizen_id}")
-async def delete_citizen(citizen_id: int, request: Request):
-    """Remove a citizen record from the registry (supervisor only)."""
+async def delete_citizen(
+    citizen_id: int,
+    request: Request,
+    reason: Optional[str] = Query(None, description="Justification for removal (min 10 chars)"),
+):
+    """Request removal of a citizen record (supervisor only).
+
+    Controlled removal — creates a PENDING delete request. A DIFFERENT
+    supervisor must approve it (POST /api/citizens/requests/{id}/approve)
+    before the row and its biometric file are destroyed. Pass
+    `?reason=...` (min 10 chars). Direct single-supervisor deletes are
+    closed: one malicious removal could blind screening to a real identity.
+    """
     officer = await _auth(request)
     _require_role(officer, "supervisor")
     username = officer.get("username", "unknown")
+    officer_id = int(officer["sub"])
+    justification = (reason or "").strip()
+    # Also accept JSON/form body reason for clients that send one.
+    if len(justification) < 10:
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                justification = str(body.get("reason", "") or "").strip()
+        except Exception:
+            pass
+    if len(justification) < 10:
+        raise HTTPException(status_code=400, detail="reason is required (min 10 chars) as ?reason=... : why must this identity leave the master registry?")
 
     async with async_session() as session:
         result = await session.execute(
@@ -1658,66 +2932,44 @@ async def delete_citizen(citizen_id: int, request: Request):
         if not citizen:
             raise HTTPException(status_code=404, detail="Citizen not found")
 
+        pending = await session.execute(
+            select(RegistryEnrollment).where(
+                (RegistryEnrollment.status == "pending")
+                & (RegistryEnrollment.action == "delete")
+                & (RegistryEnrollment.target_citizen_id == citizen_id)
+            )
+        )
+        if pending.scalar_one_or_none() is not None:
+            raise HTTPException(status_code=409, detail=f"Deletion of citizen {citizen_id} is already pending approval")
+
         detail = f"{citizen.full_name}:{citizen.document_type}:{citizen.document_number}"
-        # Capture photo info before deletion for secure erasure and audit
-        photo_uri = citizen.photo_uri
-        photo_path = None
-        if photo_uri:
-            # Only delete files in the uploads directory (seeded samples/faces/*.png are shared)
-            try:
-                candidate = (_PROJECT_ROOT / photo_uri).resolve()
-                # Ensure it's inside the uploads directory to avoid deleting shared samples
-                uploads_dir = (_PROJECT_ROOT / "samples" / "faces" / "uploads").resolve()
-                if uploads_dir in candidate.parents or candidate.parent.resolve() == uploads_dir:
-                    photo_path = candidate
-                elif "uploads" in photo_uri:
-                    # Fallback: treat any uploads path as deletable
-                    photo_path = candidate
-            except Exception:
-                photo_path = None
-
-        await session.delete(citizen)
-
+        req = RegistryEnrollment(
+            action="delete",
+            status="pending",
+            document_type=citizen.document_type,
+            document_number=citizen.document_number,
+            full_name=citizen.full_name,
+            target_citizen_id=citizen_id,
+            source_ref=f"delete:{citizen_id}",
+            request_reason=justification,
+            requested_by_id=officer_id,
+            requested_by=username,
+        )
+        session.add(req)
+        await session.flush()
         session.add(AuditLog(
             actor=username,
-            action="citizen_removed",
-            entity=f"citizen:{citizen_id}:{detail}",
+            action="enrollment_requested:delete",
+            entity=f"enrollment:{req.id}:citizen:{citizen_id}:{detail}",
+            officer_id=officer_id,
         ))
-        # Record retention/deletion event for biometric data
-        if photo_uri:
-            session.add(AuditLog(
-                actor=username,
-                action="biometric_retention:deleted",
-                entity=f"citizen:{citizen_id}:photo:{photo_uri}",
-            ))
         await session.commit()
-
-    # Securely delete the biometric file outside the transaction (best-effort, no rollback needed)
-    if photo_path and photo_path.is_file():
-        try:
-            # Cryptographic erasure: overwrite with zeros before unlinking
-            size = photo_path.stat().st_size
-            with open(photo_path, "r+b") as f:
-                f.write(b"\x00" * size)
-                f.flush()
-                try:
-                    import os as _os
-                    _os.fsync(f.fileno())
-                except Exception:
-                    pass
-            photo_path.unlink()
-        except FileNotFoundError:
-            pass
-        except Exception as e:
-            # Log but don't fail the request — the DB record is already gone
-            print(f"[retention] failed to securely delete {photo_path}: {e}")
+        enrollment_id = req.id
 
     return {
-        "status": "ok",
-        "deleted_id": citizen_id,
-        "message": f"Removed {detail} from the registry",
-        "photo_deleted": bool(photo_path and not (photo_path.is_file() if photo_path else True)),
-        "photo_uri": photo_uri,
+        "status": "pending",
+        "enrollment_id": enrollment_id,
+        "message": f"Deletion request #{enrollment_id} for citizen {citizen_id} is PENDING — a different supervisor must approve it.",
     }
 
 
@@ -1742,6 +2994,18 @@ async def _find_orphans_async() -> tuple[list[str], list[str]]:
     async with async_session() as session:
         result = await session.execute(select(CitizenRegistry.photo_uri))
         referenced = {r[0] for r in result.all() if r[0]}
+        # Staged pending-enrollment photos are referenced by the queue, not
+        # the live registry — never flag (or purge) them as orphans.
+        try:
+            staged = await session.execute(
+                select(RegistryEnrollment.photo_uri).where(
+                    (RegistryEnrollment.status == "pending")
+                    & (RegistryEnrollment.photo_uri.is_not(None))
+                )
+            )
+            referenced |= {r[0] for r in staged.all() if r[0]}
+        except Exception:
+            pass
     # Extract just the filenames from referenced URIs
     referenced_names = set()
     for uri in referenced:

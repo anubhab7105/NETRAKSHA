@@ -164,6 +164,7 @@ export default function CaseReport() {
   const findModule = (name) => module_results.find(m => m.module_name === name);
   const geminiModule = findModule('gemini_ai');
   const tamperModule = findModule('tamper');
+  const physicalModule = findModule('physical_forgery');
   const deepfakeModule = findModule('deepfake');
   const livenessModule = findModule('liveness');
   const checksumModule = findModule('checksum');
@@ -171,6 +172,8 @@ export default function CaseReport() {
   
   const geminiData = geminiModule?.raw_output || {};
   const faceMatch = geminiData.three_way_face_match || {};
+  const physicalData = physicalModule?.raw_output || {};
+  const physicalChecks = physicalData.checks || {};
 
   // A genuine registry comparison exists only when the backend actually
   // matched a citizen using trusted extraction (real Gemini or real local OCR)
@@ -228,6 +231,26 @@ export default function CaseReport() {
               document could not be read automatically. The identity could not be verified
               against the database — manual verification by the officer/supervisor is required.
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* Recapture requested — face image quality too poor for a biometric verdict */}
+      {(faceMatch.recapture_requested || faceMatch.face_quality?.gate === 'failed') && (
+        <div className="flex items-start gap-4 rounded-xl border border-sky-500/40 bg-sky-500/10 p-4 sm:p-6">
+          <Scan size={24} className="text-sky-400 shrink-0 mt-0.5" />
+          <div className="min-w-0 flex-1">
+            <h2 className="text-lg font-bold text-sky-300">
+              RECAPTURE NEEDED{(faceMatch.recapture_target && faceMatch.recapture_target !== 'both') ? ` — ${String(faceMatch.recapture_target).toUpperCase()}` : ''}
+            </h2>
+            <p className="text-sm text-sky-200/80 mt-1">
+              No biometric verdict was produced — the {(faceMatch.recapture_target === 'document' ? 'document photo' : faceMatch.recapture_target === 'live' ? 'live capture' : 'face images')} failed quality checks. This is a capture problem, not an identity mismatch.
+            </p>
+            {(faceMatch.recapture_reasons?.length > 0) && (
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-sky-200/90">
+                {faceMatch.recapture_reasons.map((r, i) => <li key={i}>{r}</li>)}
+              </ul>
+            )}
           </div>
         </div>
       )}
@@ -337,6 +360,25 @@ export default function CaseReport() {
                     <p className="text-sm text-slate-300 leading-relaxed">{faceMatch.visual_reasoning}</p>
                   </div>
                 )}
+
+                {/* Three-way completeness — every advertised pair traced to evidence */}
+                {(faceMatch.comparison_completeness || faceMatch.pair_sources) && (
+                  <div className="mt-4 rounded-lg border border-slate-700/50 bg-black/30 p-4 text-xs text-slate-400">
+                    <span className="font-semibold uppercase tracking-wider text-slate-300">Registry comparison: </span>
+                    {faceMatch.comparison_completeness === 'complete' ? (
+                      <span className="text-success">complete — doc↔live, doc↔registry and live↔registry all measured</span>
+                    ) : faceMatch.comparison_completeness === 'partial' ? (
+                      <span className="text-warning">partial{faceMatch.db_pairs_unavailable_reason ? ` — registry legs unavailable: ${faceMatch.db_pairs_unavailable_reason.replace(/_/g, ' ')}` : ''}{faceMatch.db_photo_late ? ' (registry record identified after the AI scan; registry legs measured locally)' : ''}</span>
+                    ) : (
+                      <span className="text-slate-500">unavailable</span>
+                    )}
+                    {faceMatch.pair_sources && (
+                      <div className="mt-1 font-mono">
+                        live↔doc: {faceMatch.pair_sources.live_vs_doc || 'n/a'} · doc↔db: {faceMatch.pair_sources.doc_vs_db || 'n/a'} · live↔db: {faceMatch.pair_sources.live_vs_db || 'n/a'}
+                      </div>
+                    )}
+                  </div>
+                )}
               </>
             )}
           </div>
@@ -364,6 +406,63 @@ export default function CaseReport() {
               <div className="bg-black/20 rounded-lg p-8 flex flex-col items-center justify-center text-slate-500 border border-slate-700 border-dashed">
                 <ImageIcon size={32} className="mb-2 opacity-50" />
                 <p className="text-sm">{tamperModule?.status === 'inconclusive' ? 'Tamper analysis was inconclusive.' : 'No visual evidence generated.'}</p>
+              </div>
+            )}
+          </div>
+
+          {/* Physical Forgery — layout/font/photo-frame/print-scan/QR/security print */}
+          <div className="glass-panel p-4 sm:p-6">
+            <div className="mb-4 flex flex-col gap-3 border-b border-slate-700/50 pb-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-2">
+                <Fingerprint className="text-teal-400" size={20} />
+                <h2 className="text-lg font-semibold text-white">Physical Forgery</h2>
+              </div>
+              {physicalModule && <StatusBadge status={physicalModule.status} score={physicalModule.score} />}
+            </div>
+            {!physicalModule ? (
+              <div className="bg-black/20 rounded-lg p-8 flex flex-col items-center justify-center text-slate-500 border border-slate-700 border-dashed">
+                <ImageIcon size={32} className="mb-2 opacity-50" />
+                <p className="text-sm">Physical-forgery analysis not available for this case (screened before this check shipped).</p>
+              </div>
+            ) : physicalModule.status === 'inconclusive' ? (
+              <div className="bg-warning/5 border border-warning/20 p-4 rounded-lg text-sm text-warning">
+                <AlertTriangle size={16} className="inline mr-2" />
+                Physical-forgery analysis was inconclusive. Inspect the document physically.
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {Object.entries(physicalChecks).map(([name, c]) => (
+                  <div key={name} className="rounded-lg border border-slate-700/50 bg-black/30 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm text-slate-300">{name.replace(/_/g, ' ')}</span>
+                      <span className={`text-xs font-mono ${c.status !== 'ok' ? 'text-slate-500' : c.score >= 0.5 ? 'text-danger' : c.score >= 0.25 ? 'text-warning' : 'text-success'}`}>
+                        {c.status !== 'ok' ? c.status.replace(/_/g, ' ') : `${(c.score * 100).toFixed(0)}%`}
+                      </span>
+                    </div>
+                    <div className="mt-2 h-1.5 rounded-full bg-slate-700/50">
+                      <div className={`h-1.5 rounded-full ${c.status !== 'ok' ? 'bg-slate-600' : c.score >= 0.5 ? 'bg-danger' : c.score >= 0.25 ? 'bg-warning' : 'bg-success'}`} style={{ width: `${c.status === 'ok' ? Math.round(c.score * 100) : 0}%` }} />
+                    </div>
+                    {(c.details?.findings?.length > 0) && (
+                      <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-slate-400">
+                        {c.details.findings.map((f, i) => <li key={i}>{f}</li>)}
+                      </ul>
+                    )}
+                  </div>
+                ))}
+                {(physicalData.checks_fired?.length > 0) && (
+                  <p className="text-xs text-slate-500">Fired: {physicalData.checks_fired.join(', ').replace(/_/g, ' ')}</p>
+                )}
+              </div>
+            )}
+            {physicalModule?.evidence_uri && (
+              <div className="relative rounded-lg overflow-hidden border border-slate-700 group mt-4">
+                <EvidenceImage
+                  evidenceUri={physicalModule.evidence_uri}
+                  alt="Physical-forgery zone overlay marking the MRZ band and portrait frame examined for layout, font and frame anomalies"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none flex items-end p-4">
+                   <p className="text-xs text-white">Forgery Zone Overlay</p>
+                </div>
               </div>
             )}
           </div>

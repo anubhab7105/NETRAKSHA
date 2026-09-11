@@ -44,6 +44,8 @@ def assess_risk(
     demographic_result: Optional[dict] = None,
     tamper_score: Optional[float] = None,
     tamper_status: str = "ok",
+    physical_score: Optional[float] = None,
+    physical_status: str = "ok",
     deepfake_score: Optional[float] = None,
     deepfake_status: str = "ok",
     face_similarity: Optional[float] = None,
@@ -56,11 +58,24 @@ def assess_risk(
     watchlist_result: Optional[dict] = None,
     gemini_face_match: Optional[dict] = None,
     gemini_photo_tamper: Optional[bool] = None,
+    registry_trust: Optional[dict] = None,
+    db_face_pairs: Optional[dict] = None,
 ) -> RiskAssessment:
     """Evaluate composite risk from all module outputs.
 
     Each parameter corresponds to the output of one pipeline module.
     Missing/None values are treated as inconclusive.
+    `registry_trust` is {"level": ..., "verified": bool, "reasons": [...]}:
+    an `unverified` registry match floors the verdict at Yellow so a
+    malicious single-writer entry can never read as Green; `legacy`
+    (pre-dual-approval) rows add an informational flag but keep Green
+    possible for demo continuity (see reconciliation report).
+    `db_face_pairs` is {"doc_vs_db_match": bool|None,
+    "live_vs_db_match": bool|None, "evidence": "local"|...}: an
+    evidence-backed (local InsightFace) registry mismatch forces Red —
+    a photo-substituted document can agree with the live impostor while
+    disagreeing with the official record. Anything but local evidence
+    (e.g. simulated guesses) is ignored here.
 
     Returns:
         RiskAssessment with verdict, score, flags, and recommendations.
@@ -107,6 +122,48 @@ def assess_risk(
     else:
         # No demographic data available
         risk_components.append(0.3)
+
+    # --- Registry trust (controlled enrollment) ---
+    # A demographic MATCH against an untrusted registry row must not read as
+    # Green: the row itself may be the forgery. Floor at Yellow.
+    if registry_trust is not None and demographic_result is not None:
+        level = registry_trust.get("level", "")
+        reasons = ";".join(registry_trust.get("reasons", []) or [])
+        if level == "unverified":
+            flags.append(f"UNVERIFIED_REGISTRY_SOURCE:{reasons}"[:160])
+            min_verdict = _escalate(min_verdict, "Yellow")
+            risk_components.append(0.6)
+            recommendations.append(
+                "WARNING: The matching registry record was enrolled without "
+                "dual approval or authority verification — it cannot vouch for "
+                "this identity. Manual authority check required before clearance."
+            )
+        elif level == "legacy":
+            flags.append("LEGACY_REGISTRY_NEEDS_REVERIFICATION")
+            recommendations.append(
+                "Note: the matching registry record predates dual-approval "
+                "controls. Schedule it for authority re-verification "
+                "(see reconciliation report)."
+            )
+
+    # --- Registry face pairs (complete three-way comparison) ---
+    # Evidence-backed registry mismatches force Red: a substituted document
+    # photo can match the live impostor yet disagree with the official
+    # record — that is exactly the forgery the third comparison exists to
+    # catch. Non-local evidence (simulated guesses) never triggers this.
+    if isinstance(db_face_pairs, dict) and db_face_pairs.get("evidence") == "local":
+        for key, flag, label in (
+            ("doc_vs_db_match", "DOC_DB_FACE_MISMATCH", "document photo vs registry photo"),
+            ("live_vs_db_match", "LIVE_DB_FACE_MISMATCH", "live capture vs registry photo"),
+        ):
+            if db_face_pairs.get(key) is False:
+                flags.append(flag)
+                min_verdict = _escalate(min_verdict, "Red")
+                risk_components.append(0.9)
+                recommendations.append(
+                    f"CRITICAL: {label} do not match. Possible photo substitution "
+                    f"or impersonation against the official registry record."
+                )
 
     # --- Face Verification (InsightFace local + Gemini 3-way) ---
     if face_status == "inconclusive":
@@ -168,6 +225,30 @@ def assess_risk(
             min_verdict = _escalate(min_verdict, "Yellow")
             recommendations.append(
                 f"MODERATE: Tamper score {tamper_score:.2f} warrants manual document inspection."
+            )
+
+    # --- Physical Forgery Detection (layout/font/photo/print-scan/QR) ---
+    if physical_status == "inconclusive":
+        flags.append("PHYSICAL_FORGERY_INCONCLUSIVE")
+        min_verdict = _escalate(min_verdict, "Yellow")
+        risk_components.append(0.4)
+        recommendations.append(
+            "Physical-forgery checks were inconclusive. Inspect document physically."
+        )
+    elif physical_score is not None:
+        risk_components.append(physical_score)
+        if physical_score >= 0.7:
+            flags.append("HIGH_PHYSICAL_FORGERY_SCORE")
+            min_verdict = _escalate(min_verdict, "Red")
+            recommendations.append(
+                f"HIGH RISK: Physical-forgery score {physical_score:.2f} indicates likely "
+                "document counterfeit/alteration. Inspect layout, portrait frame and MRZ print."
+            )
+        elif physical_score >= 0.4:
+            flags.append("MODERATE_PHYSICAL_FORGERY_SCORE")
+            min_verdict = _escalate(min_verdict, "Yellow")
+            recommendations.append(
+                f"MODERATE: Physical-forgery score {physical_score:.2f} warrants manual document inspection."
             )
 
     # --- Deepfake Detection ---
@@ -236,13 +317,16 @@ def assess_risk(
         "demographic": {
             "overall_match": demographic_result.get("overall_match") if demographic_result else None,
             "mismatch_fields": demographic_result.get("mismatch_fields", []) if demographic_result else [],
+            "registry_trust": registry_trust,
         },
         "tamper": {"score": tamper_score, "status": tamper_status},
+        "physical_forgery": {"score": physical_score, "status": physical_status},
         "deepfake": {"score": deepfake_score, "status": deepfake_status},
         "face_verification": {
             "similarity": face_similarity,
             "match": face_match,
             "status": face_status,
+            "db_pairs": db_face_pairs,
         },
         "liveness": {
             "live": liveness_live,

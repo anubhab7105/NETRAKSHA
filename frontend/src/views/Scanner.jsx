@@ -226,6 +226,23 @@ export default function Scanner() {
   const [error, setError] = useState(null);
   const navigate = useNavigate();
 
+  // Idempotency key: one UUID per screening intent. Reused across network
+  // retries so POST /api/screen returns the original case instead of a
+  // duplicate. Regenerated when inputs change or after a completed screening.
+  const newIdempotencyKey = () => (
+    typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}-${Math.random().toString(36).slice(2, 10)}`
+  );
+  const [idempotencyKey, setIdempotencyKey] = useState(() => newIdempotencyKey());
+
+  // New inputs => new screening intent => fresh key. Otherwise the server
+  // would rightly reject the old key with 422 (different input bytes).
+  useEffect(() => {
+    setIdempotencyKey(newIdempotencyKey());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docFile, faceFile]);
+
   const handleScan = async () => {
     if (!docFile) {
       setError("Please capture a document image using the webcam.");
@@ -237,6 +254,9 @@ export default function Scanner() {
 
     const formData = new FormData();
     formData.append('document_image', docFile);
+    // Form-field fallback mirrors the Idempotency-Key header (for proxies
+    // that strip custom headers on multipart uploads).
+    formData.append('idempotency_key', idempotencyKey);
     if (faceFile) {
       if (Array.isArray(faceFile.burst) && faceFile.burst.length > 0) {
         // Send the first frame as live_capture so 3-way face matching works,
@@ -253,14 +273,44 @@ export default function Scanner() {
 
     try {
       const res = await api.post('/screen', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+        headers: {
+          'Content-Type': 'multipart/form-data',
+          'Idempotency-Key': idempotencyKey,
+        }
       });
+      // Success (or idempotent replay) — mint a fresh key so the next
+      // screening is a new intent, then go to the (original) case.
+      setIdempotencyKey(newIdempotencyKey());
       navigate(`/case/${res.data.case_id}`);
     } catch (err) {
       if (import.meta.env.DEV) console.error(err);
+      const status = err.response?.status;
       const detail =
         err.response?.data?.detail ||
         (typeof err.response?.data === 'string' ? err.response.data : null);
+      if (status === 409) {
+        // Duplicate in flight — the original request is still processing.
+        // Keep the SAME key so a manual retry joins the original, not a new case.
+        setError(
+          detail
+            ? `Duplicate suppressed (HTTP 409): ${detail}`
+            : 'This screening is already in progress. Please wait for the original request to finish.'
+        );
+        setScanning(false);
+        return;
+      }
+      if (status === 422 && /idempo/i.test(String(detail || ''))) {
+        // Key/input drift (e.g. files changed mid-flight) — mint a fresh key
+        // and ask the officer to retry once.
+        setIdempotencyKey(newIdempotencyKey());
+        setError(
+          detail
+            ? `Screening failed (HTTP 422): ${detail} A fresh idempotency key was generated — please retry.`
+            : 'Screening failed: idempotency key mismatch. A fresh key was generated — please retry.'
+        );
+        setScanning(false);
+        return;
+      }
       setError(
         detail
           ? `Screening failed (HTTP ${err.response.status}): ${detail}`

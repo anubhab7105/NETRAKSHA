@@ -34,6 +34,13 @@ from .common import (
     ok_result,
     single_log,
 )
+from .face_quality import (
+    RECAPTURE_GUIDANCE,
+    QualityReport,
+    assess_capture,
+    assess_face,
+    combine_reports,
+)
 
 MODULE_NAME = "face_match"
 
@@ -44,6 +51,82 @@ MATCH_THRESHOLD = 0.55
 _face_analysis_lock = threading.Lock()
 _face_analysis = None
 _provider_used = None
+
+# Haar cascades — fallback ONLY (classify *why* InsightFace found nothing:
+# profile-hit ≈ side angle). Never a hard gate on their own: Haar misses
+# good frames too often. Cached, thread-safe via the GIL + lazy init.
+_haar_lock = threading.Lock()
+_haar_frontal = None
+_haar_profile = None
+
+
+def _haar_classifiers():
+    """Lazily load Haar cascades; return (frontal, profile) or (None, None)."""
+    global _haar_frontal, _haar_profile
+    with _haar_lock:
+        if _haar_frontal is not None or _haar_profile is not None:
+            return _haar_frontal, _haar_profile
+        try:
+            import cv2
+
+            frontal = cv2.CascadeClassifier(
+                os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")
+            )
+            profile = cv2.CascadeClassifier(
+                os.path.join(cv2.data.haarcascades, "haarcascade_profileface.xml")
+            )
+            _haar_frontal = frontal if not frontal.empty() else None
+            _haar_profile = profile if not profile.empty() else None
+        except Exception:
+            _haar_frontal, _haar_profile = None, None
+        return _haar_frontal, _haar_profile
+
+
+def _haar_fallback_codes(image_bgr) -> list:
+    """Classify a no-face detection: side_angle | no_face | []."""
+    try:
+        import cv2
+
+        frontal, profile = _haar_classifiers()
+        if frontal is None:
+            return []
+        gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+        if len(frontal.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(50, 50))):
+            return []  # a face IS there — detector miss, keep generic no_face
+        if profile is not None:
+            prof = profile.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(50, 50))
+            if len(prof) == 0:
+                flipped = cv2.flip(gray, 1)
+                prof = profile.detectMultiScale(flipped, scaleFactor=1.1, minNeighbors=5, minSize=(50, 50))
+            if len(prof):
+                return ["side_angle"]
+        return ["no_face"]
+    except Exception:
+        return []
+
+
+def _quality_failure_result(doc_rep: QualityReport, live_rep: QualityReport) -> ModuleResult:
+    """Build the inconclusive + recapture-requested result (never raises)."""
+    quality = combine_reports(doc_rep, live_rep)
+    target = quality["recapture_target"]
+    reasons = quality["recapture_reasons"]
+    detail = "; ".join(reasons) if reasons else "face image quality too poor for matching"
+    return ModuleResult(
+        module_name=MODULE_NAME,
+        score=None,
+        status="inconclusive",
+        raw_output={
+            "error": "inconclusive",
+            "reason": f"face quality gate failed — recapture requested ({target}): {detail[:300]}",
+            "quality_gate": "failed",
+            "face_quality": {k: v for k, v in quality["inputs"].items()},
+            "failed_quality_targets": quality["failed_targets"],
+            "recapture_requested": True,
+            "recapture_target": target,
+            "recapture_reasons": reasons,
+        },
+        evidence_uri=None,
+    )
 
 
 def _get_face_analysis():
@@ -137,6 +220,16 @@ def run_face_match(document_photo, live_capture, save_evidence: bool = True) -> 
     except Exception as exc:  # noqa: BLE001
         return inconclusive_result(MODULE_NAME, exc)
 
+    # --- Quality stage 1: whole-image hygiene (no detection needed) ---
+    # Catches lens-covered / flash-blown / corrupt frames before spending
+    # seconds on model inference. Reference thumbnails (tiny registry crops)
+    # report reference_mode and skip hard gates here.
+    doc_cap = assess_capture(doc, "document")
+    live_cap = assess_capture(live, "live")
+    early_failed = [r for r in (doc_cap, live_cap) if not r.passed and not r.reference_mode]
+    if early_failed:
+        return _quality_failure_result(doc_cap, live_cap)
+
     try:
         app = _get_face_analysis()
     except Exception as exc:  # noqa: BLE001
@@ -162,11 +255,35 @@ def run_face_match(document_photo, live_capture, save_evidence: bool = True) -> 
     except Exception as exc:  # noqa: BLE001
         return inconclusive_result(MODULE_NAME, exc)
 
+    # --- Quality stage 2: per-face usability (blur / light / size / pose) ---
+    # A blurry/dark/side-angle capture must request RECAPTURE — never a
+    # fabricated match/mismatch verdict. Tiny registry thumbnails run in
+    # reference_mode (face presence only) so enrolled data keeps verifying.
+    doc_rep = assess_face(doc, doc_face, doc_n or 0, "document")
+    live_rep = assess_face(live, live_face, live_n or 0, "live")
+    for rep, cap_rep in ((doc_rep, doc_cap), (live_rep, live_cap)):
+        if cap_rep.reference_mode:
+            # Downgrade measurement gates to advisories; keep presence gates.
+            keep = [c for c in rep.failed if c in ("no_face", "multi_face")]
+            rep.warnings.extend(c for c in rep.failed if c not in keep)
+            rep.failed = keep
+            rep.reference_mode = True
+            rep.passed = not keep
+    # Sharpen a bare no_face with the Haar fallback: a profile-only hit means
+    # the traveller is facing sideways — say so instead of a generic miss.
+    for rep, img in ((doc_rep, doc), (live_rep, live)):
+        if rep.failed == ["no_face"]:
+            alt = _haar_fallback_codes(img)
+            if alt == ["side_angle"]:
+                rep.failed = ["side_angle"]
+                rep.metrics["pose_hint"] = "haar_profile_only"
+    if not doc_rep.passed or not live_rep.passed:
+        return _quality_failure_result(doc_rep, live_rep)
+
     if doc_norm is None or live_norm is None:
-        return inconclusive_result(
-            MODULE_NAME,
-            "no face detected in document photo and/or live capture",
-        )
+        # Unreachable in practice (stage 2 already gated presence), kept as a
+        # safety net so the contract holds under any detector behaviour.
+        return _quality_failure_result(doc_rep, live_rep)
 
     similarity = float(np.dot(doc_norm, live_norm))
     similarity = float(np.clip(similarity, 0.0, 1.0))
@@ -194,6 +311,16 @@ def run_face_match(document_photo, live_capture, save_evidence: bool = True) -> 
         "live_embedding_norm": round(float(np.linalg.norm(live_norm)), 4),
         "model": "insightface/buffalo_l (ArcFace w600k_r50)",
         "providers": _provider_used,
+        # Quality transparency: gates passed for this comparison; warnings
+        # (e.g. occlusion_suspected, multi-face doc print) ride along so the
+        # officer sees capture caveats next to the similarity score.
+        "quality_gate": "passed",
+        "face_quality": {
+            "document": doc_rep.to_dict(),
+            "live": live_rep.to_dict(),
+        },
+        "recapture_requested": False,
+        "recapture_reasons": [],
     }
     return ok_result(MODULE_NAME, similarity, raw, evidence_uri)
 
@@ -211,3 +338,165 @@ def _crop_face(image_bgr: np.ndarray, face, pad: float = 0.35) -> np.ndarray:
     x1, y1 = max(0, x1 - padx), max(0, y1 - pady)
     x2, y2 = min(w, x2 + padx), min(h, y2 + pady)
     return image_bgr[y1:y2, x1:x2]
+
+
+def _pair_unavailable(reason: str) -> dict:
+    """Placeholder for a comparison that cannot run (no input image)."""
+    return {
+        "status": "unavailable",
+        "match": None,
+        "similarity": None,
+        "reason": reason,
+        "recapture_requested": False,
+        "recapture_reasons": [],
+    }
+
+
+def _pair_from_result(res) -> dict:
+    """Normalise a run_face_match ModuleResult into a three-way pair slot."""
+    raw = res.raw_output or {}
+    if res.status == "ok":
+        return {
+            "status": "ok",
+            "match": bool(raw.get("match")),
+            "similarity": float(raw.get("similarity")) if raw.get("similarity") is not None else None,
+            "engine": "insightface_local",
+            "quality_gate": raw.get("quality_gate", "passed"),
+            "warnings": ((raw.get("face_quality") or {}).get("live", {}).get("warnings", [])
+                         + (raw.get("face_quality") or {}).get("document", {}).get("warnings", [])),
+            "recapture_requested": False,
+            "recapture_reasons": [],
+        }
+    return {
+        "status": "inconclusive",
+        "match": None,
+        "similarity": None,
+        "engine": "insightface_local",
+        "quality_gate": raw.get("quality_gate", "failed"),
+        "reason": raw.get("reason", "inconclusive"),
+        "face_quality": raw.get("face_quality"),
+        "recapture_requested": bool(raw.get("recapture_requested", False)),
+        "recapture_target": raw.get("recapture_target"),
+        "recapture_reasons": list(raw.get("recapture_reasons") or []),
+    }
+
+
+def run_three_way_match(
+    document_photo,
+    live_capture=None,
+    db_reference=None,
+    save_evidence: bool = False,
+) -> dict:
+    """Compare all three face pairs for one screening (never raises).
+
+    Registry-first three-way comparison: document-face ↔ live-face,
+    document-face ↔ registry-face, and live-face ↔ registry-face — every
+    pair that has both input images is actually computed (each through the
+    same quality gates as :func:`run_face_match`). Pairs without both
+    inputs are marked ``unavailable`` with an explicit reason instead of a
+    silent null, so callers can report completeness honestly.
+
+    Args:
+        document_photo: doc scan (path / bytes / PIL / ndarray).
+        live_capture: live still, or None when no webcam frame exists.
+        db_reference: registry reference photo, or None when no registry
+            record / photo is available.
+        save_evidence: evidence composites are skipped by default here
+            (the primary doc↔live evidence is rendered by run_face_match
+            at the call site when needed).
+
+    Returns:
+        {
+          "pairs": {"live_vs_doc": {...}, "doc_vs_db": {...},
+                    "live_vs_db": {...}},
+          "completeness": "complete" | "partial" | "unavailable",
+          "db_pairs_unavailable_reason": str | None,
+          "recapture_requested": bool, "recapture_target": ...,
+          "recapture_reasons": [...],
+          "primary": {"similarity": float|None, "match": bool|None},
+        }
+    """
+    try:
+        pairs = {}
+        if live_capture is None:
+            pairs["live_vs_doc"] = _pair_unavailable("no_live_capture")
+        else:
+            try:
+                pairs["live_vs_doc"] = _pair_from_result(
+                    run_face_match(document_photo, live_capture, save_evidence=save_evidence)
+                )
+            except Exception as exc:  # noqa: BLE001
+                pairs["live_vs_doc"] = {**_pair_unavailable("comparison_failed"),
+                                        "reason": f"comparison_failed: {type(exc).__name__}"}
+        if db_reference is None:
+            pairs["doc_vs_db"] = _pair_unavailable("no_registry_photo")
+            pairs["live_vs_db"] = _pair_unavailable(
+                "no_registry_photo" if live_capture is not None else "no_live_capture_no_registry_photo"
+            )
+        else:
+            try:
+                pairs["doc_vs_db"] = _pair_from_result(
+                    run_face_match(document_photo, db_reference, save_evidence=False)
+                )
+            except Exception as exc:  # noqa: BLE001
+                pairs["doc_vs_db"] = {**_pair_unavailable("comparison_failed"),
+                                      "reason": f"comparison_failed: {type(exc).__name__}"}
+            if live_capture is None:
+                pairs["live_vs_db"] = _pair_unavailable("no_live_capture")
+            else:
+                try:
+                    pairs["live_vs_db"] = _pair_from_result(
+                        run_face_match(live_capture, db_reference, save_evidence=False)
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    pairs["live_vs_db"] = {**_pair_unavailable("comparison_failed"),
+                                           "reason": f"comparison_failed: {type(exc).__name__}"}
+
+        computed = [p for p in pairs.values() if p.get("status") == "ok"]
+        if len(computed) == 3:
+            completeness = "complete"
+        elif computed:
+            completeness = "partial"
+        else:
+            completeness = "unavailable"
+
+        db_reasons = [pairs[k].get("reason") for k in ("doc_vs_db", "live_vs_db")
+                      if pairs[k].get("status") == "unavailable"]
+        db_reason = db_reasons[0] if db_reasons else None
+
+        recapture_reasons: list = []
+        recapture_target = None
+        for key in ("live_vs_doc", "doc_vs_db", "live_vs_db"):
+            p = pairs[key]
+            if p.get("recapture_requested"):
+                recapture_reasons.extend(p.get("recapture_reasons") or [])
+                if recapture_target is None:
+                    recapture_target = p.get("recapture_target")
+
+        primary_pair = pairs["live_vs_doc"]
+        return {
+            "pairs": pairs,
+            "completeness": completeness,
+            "db_pairs_unavailable_reason": db_reason,
+            "recapture_requested": bool(recapture_reasons),
+            "recapture_target": recapture_target,
+            "recapture_reasons": recapture_reasons,
+            "primary": {
+                "similarity": primary_pair.get("similarity"),
+                "match": primary_pair.get("match"),
+            },
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "pairs": {
+                "live_vs_doc": _pair_unavailable("comparison_failed"),
+                "doc_vs_db": _pair_unavailable("comparison_failed"),
+                "live_vs_db": _pair_unavailable("comparison_failed"),
+            },
+            "completeness": "unavailable",
+            "db_pairs_unavailable_reason": f"comparison_failed: {type(exc).__name__}",
+            "recapture_requested": False,
+            "recapture_target": None,
+            "recapture_reasons": [],
+            "primary": {"similarity": None, "match": None},
+        }
