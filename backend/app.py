@@ -842,8 +842,11 @@ async def _run_screening_pipeline(
         "liveness": liveness_result.to_json(),
         "watchlist": watchlist_result.to_dict(),
         "risk_assessment": risk.to_dict(),
+        "is_demo": is_demo_case,
+        "demo_label": "DEMO ONLY — simulated AI excluded from scoring" if is_demo_case else None,
         "gemini_metadata": {
             "is_simulated": is_simulated,
+            "is_demo": is_demo_case,
             "gemini_status": gemini_status,
             "latency_ms": gemini_result.get("latency_ms"),
             "model_used": gemini_result.get("model_used"),
