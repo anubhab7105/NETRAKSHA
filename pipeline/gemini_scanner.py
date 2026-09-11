@@ -170,10 +170,12 @@ def scan_document(
     result = _simulate_scan(document_image_path, live_capture_path, db_reference_path)
     elapsed = (time.perf_counter() - start) * 1000
     result["is_simulated"] = True
-    result["cloud_unavailable"] = bool(_GEMINI_API_KEY)  # True if key existed but call failed (network), False if no key (demo)
+    # Distinguish demo (no/placeholder key) vs network failure (real key but call failed)
+    _has_real_key = bool(_GEMINI_API_KEY and _GEMINI_API_KEY.strip() not in ("", "your_gemini_api_key_here", "your_gemini_api_key_here\n") and len(_GEMINI_API_KEY.strip()) > 20)
+    result["cloud_unavailable"] = bool(_has_real_key)  # True only if real key existed but call failed
     result["latency_ms"] = round(elapsed, 1)
     result["model_used"] = "offline_simulation"
-    result["cloud_fallback_reason"] = "network_or_api_failure" if _GEMINI_API_KEY else "no_api_key"
+    result["cloud_fallback_reason"] = "network_or_api_failure" if _has_real_key else "no_api_key"
     return _normalize_no_live_face_match(result, has_live)
 
 
