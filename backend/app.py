@@ -1764,7 +1764,10 @@ async def _run_screening_pipeline(
     # mark the case as demo-only (labelled in the response + audit).
     # If face was enriched via real local InsightFace, keep it even in demo
     # mode (real biometrics, not simulated), but still label the case demo.
+    # Network failure (cloud_unavailable) is a controlled fallback: local checks
+    # continue, but final verdict must be Yellow/Manual Review, never Green.
     is_demo_case = bool(is_simulated)
+    is_cloud_unavailable = bool(gemini_result.get("cloud_unavailable"))
     if is_demo_case and not face_is_real_via_local:
         face_sim = None
         face_match_bool = None
@@ -1780,6 +1783,8 @@ async def _run_screening_pipeline(
         face_status_for_risk = "ok" if face_sim is not None else "inconclusive"
         gemini_face_for_risk = face_match_data
         gemini_tamper_for_risk = photo_tamper
+    # Cloud unavailable always forces at least Yellow, even if local checks are Green
+    cloud_unavailable_for_risk = is_cloud_unavailable
 
     # Evidence-backed registry pairs for the risk engine. Evidence counts
     # as "local" only when every registry leg carrying a verdict came from
