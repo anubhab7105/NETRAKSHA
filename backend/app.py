@@ -1136,6 +1136,16 @@ async def override_case(case_id: int, req: OverrideRequest, request: Request):
         if not case:
             raise HTTPException(status_code=404, detail="Case not found")
 
+        # Least-privilege: check case ownership / unit scope / auditor read-only
+        role = officer.get("role", "officer")
+        officer_unit = officer.get("unit") or "BORDER_UNIT_1"
+        if role == "auditor":
+            raise HTTPException(status_code=403, detail="Access denied: auditor role is read-only, cannot override cases")
+        if role == "officer" and case.officer_id != officer_id:
+            raise HTTPException(status_code=403, detail="Access denied: cannot act on another officer's case")
+        if role == "supervisor" and case.unit and case.unit != officer_unit:
+            raise HTTPException(status_code=403, detail="Access denied: case outside your unit")
+
         # Record officer action
         session.add(OfficerAction(
             case_id=case_id,
