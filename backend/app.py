@@ -392,6 +392,7 @@ async def _run_screening_pipeline(
     doc_path: Path,
     live_path: Optional[Path],
     officer_id: int,
+    officer_unit: str = "BORDER_UNIT_1",
     live_burst: Optional[List[str]] = None,
 ) -> dict:
     """Execute the full screening pipeline with parallel local+cloud execution.
