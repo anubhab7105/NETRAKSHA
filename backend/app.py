@@ -964,6 +964,23 @@ async def _run_screening_pipeline(
     else:
         gemini_status = "ok"
 
+    # Collect provenance for reproducibility (signed)
+    _prov_extra = {
+        "officer_id": officer_id,
+        "officer_unit": officer_unit,
+        "document_type": doc_type,
+        "citizen_id": citizen_id,
+        "verdict": risk.verdict,
+        "risk_score": risk.risk_score,
+    }
+    _file_hashes = {}
+    try:
+        if audit_context and audit_context.get("file_hashes"):
+            _file_hashes = audit_context["file_hashes"]
+    except Exception:
+        pass
+    provenance, provenance_sig = collect_provenance(_file_hashes, _prov_extra)
+
     case_id = None
     async with async_session() as session:
         case = ScreeningCase(
@@ -975,6 +992,8 @@ async def _run_screening_pipeline(
             verdict=risk.verdict,
             status="pending_review",
             unit=officer_unit,
+            provenance=json.dumps(provenance),
+            provenance_signature=provenance_sig,
         )
         session.add(case)
         await session.flush()
@@ -1098,6 +1117,8 @@ async def _run_screening_pipeline(
         "risk_assessment": risk.to_dict(),
         "is_demo": is_demo_case,
         "demo_label": "DEMO ONLY — simulated AI excluded from scoring" if is_demo_case else None,
+        "provenance": provenance,
+        "provenance_signature": provenance_sig,
         "gemini_metadata": {
             "is_simulated": is_simulated,
             "is_demo": is_demo_case,
