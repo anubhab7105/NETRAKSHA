@@ -116,6 +116,8 @@ class ScreeningCase(Base):
     status = Column(String(20), default="pending_review")  # pending_review | escalated | decided
     unit = Column(String(50), nullable=True)  # officer's unit at screening time for location scoping
     version = Column(Integer, default=0, nullable=False)  # optimistic locking version
+    provenance = Column(Text, nullable=True)  # JSON of model/config/input hashes for reproducibility
+    provenance_signature = Column(Text, nullable=True)  # HMAC signature of provenance
 
     # Relationships
     officer = relationship("Officer", back_populates="screening_cases")
@@ -128,6 +130,13 @@ class ScreeningCase(Base):
         return f"<ScreeningCase(id={self.id}, verdict={self.verdict!r}, status={self.status!r})>"
 
     def to_dict(self) -> dict:
+        import json as _json
+        prov = None
+        if self.provenance:
+            try:
+                prov = _json.loads(self.provenance)
+            except Exception:
+                prov = self.provenance
         return {
             "id": self.id,
             "officer_id": self.officer_id,
@@ -140,6 +149,8 @@ class ScreeningCase(Base):
             "status": self.status,
             "unit": self.unit,
             "version": self.version or 0,
+            "provenance": prov,
+            "provenance_signature": self.provenance_signature,
         }
 
 
