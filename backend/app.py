@@ -1230,8 +1230,38 @@ async def list_citizens(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
-    """List registered citizens (reference profiles for screening)."""
-    await _auth(request)  # any authenticated role may view the registry
+    """List registered citizens with least-privilege scoping."""
+    officer = await _auth(request)
+    # Officer can only view citizens linked to their own cases; supervisor/auditor can view all
+    if officer.get("role") == "officer":
+        async with async_session() as session:
+            # Get citizen IDs from officer's own cases
+            cases_res = await session.execute(
+                select(ScreeningCase.citizen_id).where(
+                    (ScreeningCase.officer_id == int(officer["sub"])) & (ScreeningCase.citizen_id.is_not(None))
+                )
+            )
+            allowed_ids = {row[0] for row in cases_res.all()}
+            if not allowed_ids:
+                return {"citizens": [], "count": 0, "limit": limit, "offset": offset}
+            query = select(CitizenRegistry).where(CitizenRegistry.id.in_(allowed_ids)).order_by(CitizenRegistry.id.asc())
+            if q and q.strip():
+                needle = f"%{q.strip()}%"
+                query = query.where(
+                    CitizenRegistry.full_name.ilike(needle) | CitizenRegistry.document_number.ilike(needle)
+                )
+            # Still apply q filter if needed, but already filtered to allowed_ids
+            total = len((await session.execute(query)).scalars().all())
+            query = query.limit(limit).offset(offset)
+            result = await session.execute(query)
+            citizens = result.scalars().all()
+        return {
+            "citizens": [c.to_dict() for c in citizens],
+            "count": total,
+            "limit": limit,
+            "offset": offset,
+        }
+    # supervisor and auditor can view all (with optional search)
 
     async with async_session() as session:
         query = select(CitizenRegistry).order_by(CitizenRegistry.id.asc())
