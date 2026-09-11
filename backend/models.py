@@ -25,6 +25,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
@@ -62,10 +63,13 @@ class Officer(Base):
 
 class CitizenRegistry(Base):
     __tablename__ = "citizens_registry"
+    __table_args__ = (
+        UniqueConstraint("document_type", "document_number", name="uq_citizen_type_number"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     document_type = Column(String(20), nullable=False)  # aadhaar | pan | voter_id | passport
-    document_number = Column(String(50), unique=True, nullable=False)
+    document_number = Column(String(50), nullable=False)
     full_name = Column(Text, nullable=False)
     date_of_birth = Column(String(20), nullable=True)  # YYYY-MM-DD or DD/MM/YYYY
     gender = Column(String(10), nullable=True)  # M | F | Other
