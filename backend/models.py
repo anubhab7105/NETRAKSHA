@@ -47,6 +47,7 @@ class Officer(Base):
     username = Column(String(100), unique=True, nullable=False)
     password_hash = Column(Text, nullable=False)
     role = Column(String(20), nullable=False, default="officer")  # officer | supervisor | auditor
+    unit = Column(String(50), nullable=False, default="BORDER_UNIT_1")  # location/unit for least-privilege scoping
     created_at = Column(DateTime, server_default=func.now())
 
     # Relationships
@@ -113,6 +114,7 @@ class ScreeningCase(Base):
     risk_score = Column(Float, nullable=True)
     verdict = Column(String(10), nullable=True)  # Green | Yellow | Red
     status = Column(String(20), default="pending_review")  # pending_review | decided
+    unit = Column(String(50), nullable=True)  # officer's unit at screening time for location scoping
 
     # Relationships
     officer = relationship("Officer", back_populates="screening_cases")
@@ -135,6 +137,7 @@ class ScreeningCase(Base):
             "risk_score": self.risk_score,
             "verdict": self.verdict,
             "status": self.status,
+            "unit": self.unit,
         }
 
 
