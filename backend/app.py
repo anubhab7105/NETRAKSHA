@@ -1633,6 +1633,21 @@ async def _run_screening_pipeline(
         else:
             citizen = await _find_citizen_by_number(final_key[0], doc_number)
 
+        # Audit the registry access (reason: screening verification for this document)
+        try:
+            async with async_session() as _audit_sess:
+                _audit_sess.add(AuditLog(
+                    actor=f"officer:{officer_id}",
+                    action=f"registry_access:screening type:{norm_type} number:{doc_number[:4]}***",
+                    entity=f"citizen_lookup:{norm_type}:{_normalize_doc_number(doc_number)}",
+                    officer_id=officer_id,
+                    request_id=audit_context.get("request_id") if 'audit_context' in locals() and audit_context else "",
+                    device_info=f"screening case pending",
+                ))
+                await _audit_sess.commit()
+        except Exception:
+            pass
+
         if citizen is not None:
             citizen_id = citizen.id
             try:
@@ -2392,6 +2407,47 @@ async def list_audit(
         "count": len(logs),
         "limit": limit,
         "offset": offset,
+    }
+
+
+@app.get("/api/audit/access-review", include_in_schema=False)
+async def access_review(request: Request, days: int = Query(30, ge=1, le=365)):
+    """Periodic access review — aggregate registry and case access by officer (auditor only)."""
+    officer = await _auth(request)
+    if officer.get("role") != "auditor":
+        raise HTTPException(status_code=403, detail="Access denied: auditor role required")
+    from datetime import timedelta
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    async with async_session() as session:
+        # Use naive cutoff for SQLite
+        try:
+            cutoff_naive = cutoff.replace(tzinfo=None)
+        except Exception:
+            cutoff_naive = cutoff
+        # Aggregate audit logs
+        result = await session.execute(select(AuditLog).where(AuditLog.timestamp >= cutoff_naive).order_by(AuditLog.timestamp.desc()))
+        logs = result.scalars().all()
+    # Aggregate by actor
+    from collections import Counter, defaultdict
+    by_actor = Counter(log.actor for log in logs)
+    by_action = Counter(log.action.split(":")[0] for log in logs)
+    # Registry access by officer
+    registry_access = defaultdict(int)
+    for log in logs:
+        if "registry" in log.action or "citizen" in log.entity:
+            registry_access[log.actor] += 1
+    # Flag anomalous: officers with high registry access vs cases created
+    return {
+        "period_days": days,
+        "total_events": len(logs),
+        "by_actor": dict(by_actor),
+        "by_action": dict(by_action),
+        "registry_access_by_officer": dict(registry_access),
+        "alerts": [
+            f"High registry access: {actor} accessed {count} citizen records in {days} days — review for misuse"
+            for actor, count in registry_access.items() if count > 20
+        ],
+        "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
 
