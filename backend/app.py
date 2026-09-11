@@ -343,8 +343,19 @@ async def screen_document(
         [str(live_tmp)] if live_tmp else None
     )
 
+    # Resolve officer unit for location scoping (least-privilege)
+    officer_unit = officer.get("unit") or "BORDER_UNIT_1"
+    if not officer.get("unit"):
+        try:
+            async with async_session() as _sess:
+                _res = await _sess.execute(select(Officer).where(Officer.id == officer_id))
+                _off = _res.scalar_one_or_none()
+                if _off and getattr(_off, "unit", None):
+                    officer_unit = _off.unit
+        except Exception:
+            pass
     try:
-        result = await _run_screening_pipeline(doc_tmp, live_tmp, officer_id, burst)
+        result = await _run_screening_pipeline(doc_tmp, live_tmp, officer_id, officer_unit, burst)
     finally:
         # Cleanup temp files
         doc_tmp.unlink(missing_ok=True)
