@@ -113,8 +113,9 @@ class ScreeningCase(Base):
     demographic_match = Column(Boolean, nullable=True)
     risk_score = Column(Float, nullable=True)
     verdict = Column(String(10), nullable=True)  # Green | Yellow | Red
-    status = Column(String(20), default="pending_review")  # pending_review | decided
+    status = Column(String(20), default="pending_review")  # pending_review | escalated | decided
     unit = Column(String(50), nullable=True)  # officer's unit at screening time for location scoping
+    version = Column(Integer, default=0, nullable=False)  # optimistic locking version
 
     # Relationships
     officer = relationship("Officer", back_populates="screening_cases")
@@ -138,6 +139,7 @@ class ScreeningCase(Base):
             "verdict": self.verdict,
             "status": self.status,
             "unit": self.unit,
+            "version": self.version or 0,
         }
 
 
