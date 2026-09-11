@@ -160,15 +160,20 @@ def scan_document(
             result["model_used"] = _GEMINI_MODEL
             return _normalize_no_live_face_match(result, has_live)
         except Exception as exc:
-            print(f"[gemini_scanner] Gemini API call failed: {type(exc).__name__}: {exc}")
-            # Fall through to simulation
+            # Network/cloud failure → controlled fallback, not a halt
+            err_name = type(exc).__name__
+            is_network = any(s in err_name.lower() or s in str(exc).lower() for s in ["timeout", "connection", "network", "unavailable", "dns", "socket", "503", "502", "504"])
+            print(f"[gemini_scanner] Gemini API call failed ({'network' if is_network else 'other'}): {err_name}: {exc} — falling back to local checks, final verdict will be Yellow/Manual Review")
+            # Fall through to simulation with cloud_unavailable flag
 
-    # Offline simulation fallback
+    # Offline simulation fallback — controlled, not a halt
     result = _simulate_scan(document_image_path, live_capture_path, db_reference_path)
     elapsed = (time.perf_counter() - start) * 1000
     result["is_simulated"] = True
+    result["cloud_unavailable"] = bool(_GEMINI_API_KEY)  # True if key existed but call failed (network), False if no key (demo)
     result["latency_ms"] = round(elapsed, 1)
     result["model_used"] = "offline_simulation"
+    result["cloud_fallback_reason"] = "network_or_api_failure" if _GEMINI_API_KEY else "no_api_key"
     return _normalize_no_live_face_match(result, has_live)
 
 
