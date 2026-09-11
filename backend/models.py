@@ -50,6 +50,12 @@ class Officer(Base):
     role = Column(String(20), nullable=False, default="officer")  # officer | supervisor | auditor
     unit = Column(String(50), nullable=False, default="BORDER_UNIT_1")  # location/unit for least-privilege scoping
     created_at = Column(DateTime, server_default=func.now())
+    # --- Auth hardening (password rotation + supervisor MFA) ---
+    # Pre-existing databases gain these via database.ensure_auth_columns().
+    must_change_password = Column(Boolean, nullable=False, default=False)
+    totp_secret = Column(Text, nullable=True)  # base32 secret; set at enrollment
+    totp_enabled = Column(Boolean, nullable=False, default=False)
+    password_changed_at = Column(DateTime, nullable=True)
 
     # Relationships
     screening_cases = relationship("ScreeningCase", back_populates="officer")

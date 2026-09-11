@@ -55,6 +55,18 @@ except Exception:
     pass
 
 from backend.database import async_session, get_session, init_db
+from backend.auth_security import (
+    DUMMY_HASH,
+    app_env,
+    client_ip,
+    generate_totp_secret,
+    is_production,
+    otpauth_uri,
+    rate_limit_from_env,
+    secret_error,
+    validate_new_password,
+    verify_totp,
+)
 from backend.models import (
     AuditLog,
     CitizenRegistry,
@@ -76,6 +88,11 @@ _JWT_ALGORITHM = "HS256"
 _JWT_EXPIRY_HOURS = int(os.environ.get("JWT_EXPIRY_HOURS", "8"))
 _DEMO_MODE = os.environ.get("DEMO_MODE", "").lower() in ("1", "true", "yes")
 
+# Brute-force throttles (env-tunable; in-memory per process — see docs).
+_LOGIN_LIMITER = rate_limit_from_env("LOGIN_RATE_LIMIT", 5, 300)
+_MFA_LIMITER = rate_limit_from_env("MFA_RATE_LIMIT", 5, 300)
+_MFA_TOKEN_MINUTES = int(os.environ.get("MFA_TOKEN_MINUTES", "5"))
+
 try:
     import jwt as pyjwt
     _HAS_PYJWT = True
@@ -83,10 +100,16 @@ except ImportError:
     _HAS_PYJWT = False
 
 
-def _create_token(officer_id: int, username: str, role: str, unit: str = "BORDER_UNIT_1") -> str:
-    """Create a JWT token for an authenticated officer."""
+def _create_token(officer_id: int, username: str, role: str, unit: str = "BORDER_UNIT_1",
+                  purpose: str = "session", expiry_minutes: Optional[int] = None) -> str:
+    """Create a JWT token for an authenticated officer.
+
+    purpose="session" (default, honoured by _auth) or "mfa" (short-lived
+    step-up token for the second factor — rejected by _auth everywhere).
+    """
     import uuid as _uuid
     jti = _uuid.uuid4().hex
+    minutes = expiry_minutes if expiry_minutes is not None else _JWT_EXPIRY_HOURS * 60
     if _HAS_PYJWT:
         payload = {
             "sub": str(officer_id),
@@ -94,7 +117,8 @@ def _create_token(officer_id: int, username: str, role: str, unit: str = "BORDER
             "role": role,
             "unit": unit,
             "jti": jti,
-            "exp": datetime.now(timezone.utc) + timedelta(hours=_JWT_EXPIRY_HOURS),
+            "purpose": purpose,
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=minutes),
             "iat": datetime.now(timezone.utc),
         }
         return pyjwt.encode(payload, _JWT_SECRET, algorithm=_JWT_ALGORITHM)
@@ -107,6 +131,7 @@ def _create_token(officer_id: int, username: str, role: str, unit: str = "BORDER
             "role": role,
             "unit": unit,
             "jti": jti,
+            "purpose": purpose,
         })
         return base64.b64encode(payload.encode()).decode()
 
@@ -259,15 +284,24 @@ _FRONTEND_DIR = _PROJECT_ROOT / "frontend" / "dist"
 
 @app.on_event("startup")
 async def startup():
-    # JWT secret check (audit P3 §1) — warn on default, allow local dev
-    if _JWT_SECRET == "sih-hackathon-dev-secret-change-in-prod":
-        print("[startup] WARNING: Using default JWT secret. Set a strong value in .env for production.")
+    # Secrets gate: production FAILS FAST on default/weak secrets instead of
+    # serving with forgeable tokens. Development keeps soft warnings.
+    _jwt_problem = secret_error(_JWT_SECRET, name="JWT_SECRET")
+    if _jwt_problem and is_production():
+        raise RuntimeError(f"[startup] {_jwt_problem}")
+    elif _jwt_problem:
+        print(f"[startup] WARNING: {_jwt_problem}")
         # Previously this raised outside DEMO_MODE and blocked `uvicorn --reload`
         # with the stock .env; keep it as a soft warning so local Supabase/SQLite
         # dev works out-of-the-box.
 
     await init_db()
-    if _REGISTRY_IMPORT_SECRET_FALLBACK:
+    _reg_problem = secret_error(_REGISTRY_IMPORT_SECRET, name="REGISTRY_IMPORT_SECRET")
+    if _reg_problem and is_production():
+        raise RuntimeError(f"[startup] {_reg_problem} Generate one (python -c "
+                           f"\"import secrets; print(secrets.token_hex(32))\") and share it "
+                           f"with the issuing authority over a secure channel.")
+    elif _REGISTRY_IMPORT_SECRET_FALLBACK:
         print("[startup] WARNING: REGISTRY_IMPORT_SECRET not set — authority imports are signed with JWT_SECRET. Set a dedicated REGISTRY_IMPORT_SECRET in .env for production.")
     # Auto-seed if database is empty
     try:
@@ -275,6 +309,10 @@ async def startup():
         result = await seed_all()
         print(f"[startup] Database seeded: {result}")
     except Exception as e:
+        # In production a seed refusal (missing bootstrap admin, weak
+        # password) must fail the deploy loudly — never start admin-less.
+        if is_production():
+            raise
         print(f"[startup] Seed warning: {e}")
 
     # Orphan biometric file check (retention hygiene)
@@ -306,10 +344,34 @@ class LoginRequest(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    token: str
-    officer_id: int
-    username: str
-    role: str
+    token: str = ""
+    officer_id: int = 0
+    username: str = ""
+    role: str = ""
+    # Step-up / rotation signals (empty token when one of these is set).
+    mfa_required: bool = False
+    mfa_token: str = ""
+    must_change_password: bool = False
+    mfa_setup_required: bool = False
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class MfaChallengeRequest(BaseModel):
+    mfa_token: str
+    code: str
+
+
+class MfaVerifyRequest(BaseModel):
+    code: str
+
+
+class MfaDisableRequest(BaseModel):
+    password: str
+    code: str
 
 
 class OverrideRequest(BaseModel):
@@ -322,14 +384,27 @@ class OverrideRequest(BaseModel):
 # Auth helper — extract officer from Bearer token
 # ---------------------------------------------------------------------------
 
-async def _auth(request) -> dict:
-    """Extract officer info from Authorization header and enrich with fresh DB state."""
+async def _auth(request, allow_stale_password: bool = False,
+                allow_mfa_setup: bool = False) -> dict:
+    """Extract officer info from Authorization header and enrich with fresh DB state.
+
+    Enforcement (rotation + supervisor MFA) is ON by default: accounts flagged
+    must_change_password get 403 PASSWORD_CHANGE_REQUIRED, and supervisors who
+    have not enrolled TOTP get 403 MFA_SETUP_REQUIRED. Pass the allow_* flags
+    only for the endpoints that clear those states (change-password, MFA
+    setup/verify, logout). MFA step-up tokens (purpose="mfa") are rejected
+    everywhere — they are only valid at POST /api/auth/mfa/challenge.
+    """
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing Bearer token")
     token = auth[7:]
     payload = _decode_token(token)
+    if payload.get("purpose", "session") != "session":
+        raise HTTPException(status_code=401, detail="Invalid token purpose for this endpoint")
     # Enrich with current DB state for unit/role (handles old tokens missing unit)
+    must_change = False
+    mfa_pending = False
     try:
         async with async_session() as session:
             res = await session.execute(select(Officer).where(Officer.id == int(payload.get("sub", 0))))
@@ -338,10 +413,19 @@ async def _auth(request) -> dict:
                 payload["unit"] = getattr(off, "unit", None) or payload.get("unit") or "BORDER_UNIT_1"
                 payload["role"] = off.role or payload.get("role", "officer")
                 payload["username"] = off.username
+                must_change = bool(getattr(off, "must_change_password", False))
+                mfa_pending = (
+                    payload["role"] == "supervisor"
+                    and not bool(getattr(off, "totp_enabled", False))
+                )
     except Exception:
         pass
     payload.setdefault("unit", "BORDER_UNIT_1")
     payload.setdefault("role", "officer")
+    if must_change and not allow_stale_password:
+        raise HTTPException(status_code=403, detail="PASSWORD_CHANGE_REQUIRED: rotate your password before continuing.")
+    if mfa_pending and not allow_mfa_setup:
+        raise HTTPException(status_code=403, detail="MFA_SETUP_REQUIRED: supervisors must enroll authenticator MFA before continuing.")
     return payload
 
 
@@ -351,18 +435,73 @@ async def _auth(request) -> dict:
 
 @app.post("/auth/login", response_model=LoginResponse, include_in_schema=False)
 @app.post("/api/auth/login", response_model=LoginResponse)
-async def login(req: LoginRequest):
-    """Authenticate officer, generate JWT session."""
+async def login(req: LoginRequest, request: Request):
+    """Authenticate officer, generate JWT session.
+
+    Brute-force throttled per client IP and per username (429 when tripped).
+    Unknown usernames are dummy-verified so timing reveals nothing. Supervisors
+    with TOTP enrolled receive a short-lived mfa_token instead of a session
+    and must complete POST /api/auth/mfa/challenge.
+    """
+    ip = client_ip(request)
+    username = (req.username or "").strip()
+    ok_ip, retry_ip = _LOGIN_LIMITER.check(f"ip:{ip}")
+    ok_user, retry_user = _LOGIN_LIMITER.check(f"user:{username.lower()}")
+    if not (ok_ip and ok_user):
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many login attempts. Retry in {max(retry_ip, retry_user)}s.")
+
     async with async_session() as session:
         result = await session.execute(
-            select(Officer).where(Officer.username == req.username)
+            select(Officer).where(Officer.username == username)
         )
         officer = result.scalar_one_or_none()
 
-    if not officer or not _verify_password(req.password, officer.password_hash):
+    # Timing-equalized verification (unknown users check a dummy hash).
+    password_ok = _verify_password(
+        req.password, officer.password_hash if officer else DUMMY_HASH)
+    if not officer or not password_ok:
+        _LOGIN_LIMITER.register_failure(f"ip:{ip}")
+        _LOGIN_LIMITER.register_failure(f"user:{username.lower()}")
+        async with async_session() as session:
+            session.add(AuditLog(
+                actor=username or "unknown",
+                action="login_failed",
+                entity=f"officer:{username or '?'}",
+                device_info=f"IP:{ip}",
+            ))
+            await session.commit()
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    token = _create_token(officer.id, officer.username, officer.role, getattr(officer, "unit", "BORDER_UNIT_1") or "BORDER_UNIT_1")
+    _LOGIN_LIMITER.register_success(f"ip:{ip}")
+    _LOGIN_LIMITER.register_success(f"user:{username.lower()}")
+    must_change = bool(getattr(officer, "must_change_password", False))
+    mfa_enabled = bool(getattr(officer, "totp_enabled", False))
+    mfa_setup_required = officer.role == "supervisor" and not mfa_enabled
+    unit = getattr(officer, "unit", "BORDER_UNIT_1") or "BORDER_UNIT_1"
+
+    if mfa_enabled:
+        mfa_token = _create_token(officer.id, officer.username, officer.role, unit,
+                                  purpose="mfa", expiry_minutes=_MFA_TOKEN_MINUTES)
+        async with async_session() as session:
+            session.add(AuditLog(
+                actor=officer.username,
+                action="login_mfa_challenged",
+                entity=f"officer:{officer.id}",
+            ))
+            await session.commit()
+        return LoginResponse(
+            mfa_required=True,
+            mfa_token=mfa_token,
+            officer_id=officer.id,
+            username=officer.username,
+            role=officer.role,
+            must_change_password=must_change,
+            mfa_setup_required=mfa_setup_required,
+        )
+
+    token = _create_token(officer.id, officer.username, officer.role, unit)
 
     # Audit
     async with async_session() as session:
@@ -378,7 +517,174 @@ async def login(req: LoginRequest):
         officer_id=officer.id,
         username=officer.username,
         role=officer.role,
+        must_change_password=must_change,
+        mfa_setup_required=mfa_setup_required,
     )
+
+
+@app.post("/api/auth/mfa/challenge", response_model=LoginResponse)
+async def mfa_challenge(req: MfaChallengeRequest, request: Request):
+    """Complete supervisor MFA login with a TOTP code. Issues the session."""
+    try:
+        payload = _decode_token(req.mfa_token)
+    except HTTPException:
+        raise HTTPException(status_code=401, detail="MFA token expired — sign in again.")
+    if payload.get("purpose") != "mfa":
+        raise HTTPException(status_code=401, detail="Invalid MFA token.")
+    officer_id = int(payload.get("sub", 0) or 0)
+    ok, retry = _MFA_LIMITER.check(f"mfa:{officer_id}")
+    if not ok:
+        raise HTTPException(
+            status_code=429, detail=f"Too many code attempts. Retry in {retry}s.")
+    async with async_session() as session:
+        result = await session.execute(select(Officer).where(Officer.id == officer_id))
+        officer = result.scalar_one_or_none()
+    secret = getattr(officer, "totp_secret", None) if officer else None
+    enabled = bool(getattr(officer, "totp_enabled", False)) if officer else False
+    if not officer or not enabled or not secret or not verify_totp(secret, req.code):
+        _MFA_LIMITER.register_failure(f"mfa:{officer_id}")
+        raise HTTPException(status_code=401, detail="Invalid authenticator code.")
+    _MFA_LIMITER.register_success(f"mfa:{officer_id}")
+    unit = getattr(officer, "unit", "BORDER_UNIT_1") or "BORDER_UNIT_1"
+    token = _create_token(officer.id, officer.username, officer.role, unit)
+    async with async_session() as session:
+        session.add(AuditLog(
+            actor=officer.username,
+            action="login",
+            entity=f"officer:{officer.id}",
+        ))
+        await session.commit()
+    return LoginResponse(
+        token=token,
+        officer_id=officer.id,
+        username=officer.username,
+        role=officer.role,
+        must_change_password=bool(getattr(officer, "must_change_password", False)),
+        mfa_setup_required=False,
+    )
+
+
+@app.post("/api/auth/change-password")
+async def change_password(req: ChangePasswordRequest, request: Request):
+    """Rotate the caller's password (also clears the must-change flag)."""
+    officer = await _auth(request, allow_stale_password=True, allow_mfa_setup=True)
+    officer_id = int(officer["sub"])
+    async with async_session() as session:
+        result = await session.execute(select(Officer).where(Officer.id == officer_id))
+        off = result.scalar_one_or_none()
+        if not off:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        if not _verify_password(req.current_password, off.password_hash):
+            raise HTTPException(status_code=401, detail="Current password is incorrect.")
+        try:
+            validate_new_password(req.new_password)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if _verify_password(req.new_password, off.password_hash):
+            raise HTTPException(status_code=400, detail="New password must differ from the current one.")
+        from passlib.context import CryptContext
+        off.password_hash = CryptContext(schemes=["bcrypt"], deprecated="auto").hash(req.new_password)
+        off.must_change_password = False
+        try:
+            off.password_changed_at = datetime.now(timezone.utc)
+        except Exception:
+            pass
+        session.add(AuditLog(
+            actor=off.username,
+            action="password_changed",
+            entity=f"officer:{off.id}",
+            officer_id=off.id,
+        ))
+        await session.commit()
+    return {"status": "ok", "message": "Password changed."}
+
+
+@app.post("/api/auth/mfa/setup")
+async def mfa_setup(request: Request):
+    """Begin supervisor TOTP enrollment. Returns the manual key + otpauth URI."""
+    officer = await _auth(request, allow_stale_password=True, allow_mfa_setup=True)
+    _require_role(officer, "supervisor")
+    officer_id = int(officer["sub"])
+    async with async_session() as session:
+        result = await session.execute(select(Officer).where(Officer.id == officer_id))
+        off = result.scalar_one_or_none()
+        if not off:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        if bool(getattr(off, "totp_enabled", False)):
+            raise HTTPException(status_code=400, detail="MFA is already enabled. Disable it first to re-enroll.")
+        secret = generate_totp_secret()
+        off.totp_secret = secret
+        off.totp_enabled = False
+        session.add(AuditLog(
+            actor=off.username,
+            action="mfa_enrollment_started",
+            entity=f"officer:{off.id}",
+            officer_id=off.id,
+        ))
+        await session.commit()
+    return {
+        "status": "ok",
+        "manual_key": secret,
+        "otpauth_uri": otpauth_uri(secret, off.username),
+        "message": "Open your authenticator app (or paste the URI), then confirm with POST /api/auth/mfa/verify.",
+    }
+
+
+@app.post("/api/auth/mfa/verify")
+async def mfa_verify(req: MfaVerifyRequest, request: Request):
+    """Confirm TOTP enrollment with a code from the authenticator app."""
+    officer = await _auth(request, allow_stale_password=True, allow_mfa_setup=True)
+    _require_role(officer, "supervisor")
+    officer_id = int(officer["sub"])
+    ok, retry = _MFA_LIMITER.check(f"mfa:{officer_id}")
+    if not ok:
+        raise HTTPException(status_code=429, detail=f"Too many code attempts. Retry in {retry}s.")
+    async with async_session() as session:
+        result = await session.execute(select(Officer).where(Officer.id == officer_id))
+        off = result.scalar_one_or_none()
+        if not off or not getattr(off, "totp_secret", None):
+            raise HTTPException(status_code=400, detail="No MFA enrollment in progress. Call POST /api/auth/mfa/setup first.")
+        if not verify_totp(off.totp_secret, req.code):
+            _MFA_LIMITER.register_failure(f"mfa:{officer_id}")
+            raise HTTPException(status_code=401, detail="Invalid authenticator code.")
+        _MFA_LIMITER.register_success(f"mfa:{officer_id}")
+        off.totp_enabled = True
+        session.add(AuditLog(
+            actor=off.username,
+            action="mfa_enabled",
+            entity=f"officer:{off.id}",
+            officer_id=off.id,
+        ))
+        await session.commit()
+    return {"status": "ok", "message": "MFA enabled for your supervisor account."}
+
+
+@app.post("/api/auth/mfa/disable")
+async def mfa_disable(req: MfaDisableRequest, request: Request):
+    """Disable your own supervisor MFA (password + current code required)."""
+    officer = await _auth(request, allow_stale_password=True, allow_mfa_setup=True)
+    _require_role(officer, "supervisor")
+    officer_id = int(officer["sub"])
+    async with async_session() as session:
+        result = await session.execute(select(Officer).where(Officer.id == officer_id))
+        off = result.scalar_one_or_none()
+        if not off:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        if not _verify_password(req.password, off.password_hash):
+            raise HTTPException(status_code=401, detail="Password is incorrect.")
+        if bool(getattr(off, "totp_enabled", False)) and not verify_totp(
+                getattr(off, "totp_secret", "") or "", req.code):
+            raise HTTPException(status_code=401, detail="Invalid authenticator code.")
+        off.totp_secret = None
+        off.totp_enabled = False
+        session.add(AuditLog(
+            actor=off.username,
+            action="mfa_disabled",
+            entity=f"officer:{off.id}",
+            officer_id=off.id,
+        ))
+        await session.commit()
+    return {"status": "ok", "message": "MFA disabled. Re-enroll before continuing operational work."}
 
 
 # ---------------------------------------------------------------------------
@@ -390,7 +696,7 @@ async def login(req: LoginRequest):
 async def logout(request: Request):
     """Terminate session (audit log only — JWT is stateless)."""
     try:
-        officer = await _auth(request)
+        officer = await _auth(request, allow_stale_password=True, allow_mfa_setup=True)
     except HTTPException:
         return {"status": "ok", "message": "Logged out"}
 

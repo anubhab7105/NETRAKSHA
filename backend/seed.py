@@ -154,6 +154,8 @@ WATCHLIST = [
 
 async def seed_all() -> dict:
     """Run all seed operations. Returns a summary of what was seeded."""
+    from backend.auth_security import app_env, is_production, validate_new_password
+
     await init_db()
 
     summary = {
@@ -165,9 +167,34 @@ async def seed_all() -> dict:
         "watchlist_existed": 0,
     }
 
+    production = is_production()
+    if production:
+        # NEVER create default-credential accounts in production. The first
+        # supervisor comes from BOOTSTRAP_ADMIN_* env only (strong password
+        # enforced); they then rotate it at first login (must_change).
+        boot_user = os.environ.get("BOOTSTRAP_ADMIN_USER", "").strip()
+        boot_pass = os.environ.get("BOOTSTRAP_ADMIN_PASS", "")
+        if not boot_user or not boot_pass:
+            raise RuntimeError(
+                "Production seeding refused: set BOOTSTRAP_ADMIN_USER and "
+                "BOOTSTRAP_ADMIN_PASS to create the initial supervisor account. "
+                "Default demo credentials are never created in production.")
+        try:
+            validate_new_password(boot_pass)
+        except ValueError as e:
+            raise RuntimeError(f"Production seeding refused: BOOTSTRAP_ADMIN_PASS {e}")
+        officers_to_seed = [{
+            "username": boot_user, "password": boot_pass,
+            "role": "supervisor",
+            "unit": os.environ.get("BOOTSTRAP_ADMIN_UNIT", "HQ"),
+            "must_change": True,
+        }]
+    else:
+        officers_to_seed = [{**o, "must_change": True} for o in OFFICERS]
+
     async with async_session() as session:
         # --- Officers ---
-        for o in OFFICERS:
+        for o in officers_to_seed:
             existing = await session.execute(
                 select(Officer).where(Officer.username == o["username"])
             )
@@ -178,6 +205,7 @@ async def seed_all() -> dict:
                     password_hash=_hash_password(o["password"]),
                     role=o["role"],
                     unit=o.get("unit", "BORDER_UNIT_1"),
+                    must_change_password=bool(o.get("must_change", False)),
                 ))
                 summary["officers_created"] += 1
             else:

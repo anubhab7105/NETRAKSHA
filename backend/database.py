@@ -84,6 +84,10 @@ async def init_db() -> None:
         await ensure_registry_trust_columns()
     except Exception as e:
         print(f"[init_db] registry trust-column migration warning: {e}")
+    try:
+        await ensure_auth_columns()
+    except Exception as e:
+        print(f"[init_db] auth-column migration warning: {e}")
 
 
 # Trust columns added to citizens_registry after the enrollment audit.
@@ -128,6 +132,56 @@ async def ensure_registry_trust_columns() -> dict:
                     pass
     if added:
         print(f"[init_db] citizens_registry trust columns added: {added}")
+    return {"added": added}
+
+
+# Auth-hardening columns added to officers after the secrets audit.
+_AUTH_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("must_change_password", "BOOLEAN DEFAULT FALSE"),
+    ("totp_secret", "TEXT"),
+    ("totp_enabled", "BOOLEAN DEFAULT FALSE"),
+    ("password_changed_at", "TIMESTAMP"),
+)
+
+
+async def ensure_auth_columns() -> dict:
+    """Add missing auth columns to officers. Idempotent; runs every startup."""
+    added: list[str] = []
+    if _IS_SQLITE:
+        from sqlalchemy import text as _text
+        async with engine.begin() as conn:
+            res = await conn.execute(_text("PRAGMA table_info(officers)"))
+            existing = {row[1] for row in res.all()}
+            for name, ddl in _AUTH_COLUMNS:
+                if name not in existing:
+                    await conn.execute(_text(f"ALTER TABLE officers ADD COLUMN {name} {ddl}"))
+                    added.append(name)
+    else:
+        from sqlalchemy import text as _text
+        async with engine.begin() as conn:
+            for name, ddl in _AUTH_COLUMNS:
+                try:
+                    await conn.execute(_text(
+                        f"ALTER TABLE officers ADD COLUMN IF NOT EXISTS {name} {ddl}"
+                    ))
+                    added.append(name)
+                except Exception:
+                    pass
+    # Backfill NULLs left by ADD COLUMN on rows predating the default.
+    if added:
+        from sqlalchemy import text as _text
+        try:
+            async with engine.begin() as conn:
+                if "must_change_password" in added:
+                    await conn.execute(_text(
+                        "UPDATE officers SET must_change_password = FALSE "
+                        "WHERE must_change_password IS NULL"))
+                if "totp_enabled" in added:
+                    await conn.execute(_text(
+                        "UPDATE officers SET totp_enabled = FALSE WHERE totp_enabled IS NULL"))
+        except Exception as e:
+            print(f"[init_db] auth-column backfill warning: {e}")
+        print(f"[init_db] officers auth columns added: {added}")
     return {"added": added}
 
 

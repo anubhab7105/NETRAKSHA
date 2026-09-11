@@ -6,6 +6,7 @@ import Sidebar from './components/Sidebar';
 // Route-level code splitting: each view ships as its own chunk and is only
 // fetched when its route is first visited (keeps the login bundle small).
 const Login = lazy(() => import('./views/Login'));
+const SecuritySetup = lazy(() => import('./views/SecuritySetup'));
 const Dashboard = lazy(() => import('./views/Dashboard'));
 const Scanner = lazy(() => import('./views/Scanner'));
 const CaseReport = lazy(() => import('./views/CaseReport'));
@@ -39,16 +40,29 @@ const ProtectedRoute = ({ children }) => {
   );
 };
 
+// Rotation/MFA gates are enforced server-side too (403); this keeps the
+// officer from landing on a dead dashboard before clearing them.
+const SecurityGate = ({ children }) => {
+  const token = localStorage.getItem('token');
+  if (!token) return <Navigate to="/login" replace />;
+  if (localStorage.getItem('must_change_password') === '1' ||
+      localStorage.getItem('mfa_setup_required') === '1') {
+    return <Navigate to="/change-password" replace />;
+  }
+  return children;
+};
+
 export default function App() {
   return (
     <BrowserRouter>
       <Suspense fallback={<RouteLoader />}>
         <Routes>
           <Route path="/login" element={<Login />} />
-          <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-          <Route path="/scan" element={<ProtectedRoute><Scanner /></ProtectedRoute>} />
-          <Route path="/case/:id" element={<ProtectedRoute><CaseReport /></ProtectedRoute>} />
-          <Route path="/audit" element={<ProtectedRoute><AuditTrail /></ProtectedRoute>} />
+          <Route path="/change-password" element={<ProtectedRoute><SecuritySetup /></ProtectedRoute>} />
+          <Route path="/" element={<SecurityGate><ProtectedRoute><Dashboard /></ProtectedRoute></SecurityGate>} />
+          <Route path="/scan" element={<SecurityGate><ProtectedRoute><Scanner /></ProtectedRoute></SecurityGate>} />
+          <Route path="/case/:id" element={<SecurityGate><ProtectedRoute><CaseReport /></ProtectedRoute></SecurityGate>} />
+          <Route path="/audit" element={<SecurityGate><ProtectedRoute><AuditTrail /></ProtectedRoute></SecurityGate>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>
