@@ -77,6 +77,14 @@ async def init_db() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    # create_all() never adds columns to PRE-EXISTING tables, so long-lived
+    # databases (e.g. production Supabase) silently miss columns added by
+    # later code changes (officers.unit, screening_cases.version, ...).
+    # The generic pass below self-heals any such drift on every startup.
+    try:
+        await ensure_model_columns()
+    except Exception as e:
+        print(f"[init_db] model-column migration warning: {e}")
     # Post-fix columns on a pre-existing table are NOT added by create_all —
     # backfill them so deployed SQLite/Postgres DBs pick up trust metadata
     # with just a restart (no manual migration).
@@ -88,6 +96,82 @@ async def init_db() -> None:
         await ensure_auth_columns()
     except Exception as e:
         print(f"[init_db] auth-column migration warning: {e}")
+
+
+async def ensure_model_columns() -> dict:
+    """Add every ORM-mapped column missing from the live database.
+
+    Generic drift repair: compares each model's columns against the actual
+    table (information_schema on Postgres, PRAGMA on SQLite) and ALTERs in
+    whatever is absent — e.g. officers.unit on databases created before
+    unit scoping shipped. Idempotent, race-safe (per-column try/except),
+    runs on every startup. Returns {"table": [added, ...]}.
+    """
+    from .models import Base
+
+    if _IS_SQLITE:
+        from sqlalchemy.dialects import sqlite as _sqlite_dialect
+        _dialect = _sqlite_dialect.dialect()
+    else:
+        from sqlalchemy.dialects import postgresql as _pg_dialect
+        _dialect = _pg_dialect.dialect()
+
+    from sqlalchemy import text as _text
+
+    added: dict[str, list[str]] = {}
+    async with engine.begin() as conn:
+        for table in Base.metadata.tables.values():
+            if _IS_SQLITE:
+                res = await conn.execute(_text(f"PRAGMA table_info({table.name})"))
+                existing = {row[1] for row in res.all()}
+            else:
+                res = await conn.execute(
+                    _text("SELECT column_name FROM information_schema.columns "
+                          "WHERE table_name = :t"),
+                    {"t": table.name},
+                )
+                existing = {row[0] for row in res.all()}
+            for col in table.columns:
+                if col.primary_key or col.name in existing:
+                    continue
+                try:
+                    ddl_type = col.type.compile(dialect=_dialect)
+                except Exception:
+                    continue
+                default_sql = ""
+                try:
+                    if col.server_default is not None:
+                        default_sql = f" DEFAULT {col.server_default._compiler_dispatch(_dialect, None)}"
+                except Exception:
+                    default_sql = ""
+                if _IS_SQLITE:
+                    stmt = f'ALTER TABLE {table.name} ADD COLUMN "{col.name}" {ddl_type}{default_sql}'
+                else:
+                    stmt = (f'ALTER TABLE {table.name} ADD COLUMN IF NOT EXISTS '
+                            f'"{col.name}" {ddl_type}{default_sql}')
+                try:
+                    await conn.execute(_text(stmt))
+                    added.setdefault(table.name, []).append(col.name)
+                except Exception:
+                    pass  # concurrent startup already added it
+    # Backfill NULLs on flag/counter columns so old rows behave sanely.
+    _backfills = (
+        ("officers", "must_change_password", "FALSE"),
+        ("officers", "totp_enabled", "FALSE"),
+        ("screening_cases", "version", "0"),
+    )
+    if added:
+        from sqlalchemy import text as _text
+        try:
+            async with engine.begin() as conn:
+                for table, column, value in _backfills:
+                    if column in added.get(table, []):
+                        await conn.execute(_text(
+                            f'UPDATE {table} SET "{column}" = {value} WHERE "{column}" IS NULL'))
+        except Exception as e:
+            print(f"[init_db] model-column backfill warning: {e}")
+        print(f"[init_db] model columns added: {added}")
+    return added
 
 
 # Trust columns added to citizens_registry after the enrollment audit.
