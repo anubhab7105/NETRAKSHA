@@ -186,6 +186,11 @@ export default function SecuritySetup() {
                 <button type="submit" disabled={mfaLoading} className={btnCls}>
                   {mfaLoading ? <Loader2 size={20} className="animate-spin" /> : 'Confirm & enable MFA'}
                 </button>
+                <button type="button" onClick={() => { setMfaCode(''); setMfaErr(''); startMfa(); }}
+                  disabled={mfaLoading}
+                  className="w-full text-xs text-slate-400 hover:text-white transition-colors disabled:opacity-60">
+                  Codes never match? Discard this QR and get a fresh one — then scan only the new code.
+                </button>
               </form>
             )}
           </div>
