@@ -1364,13 +1364,6 @@ async def _run_screening_pipeline(
         liveness_task = loop.run_in_executor(None, run_liveness, live_burst, _challenge_type)
     elif live_path:
         liveness_task = loop.run_in_executor(None, run_liveness, [str(live_path)], _challenge_type)
-
-    # Security zones — template/layout check (runs on document alone, no live needed)
-    try:
-        from pipeline.security_zones import run_security_zones
-        security_task = loop.run_in_executor(None, run_security_zones, str(doc_path), "unknown")
-    except Exception:
-        security_task = None
     else:
         from pipeline.common import inconclusive_result as _liveness_inconclusive
 
@@ -1381,6 +1374,13 @@ async def _run_screening_pipeline(
             )
 
         liveness_task = asyncio.create_task(_no_liveness())
+
+    # Security zones — template/layout check (runs on document alone, no live needed)
+    try:
+        from pipeline.security_zones import run_security_zones
+        security_task = loop.run_in_executor(None, run_security_zones, str(doc_path), "unknown")
+    except Exception:
+        security_task = None
 
     # Gemini AI call (also in thread pool) — now WITH the registry photo as
     # Image 3 whenever Step 1 found one, so its doc_vs_db / live_vs_db
