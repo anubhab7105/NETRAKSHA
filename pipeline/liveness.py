@@ -328,6 +328,10 @@ def _analyse_burst(frames: List[np.ndarray]) -> dict:
             "blinks": 0,
             "motion_score": None,
             "screen_artifact_score": None,
+            "head_yaw_max": None,
+            "head_turn_detected": False,
+            "mouth_open_max": None,
+            "mouth_open_detected": False,
         }
 
         if n_landmarks == 0:
@@ -357,6 +361,42 @@ def _analyse_burst(frames: List[np.ndarray]) -> dict:
             else:
                 i += 1
 
+        # --- head yaw and mouth open (active challenge signals) ---
+        head_yaws = []
+        mouth_opens = []
+        for idx in valid_idx:
+            feat = features[idx]
+            # Re-extract landmarks for this frame to compute yaw/mouth
+            # Use the stored pts from feat[1] would be better, but we need landmarks
+            # For now, approximate from the stored features: we have bbox and pts already
+            # Head yaw: use the pts directly
+            try:
+                pts = feat[1]
+                # pts is (468,2) array
+                left = pts[33]
+                right = pts[263]
+                nose = pts[1]
+                eye_dist = float(np.linalg.norm(right - left)) + 1e-6
+                mid_x = (left[0] + right[0]) / 2.0
+                yaw = float((nose[0] - mid_x) / eye_dist)
+                head_yaws.append(abs(yaw))
+            except Exception:
+                pass
+            try:
+                # Mouth open: use stored landmarks via _mouth_open_ratio logic on pts
+                # Approximate with pts[13],14,78,308
+                upper = pts[13]
+                lower = pts[14]
+                left_m = pts[78]
+                right_m = pts[308]
+                mouth_w = float(np.linalg.norm(right_m - left_m)) + 1e-6
+                opening = float(np.linalg.norm(lower - upper) / mouth_w)
+                mouth_opens.append(opening)
+            except Exception:
+                pass
+        head_yaw_max = float(max(head_yaws)) if head_yaws else 0.0
+        mouth_open_max = float(max(mouth_opens)) if mouth_opens else 0.0
+
         # --- motion (inter-frame landmark displacement / face width) ---
         displacements = []
         prev = features[valid_idx[0]]
@@ -385,6 +425,10 @@ def _analyse_burst(frames: List[np.ndarray]) -> dict:
             "blinks": blinks,
             "motion_score": round(motion_score, 5),
             "screen_artifact_score": round(screen_score, 4),
+            "head_yaw_max": round(head_yaw_max, 3),
+            "head_turn_detected": bool(head_yaw_max >= HEAD_YAW_THRESHOLD),
+            "mouth_open_max": round(mouth_open_max, 3),
+            "mouth_open_detected": bool(mouth_open_max >= MOUTH_OPEN_THRESHOLD),
         })
         return stats
     finally:
@@ -398,16 +442,17 @@ def _analyse_burst(frames: List[np.ndarray]) -> dict:
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def run_liveness(frame_burst) -> ModuleResult:
+def run_liveness(frame_burst, challenge_type: str = "blink") -> ModuleResult:
     """Run multi-signal liveness on a short webcam frame burst.
 
     Signature for the FastAPI route owner:
-        run_liveness(frame_burst) -> ModuleResult
+        run_liveness(frame_burst, challenge_type="blink") -> ModuleResult
 
     ``frame_burst`` is one of:
       * a list of frame images (paths, BGR ndarrays, or PIL Images),
       * a video file path (decoded into frames), or
       * a single still (tolerated but low-confidence).
+    ``challenge_type`` is one of "blink" (default), "head_turn", "mouth_open", "smile".
 
     Returns "ok" or "inconclusive". ``raw_output['live']`` is a bool whenever
     status == "ok". Never raises.
