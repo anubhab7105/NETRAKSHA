@@ -391,6 +391,8 @@ class AuditLog(Base):
     request_id = Column(String(100), nullable=True)  # per-request UUID for tracing
     device_info = Column(Text, nullable=True)  # User-Agent + IP + location context
     file_hashes = Column(Text, nullable=True)  # JSON of input file hashes (doc/live)
+    prev_hash = Column(String(64), nullable=True)  # hash chain: previous entry_hash
+    entry_hash = Column(String(64), nullable=True)  # HMAC of this entry
 
     def __repr__(self) -> str:
         return f"<AuditLog(id={self.id}, actor={self.actor!r}, action={self.action!r})>"

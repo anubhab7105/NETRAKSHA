@@ -498,6 +498,12 @@ def run_liveness(frame_burst, challenge_type: str = "blink") -> ModuleResult:
     motion = stats["motion_score"] or 0.0
     screen = stats["screen_artifact_score"] or 0.0
     coverage = stats["coverage"]
+    head_turn = stats.get("head_turn_detected", False)
+    mouth_open = stats.get("mouth_open_detected", False)
+    # Normalize challenge type
+    challenge = (challenge_type or "blink").strip().lower()
+    if challenge not in CHALLENGE_TYPES:
+        challenge = "blink"
 
     spoof_signals = []
     reason = None
@@ -505,10 +511,30 @@ def run_liveness(frame_burst, challenge_type: str = "blink") -> ModuleResult:
     # --- must a score be computed from -> decision logic -------------------
     still = motion < STATIC_MOTION
 
-    if still and blinks == 0:
+    # Challenge-specific check: if the requested challenge is not observed, fail fast
+    challenge_ok = True
+    challenge_reason = None
+    if challenge == "blink" and blinks == 0:
+        # blink challenge requires at least one blink
+        challenge_ok = False
+        challenge_reason = "blink challenge not observed — no blink detected"
+    elif challenge == "head_turn" and not head_turn:
+        challenge_ok = False
+        challenge_reason = "head-turn challenge not observed — no significant yaw detected"
+        spoof_signals.append("head_turn_missing")
+    elif challenge == "mouth_open" and not mouth_open:
+        challenge_ok = False
+        challenge_reason = "mouth-open challenge not observed — mouth did not open sufficiently"
+        spoof_signals.append("mouth_open_missing")
+    elif challenge == "smile" and not mouth_open:
+        # smile uses mouth open as proxy
+        challenge_ok = False
+        challenge_reason = "smile challenge not observed"
+
+    if still and blinks == 0 and not head_turn and not mouth_open:
         live = False
         score = 0.08
-        reason = "no facial motion and no blink detected — burst looks like a " \
+        reason = challenge_reason or "no facial motion and no blink/head/mouth activity — burst looks like a " \
                  "still image (printed photo or frozen screen frame)"
         spoof_signals.append("static_sequence")
     elif screen >= SCREEN_SPOOF:
@@ -518,18 +544,25 @@ def run_liveness(frame_burst, challenge_type: str = "blink") -> ModuleResult:
                  "suspected photo/video replay from a monitor"
         spoof_signals.append("screen_replay")
         spoof_signals.append("display_artifacts")
+    elif not challenge_ok:
+        live = False
+        score = 0.12
+        reason = challenge_reason
+        spoof_signals.append("challenge_failed")
     else:
         blink_signal = min(blinks, 2) / 2.0
         motion_signal = float(np.clip(motion / MOTION_REF, 0.0, 1.0))
-        if blinks == 0:
+        # Head/mouth signals as additional liveness cues
+        challenge_signal = 1.0 if (blinks > 0 or head_turn or mouth_open) else 0.0
+        if blinks == 0 and not head_turn and not mouth_open:
             # motion alone can certify liveness, but require a higher bar
             score = 0.45 * motion_signal + 0.25 * (1.0 - screen) + 0.20 * coverage
         else:
-            score = 0.55 * max(blink_signal, motion_signal) \
+            score = 0.55 * max(blink_signal, motion_signal, challenge_signal) \
                 + 0.25 * (1.0 - screen) + 0.20 * coverage
         live = bool(score >= LIVE_THRESHOLD)
         if not live:
-            reason = "liveness signals (blink/motion) below confidence threshold"
+            reason = challenge_reason or "liveness signals (blink/motion/head/mouth) below confidence threshold"
             spoof_signals.append("weak_signals")
 
     liveness_score = round(float(min(max(score, 0.0), 1.0)), 4)
@@ -547,6 +580,12 @@ def run_liveness(frame_burst, challenge_type: str = "blink") -> ModuleResult:
         },
         "motion_score": stats["motion_score"],
         "screen_artifact_score": stats["screen_artifact_score"],
+        "head_yaw_max": stats.get("head_yaw_max"),
+        "head_turn_detected": stats.get("head_turn_detected"),
+        "mouth_open_max": stats.get("mouth_open_max"),
+        "mouth_open_detected": stats.get("mouth_open_detected"),
+        "challenge_type": challenge,
+        "challenge_passed": live and challenge_ok,
         "face_coverage": stats["coverage"],
         "spoof_signals": spoof_signals,
         "frames_analysed": stats["n_frames"],

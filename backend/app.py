@@ -1351,10 +1351,26 @@ async def _run_screening_pipeline(
     # Liveness: requires a real camera burst. Never feed the document image
     # as a liveness input — a document cannot prove a person is live and
     # would create misleading signals. If no live data, mark unavailable.
+    # Active challenge — randomized per session, stored for audit
+    _challenge_type = None
+    if live_burst or live_path:
+        try:
+            from pipeline.liveness import CHALLENGE_TYPES
+            import random as _rand
+            _challenge_type = _rand.choice(CHALLENGE_TYPES)
+        except Exception:
+            _challenge_type = "blink"
     if live_burst and len(live_burst) > 0:
-        liveness_task = loop.run_in_executor(None, run_liveness, live_burst)
+        liveness_task = loop.run_in_executor(None, run_liveness, live_burst, _challenge_type)
     elif live_path:
-        liveness_task = loop.run_in_executor(None, run_liveness, [str(live_path)])
+        liveness_task = loop.run_in_executor(None, run_liveness, [str(live_path)], _challenge_type)
+
+    # Security zones — template/layout check (runs on document alone, no live needed)
+    try:
+        from pipeline.security_zones import run_security_zones
+        security_task = loop.run_in_executor(None, run_security_zones, str(doc_path), "unknown")
+    except Exception:
+        security_task = None
     else:
         from pipeline.common import inconclusive_result as _liveness_inconclusive
 
@@ -1392,9 +1408,15 @@ async def _run_screening_pipeline(
     local_three_way_task = loop.run_in_executor(None, _three_way_job)
 
     # Await all in parallel (OCR already completed in Step 1 and is reused).
-    tamper_result, physical_result, deepfake_result, liveness_result, gemini_result, local_three_way = await asyncio.gather(
-        tamper_task, physical_task, deepfake_task, liveness_task, gemini_task, local_three_way_task
-    )
+    # Security zones is optional — include if available
+    _gather_tasks = [tamper_task, physical_task, deepfake_task, liveness_task, gemini_task, local_three_way_task]
+    _security_idx = None
+    if 'security_task' in locals() and security_task is not None:
+        _gather_tasks.append(security_task)
+        _security_idx = len(_gather_tasks) - 1
+    _gather_results = await asyncio.gather(*_gather_tasks)
+    tamper_result, physical_result, deepfake_result, liveness_result, gemini_result, local_three_way = _gather_results[:6]
+    security_result = _gather_results[_security_idx] if _security_idx is not None else None
     local_face_result = None  # legacy single-pair slot: superseded by local_three_way
 
     # --- Post-process Gemini results ---
@@ -1931,6 +1953,7 @@ async def _run_screening_pipeline(
             unit=officer_unit,
             provenance=json.dumps(provenance),
             provenance_signature=provenance_sig,
+            challenge_type=_challenge_type,
         )
         session.add(case)
         await session.flush()
