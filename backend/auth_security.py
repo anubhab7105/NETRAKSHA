@@ -131,14 +131,33 @@ def totp_at(secret: str, for_time: float | None = None, step: int = 30) -> str:
 def verify_totp(secret: str, code: str, *, window: int = 1,
                 for_time: float | None = None, step: int = 30) -> bool:
     """Verify a 6-digit code, accepting ±window steps of clock drift."""
+    return match_window(secret, code, max_window=window,
+                        for_time=for_time, step=step) is not None
+
+
+def match_window(secret: str, code: str, *, max_window: int = 10,
+                 for_time: float | None = None, step: int = 30) -> int | None:
+    """Find the clock-drift offset (in 30s steps) a code belongs to.
+
+    Returns the smallest-|delta| step offset whose code matches, or None if
+    the code matches nowhere in ±max_window. Positive = code is from the
+    future relative to us (phone ahead) or stale, negative = phone behind —
+    either way the absolute value measures clock disagreement. Used ONLY to
+    explain failures to the already-authenticated enrolling officer; the
+    accept/reject decision always uses verify_totp(window=1).
+    """
     digits = "".join(ch for ch in (code or "") if ch.isdigit())
     if len(digits) != 6:
-        return False
-    now = int((for_time if for_time is not None else time.time()) // step)
-    for delta in range(-window, window + 1):
-        if hmac.compare_digest(_hotp(secret, now + delta), digits):
-            return True
-    return False
+        return None
+    try:
+        now = int((for_time if for_time is not None else time.time()) // step)
+        for radius in range(0, max_window + 1):
+            for delta in (0, -radius, radius) if radius else (0,):
+                if hmac.compare_digest(_hotp(secret, now + delta), digits):
+                    return delta
+    except Exception:
+        return None
+    return None
 
 
 # ---------------------------------------------------------------------------

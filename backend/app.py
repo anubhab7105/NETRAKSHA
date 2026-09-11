@@ -61,6 +61,7 @@ from backend.auth_security import (
     client_ip,
     generate_totp_secret,
     is_production,
+    match_window,
     otpauth_uri,
     rate_limit_from_env,
     secret_error,
@@ -556,6 +557,27 @@ async def login(req: LoginRequest, request: Request):
     )
 
 
+def _drift_hint(secret, code) -> str:
+    """Explain an MFA rejection without weakening it.
+
+    The accept/reject decision always stays at ±1 step; this only inspects a
+    wider window to tell a clock problem ("your code is ~N minutes off") from
+    a wrong-key problem ("doesn't match at all — re-scan"). Safe to expose:
+    the caller already passed password/session auth and attempts are
+    rate-limited, and knowing drift is useless without the secret itself.
+    """
+    try:
+        drift = match_window(secret, code) if secret else None
+    except Exception:
+        drift = None
+    if drift is None:
+        return ("Invalid authenticator code. If you re-started enrollment, make sure "
+                "you're reading the newest Netraksha entry in your app — old entries stop working.")
+    minutes = max(1, round(abs(drift) * 30 / 60))
+    return (f"That code is ~{minutes} minute(s) off current time — your phone clock disagrees "
+            f"with the server. Turn on automatic date & time, wait for a fresh code, and retry.")
+
+
 @app.post("/api/auth/mfa/challenge", response_model=LoginResponse)
 async def mfa_challenge(req: MfaChallengeRequest, request: Request):
     """Complete supervisor MFA login with a TOTP code. Issues the session."""
@@ -577,7 +599,7 @@ async def mfa_challenge(req: MfaChallengeRequest, request: Request):
     enabled = bool(getattr(officer, "totp_enabled", False)) if officer else False
     if not officer or not enabled or not secret or not verify_totp(secret, req.code):
         _MFA_LIMITER.register_failure(f"mfa:{officer_id}")
-        raise HTTPException(status_code=401, detail="Invalid authenticator code.")
+        raise HTTPException(status_code=401, detail=_drift_hint(secret, req.code))
     _MFA_LIMITER.register_success(f"mfa:{officer_id}")
     unit = getattr(officer, "unit", "BORDER_UNIT_1") or "BORDER_UNIT_1"
     token = _create_token(officer.id, officer.username, officer.role, unit)
@@ -697,7 +719,7 @@ async def mfa_verify(req: MfaVerifyRequest, request: Request):
             raise HTTPException(status_code=400, detail="No MFA enrollment in progress. Call POST /api/auth/mfa/setup first.")
         if not verify_totp(off.totp_secret, req.code):
             _MFA_LIMITER.register_failure(f"mfa:{officer_id}")
-            raise HTTPException(status_code=401, detail="Invalid authenticator code.")
+            raise HTTPException(status_code=401, detail=_drift_hint(off.totp_secret, req.code))
         _MFA_LIMITER.register_success(f"mfa:{officer_id}")
         off.totp_enabled = True
         session.add(AuditLog(

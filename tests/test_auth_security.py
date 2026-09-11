@@ -90,6 +90,21 @@ def test_otpauth_uri_shape():
     assert "secret=JBSWY3DPEHPK3PXP" in uri
 
 
+def test_match_window_measures_drift():
+    from backend.auth_security import match_window
+
+    secret = generate_totp_secret()
+    base = 1_700_000_000
+    assert match_window(secret, totp_at(secret, for_time=base), for_time=base) == 0
+    # A code from 5 steps ahead reads as +5 (phone fast / stale submission).
+    assert match_window(secret, totp_at(secret, for_time=base + 150), for_time=base) == 5
+    assert match_window(secret, totp_at(secret, for_time=base - 90), for_time=base) == -3
+    assert match_window(secret, "000000", for_time=base) is None
+    # Strict verification still rejects anything outside ±1.
+    assert verify_totp(secret, totp_at(secret, for_time=base + 150), for_time=base) is False
+    assert verify_totp(secret, totp_at(secret, for_time=base + 30), for_time=base) is True
+
+
 # ---------------------------------------------------------------------------
 # Rate limiter
 # ---------------------------------------------------------------------------
