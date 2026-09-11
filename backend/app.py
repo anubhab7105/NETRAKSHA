@@ -563,10 +563,16 @@ async def _run_screening_pipeline(
                     "visual_reasoning": face_match_data.get("visual_reasoning") or f"Local biometric verification (InsightFace buffalo_l): cosine similarity {float(lf_sim):.3f} — {'match' if lf_match else 'no match'} at threshold 0.55.",
                 }
                 gemini_result["three_way_face_match"] = face_match_data
-                # Mark as non-simulated when we have real local verification
-                if gem_sim:
-                    is_simulated = False
-                    gemini_result["is_simulated"] = False
+                # Keep is_simulated for demographics (still simulated) but mark face as real
+                # so risk can include it and UI can show it even though gemini is mocked.
+                gemini_result["face_is_real_via_local"] = True
+                face_is_real_via_local = True
+            else:
+                face_is_real_via_local = False
+        else:
+            face_is_real_via_local = False
+    else:
+        face_is_real_via_local = False
 
     # Map local OCR visible fields to the demographics shape used below.
     ocr_demographics = _ocr_fields_to_demographics(ocr_result.raw_output)
