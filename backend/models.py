@@ -261,6 +261,7 @@ class ScreeningCase(Base):
             "version": self.version or 0,
             "provenance": prov,
             "provenance_signature": self.provenance_signature,
+            "challenge_type": self.challenge_type,
         }
 
 
