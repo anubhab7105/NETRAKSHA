@@ -633,22 +633,26 @@ async def _run_screening_pipeline(
     # matching real document still gets its verdict. If no extraction could be
     # read, the document cannot be verified → officer does a manual check.
     demographic_result = None
-    if demographics and doc_number:
+    norm_type = (doc_type or "").strip().lower()
+    if demographics and doc_number and norm_type and norm_type != "unknown":
         async with async_session() as session:
-            # Try to find a matching citizen by document number
+            # Registry lookup MUST be on (type + number) — a PAN number must
+            # never match an Aadhaar record with the same digits.
             norm_num = _normalize_doc_number(doc_number)
             result = await session.execute(
                 select(CitizenRegistry).where(
-                    CitizenRegistry.document_number == norm_num
+                    (CitizenRegistry.document_type == norm_type)
+                    & (CitizenRegistry.document_number == norm_num)
                 )
             )
             citizen = result.scalar_one_or_none()
 
             if not citizen and doc_number:
-                # Try with original number
+                # Try with original (unnormalized) number but still scoped to type
                 result = await session.execute(
                     select(CitizenRegistry).where(
-                        CitizenRegistry.document_number == doc_number
+                        (CitizenRegistry.document_type == norm_type)
+                        & (CitizenRegistry.document_number == doc_number)
                     )
                 )
                 citizen = result.scalar_one_or_none()
