@@ -597,6 +597,36 @@ export default function CaseReport() {
           </div>
         );
       })()}
+
+      {/* Provenance — immutable record for reproducibility */}
+      <div className="glass-panel p-4 sm:p-6">
+        <div className="flex items-center gap-2 mb-4 border-b border-slate-700/50 pb-4">
+          <Hash size={20} className="text-slate-400" />
+          <h2 className="text-base font-semibold text-white">Decision Provenance</h2>
+          {provVerified === true && <span className="ml-auto text-xs px-2 py-1 bg-success/10 text-success rounded border border-success/30">✓ Signed & Verified</span>}
+          {provVerified === false && <span className="ml-auto text-xs px-2 py-1 bg-danger/10 text-danger rounded border border-danger/30">✗ Signature Mismatch</span>}
+          {provenance && !provVerified && provenance.provenance && <span className="ml-auto text-xs px-2 py-1 bg-warning/10 text-warning rounded border border-warning/30">Unverified</span>}
+        </div>
+        {!provenance || !provenance.provenance ? (
+          <p className="text-sm text-slate-500">No provenance recorded for this case (created before provenance tracking).</p>
+        ) : (
+          <div className="space-y-3 text-xs font-mono">
+            <div className="grid grid-cols-2 gap-3 text-slate-300">
+              <div><span className="text-slate-500">Code:</span> {provenance.provenance.code_version?.slice(0,12) || '—'}</div>
+              <div><span className="text-slate-500">At:</span> {provenance.provenance.timestamp ? new Date(provenance.provenance.timestamp).toLocaleString() : '—'}</div>
+              <div><span className="text-slate-500">Face thr:</span> {provenance.provenance.thresholds?.face_match}</div>
+              <div><span className="text-slate-500">Tamper hi:</span> {provenance.provenance.thresholds?.tamper_high}</div>
+              <div className="col-span-2"><span className="text-slate-500">Input hashes:</span> {Object.entries(provenance.provenance.input_hashes || {}).map(([k,v]) => `${k}:${String(v).slice(0,8)}`).join(' ') || '—'}</div>
+              <div className="col-span-2"><span className="text-slate-500">Models:</span> {Object.entries(provenance.provenance.models || {}).map(([k,v]) => `${k}:${v.threshold || v.model || ''}`).join(' | ').slice(0,120) || '—'}</div>
+            </div>
+            <details className="bg-black/20 rounded p-3">
+              <summary className="cursor-pointer text-slate-400 hover:text-white">Full provenance JSON</summary>
+              <pre className="mt-2 text-[10px] leading-tight text-slate-300 overflow-auto max-h-64 whitespace-pre-wrap break-all">{JSON.stringify(provenance.provenance, null, 2)}</pre>
+              <p className="mt-2 text-[10px] text-slate-500">Signature: {provenance.provenance_signature?.slice(0,32) || '—'}...</p>
+            </details>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
