@@ -2051,11 +2051,14 @@ async def _run_screening_pipeline(
         "gemini_metadata": {
             "is_simulated": is_simulated,
             "is_demo": is_demo_case,
+            "cloud_unavailable": bool(gemini_result.get("cloud_unavailable")),
+            "cloud_fallback_reason": gemini_result.get("cloud_fallback_reason"),
             "gemini_status": gemini_status,
             "latency_ms": gemini_result.get("latency_ms"),
             "model_used": gemini_result.get("model_used"),
             "db_photo_available": db_photo_path is not None,
         },
+        "cloud_unavailable": bool(gemini_result.get("cloud_unavailable")),
     }
 
 
