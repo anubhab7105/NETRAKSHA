@@ -697,12 +697,19 @@ async def _run_screening_pipeline(
     # face mismatch or tamper flag in demo/offline mode would trigger a
     # real Yellow/Red on a genuine traveler. Null them out for scoring and
     # mark the case as demo-only (labelled in the response + audit).
+    # If face was enriched via real local InsightFace, keep it even in demo
+    # mode (real biometrics, not simulated), but still label the case demo.
     is_demo_case = bool(is_simulated)
-    if is_demo_case:
+    if is_demo_case and not face_is_real_via_local:
         face_sim = None
         face_match_bool = None
         face_status_for_risk = "inconclusive"
         gemini_face_for_risk = None
+        gemini_tamper_for_risk = None
+    elif is_demo_case and face_is_real_via_local:
+        # Real local face is available — include it, but still exclude Gemini tamper
+        face_status_for_risk = "ok" if face_sim is not None else "inconclusive"
+        gemini_face_for_risk = face_match_data
         gemini_tamper_for_risk = None
     else:
         face_status_for_risk = "ok" if face_sim is not None else "inconclusive"
