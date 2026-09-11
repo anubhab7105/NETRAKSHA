@@ -173,8 +173,8 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
             />
             {bursting && (
               <div className="absolute inset-0 rounded-lg bg-black/70 flex flex-col items-center justify-center">
-                <p className="text-white font-bold text-lg animate-pulse">Look at the camera and BLINK now</p>
-                <p className="text-slate-300 text-xs mt-1">Capturing face motion…</p>
+                <p className="text-white font-bold text-lg animate-pulse">Follow the prompt — Blink / Turn Head / Open Mouth</p>
+                <p className="text-slate-300 text-xs mt-1">Active liveness challenge — capturing face motion…</p>
               </div>
             )}
           </div>
