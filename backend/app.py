@@ -83,12 +83,15 @@ except ImportError:
 
 def _create_token(officer_id: int, username: str, role: str, unit: str = "BORDER_UNIT_1") -> str:
     """Create a JWT token for an authenticated officer."""
+    import uuid as _uuid
+    jti = _uuid.uuid4().hex
     if _HAS_PYJWT:
         payload = {
             "sub": str(officer_id),
             "username": username,
             "role": role,
             "unit": unit,
+            "jti": jti,
             "exp": datetime.now(timezone.utc) + timedelta(hours=_JWT_EXPIRY_HOURS),
             "iat": datetime.now(timezone.utc),
         }
@@ -101,6 +104,7 @@ def _create_token(officer_id: int, username: str, role: str, unit: str = "BORDER
             "username": username,
             "role": role,
             "unit": unit,
+            "jti": jti,
         })
         return base64.b64encode(payload.encode()).decode()
 
@@ -193,6 +197,24 @@ async def startup():
         print(f"[startup] Database seeded: {result}")
     except Exception as e:
         print(f"[startup] Seed warning: {e}")
+
+    # Orphan biometric file check (retention hygiene)
+    try:
+        uploads_dir = (_PROJECT_ROOT / "samples" / "faces" / "uploads").resolve()
+        if uploads_dir.is_dir():
+            all_files = [p.name for p in uploads_dir.iterdir() if p.is_file()]
+            if all_files:
+                async with async_session() as session:
+                    from sqlalchemy import select as _select
+                    r = await session.execute(_select(CitizenRegistry.photo_uri))
+                    referenced = {Path(uri).name for uri, in r.all() if uri}
+                orphans = [f for f in all_files if f not in referenced]
+                if orphans:
+                    print(f"[startup] WARNING: Found {len(orphans)} orphan biometric file(s) in {uploads_dir}: {orphans} — run POST /api/citizens/orphans/cleanup as supervisor to securely erase")
+                else:
+                    print(f"[startup] Biometric retention check: no orphan files ({len(all_files)} file(s) all referenced)")
+    except Exception as e:
+        print(f"[startup] Orphan check warning: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -328,10 +350,22 @@ async def screen_document(
     # Auth — mandatory (audit P1 §1)
     officer = await _auth(request)
     officer_id = int(officer["sub"])
+    # Enriched audit context
+    import hashlib, uuid as _uuid
+    request_id = request.headers.get("X-Request-ID") or _uuid.uuid4().hex
+    # Device/location from headers + client IP
+    user_agent = request.headers.get("User-Agent", "")[:300]
+    xff = request.headers.get("X-Forwarded-For", "")
+    x_real_ip = request.headers.get("X-Real-IP", "")
+    client_host = request.client.host if request.client else ""
+    device_info = f"UA:{user_agent} | IP:{client_host} | XFF:{xff} | XRealIP:{x_real_ip} | unit:{officer.get('unit','')}"
 
     import tempfile
 
     doc_bytes = await document_image.read()
+    # Hash input files for audit trail
+    doc_hash = hashlib.sha256(doc_bytes).hexdigest()
+    file_hashes = {"document": doc_hash}
     with tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix="screen_doc_") as tmp:
         tmp.write(doc_bytes)
         doc_tmp = Path(tmp.name)
@@ -339,6 +373,7 @@ async def screen_document(
     live_tmp = None
     if live_capture and live_capture.filename:
         live_bytes = await live_capture.read()
+        file_hashes["live_capture"] = hashlib.sha256(live_bytes).hexdigest()
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix="screen_live_") as tmp:
             tmp.write(live_bytes)
             live_tmp = Path(tmp.name)
@@ -349,6 +384,7 @@ async def screen_document(
         for i, f in enumerate(live_frames):
             if f and f.filename:
                 fb = await f.read()
+                file_hashes[f"live_frame_{i}"] = hashlib.sha256(fb).hexdigest()
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix=f"screen_burst_{i}_") as tmp:
                     tmp.write(fb)
                     live_frame_tmps.append(Path(tmp.name))
@@ -369,7 +405,15 @@ async def screen_document(
         except Exception:
             pass
     try:
-        result = await _run_screening_pipeline(doc_tmp, live_tmp, officer_id, officer_unit, burst)
+        audit_context = {
+            "officer_id": officer_id,
+            "username": officer.get("username", "unknown"),
+            "session_id": officer.get("jti") or officer.get("session_id") or "",
+            "request_id": request_id,
+            "device_info": device_info,
+            "file_hashes": file_hashes,
+        }
+        result = await _run_screening_pipeline(doc_tmp, live_tmp, officer_id, officer_unit, burst, audit_context)
     finally:
         # Cleanup temp files
         doc_tmp.unlink(missing_ok=True)
@@ -419,6 +463,7 @@ async def _run_screening_pipeline(
     officer_id: int,
     officer_unit: str = "BORDER_UNIT_1",
     live_burst: Optional[List[str]] = None,
+    audit_context: Optional[dict] = None,
 ) -> dict:
     """Execute the full screening pipeline with parallel local+cloud execution.
 
@@ -932,11 +977,26 @@ async def _run_screening_pipeline(
                 is_mocked=mocked,
             ))
 
-        # Audit log
+        # Audit log — attributed to the initiating officer with full traceability
+        audit_ctx = audit_context or {}
+        actor = audit_ctx.get("username") or f"officer:{officer_id}"
+        # Include hashes and device info in the action for easy investigation
+        file_hashes_str = ""
+        try:
+            fh = audit_ctx.get("file_hashes") or {}
+            if fh:
+                file_hashes_str = f" files:{json.dumps({k: v[:12] for k, v in fh.items()})}"
+        except Exception:
+            pass
         session.add(AuditLog(
-            actor="system",
-            action=f"screening_completed:verdict={risk.verdict}",
+            actor=actor,
+            action=f"screening_completed:verdict={risk.verdict} unit:{officer_unit}{file_hashes_str}",
             entity=f"case:{case_id}",
+            officer_id=audit_ctx.get("officer_id") or officer_id,
+            session_id=audit_ctx.get("session_id") or "",
+            request_id=audit_ctx.get("request_id") or "",
+            device_info=audit_ctx.get("device_info") or "",
+            file_hashes=json.dumps(audit_ctx.get("file_hashes") or {}),
         ))
 
         await session.commit()
@@ -1447,6 +1507,23 @@ async def delete_citizen(citizen_id: int, request: Request):
             raise HTTPException(status_code=404, detail="Citizen not found")
 
         detail = f"{citizen.full_name}:{citizen.document_type}:{citizen.document_number}"
+        # Capture photo info before deletion for secure erasure and audit
+        photo_uri = citizen.photo_uri
+        photo_path = None
+        if photo_uri:
+            # Only delete files in the uploads directory (seeded samples/faces/*.png are shared)
+            try:
+                candidate = (_PROJECT_ROOT / photo_uri).resolve()
+                # Ensure it's inside the uploads directory to avoid deleting shared samples
+                uploads_dir = (_PROJECT_ROOT / "samples" / "faces" / "uploads").resolve()
+                if uploads_dir in candidate.parents or candidate.parent.resolve() == uploads_dir:
+                    photo_path = candidate
+                elif "uploads" in photo_uri:
+                    # Fallback: treat any uploads path as deletable
+                    photo_path = candidate
+            except Exception:
+                photo_path = None
+
         await session.delete(citizen)
 
         session.add(AuditLog(
@@ -1454,13 +1531,131 @@ async def delete_citizen(citizen_id: int, request: Request):
             action="citizen_removed",
             entity=f"citizen:{citizen_id}:{detail}",
         ))
+        # Record retention/deletion event for biometric data
+        if photo_uri:
+            session.add(AuditLog(
+                actor=username,
+                action="biometric_retention:deleted",
+                entity=f"citizen:{citizen_id}:photo:{photo_uri}",
+            ))
         await session.commit()
+
+    # Securely delete the biometric file outside the transaction (best-effort, no rollback needed)
+    if photo_path and photo_path.is_file():
+        try:
+            # Cryptographic erasure: overwrite with zeros before unlinking
+            size = photo_path.stat().st_size
+            with open(photo_path, "r+b") as f:
+                f.write(b"\x00" * size)
+                f.flush()
+                try:
+                    import os as _os
+                    _os.fsync(f.fileno())
+                except Exception:
+                    pass
+            photo_path.unlink()
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            # Log but don't fail the request — the DB record is already gone
+            print(f"[retention] failed to securely delete {photo_path}: {e}")
 
     return {
         "status": "ok",
         "deleted_id": citizen_id,
         "message": f"Removed {detail} from the registry",
+        "photo_deleted": bool(photo_path and not (photo_path.is_file() if photo_path else True)),
+        "photo_uri": photo_uri,
     }
+
+
+def _find_orphan_biometric_files() -> list[str]:
+    """Scan uploads for files not referenced by any CitizenRegistry.photo_uri."""
+    uploads_dir = (_PROJECT_ROOT / "samples" / "faces" / "uploads").resolve()
+    if not uploads_dir.is_dir():
+        return []
+    # Collect all referenced photo URIs
+    # This is called from async context, so we need to handle both sync and async
+    return []  # placeholder for sync call; actual async version below
+
+
+async def _find_orphans_async() -> tuple[list[str], list[str]]:
+    """Async helper to find orphan files: returns (orphans, all_files)."""
+    uploads_dir = (_PROJECT_ROOT / "samples" / "faces" / "uploads").resolve()
+    if not uploads_dir.is_dir():
+        return [], []
+    all_files = [p.name for p in uploads_dir.iterdir() if p.is_file()]
+    if not all_files:
+        return [], []
+    async with async_session() as session:
+        result = await session.execute(select(CitizenRegistry.photo_uri))
+        referenced = {r[0] for r in result.all() if r[0]}
+    # Extract just the filenames from referenced URIs
+    referenced_names = set()
+    for uri in referenced:
+        try:
+            referenced_names.add(Path(uri).name)
+        except Exception:
+            pass
+    orphans = [f for f in all_files if f not in referenced_names]
+    return orphans, all_files
+
+
+@app.get("/api/citizens/orphans", include_in_schema=False)
+@app.get("/api/citizens/orphans/check", include_in_schema=False)
+async def check_orphan_files(request: Request):
+    """List orphan biometric files not linked to any citizen (supervisor/auditor only)."""
+    officer = await _auth(request)
+    if officer.get("role") not in ("supervisor", "auditor"):
+        raise HTTPException(status_code=403, detail="Access denied: supervisor or auditor role required")
+    orphans, all_files = await _find_orphans_async()
+    return {
+        "orphans": orphans,
+        "orphan_count": len(orphans),
+        "total_files": len(all_files),
+        "uploads_dir": str(_PROJECT_ROOT / "samples" / "faces" / "uploads"),
+    }
+
+
+@app.post("/api/citizens/orphans/cleanup", include_in_schema=False)
+async def cleanup_orphan_files(request: Request):
+    """Securely delete orphan biometric files (supervisor only) and log the action."""
+    officer = await _auth(request)
+    _require_role(officer, "supervisor")
+    orphans, _ = await _find_orphans_async()
+    deleted = []
+    failed = []
+    uploads_dir = (_PROJECT_ROOT / "samples" / "faces" / "uploads").resolve()
+    for fname in orphans:
+        p = (uploads_dir / fname).resolve()
+        # Safety: ensure it's still inside uploads
+        if uploads_dir not in p.parents and p.parent.resolve() != uploads_dir:
+            failed.append(fname)
+            continue
+        try:
+            if p.is_file():
+                size = p.stat().st_size
+                with open(p, "r+b") as f:
+                    f.write(b"\x00" * size)
+                    f.flush()
+                    try:
+                        import os as _os
+                        _os.fsync(f.fileno())
+                    except Exception:
+                        pass
+                p.unlink()
+                deleted.append(fname)
+        except Exception as e:
+            failed.append(f"{fname}: {e}")
+    # Audit log
+    async with async_session() as session:
+        session.add(AuditLog(
+            actor=officer.get("username", "unknown"),
+            action="biometric_retention:orphan_cleanup",
+            entity=f"orphans_deleted:{len(deleted)} failed:{len(failed)}",
+        ))
+        await session.commit()
+    return {"deleted": deleted, "deleted_count": len(deleted), "failed": failed}
 
 
 # ---------------------------------------------------------------------------

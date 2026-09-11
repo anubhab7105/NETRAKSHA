@@ -263,6 +263,12 @@ class AuditLog(Base):
     entity = Column(String(100), nullable=True)  # e.g. "case:42"
     timestamp = Column(DateTime, server_default=func.now())
     immutable = Column(Boolean, default=True)
+    # Enriched attribution for screening events
+    officer_id = Column(Integer, nullable=True)  # FK to officers.id when actor is an officer
+    session_id = Column(String(100), nullable=True)  # JWT jti or session token ID
+    request_id = Column(String(100), nullable=True)  # per-request UUID for tracing
+    device_info = Column(Text, nullable=True)  # User-Agent + IP + location context
+    file_hashes = Column(Text, nullable=True)  # JSON of input file hashes (doc/live)
 
     def __repr__(self) -> str:
         return f"<AuditLog(id={self.id}, actor={self.actor!r}, action={self.action!r})>"
@@ -275,6 +281,11 @@ class AuditLog(Base):
             "entity": self.entity,
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
             "immutable": self.immutable,
+            "officer_id": self.officer_id,
+            "session_id": self.session_id,
+            "request_id": self.request_id,
+            "device_info": self.device_info,
+            "file_hashes": self.file_hashes,
         }
 
 
