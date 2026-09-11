@@ -424,6 +424,16 @@ async def screen_document(
 
     elapsed = (time.perf_counter() - start_time) * 1000
     result["total_latency_ms"] = round(elapsed, 1)
+    result["request_id"] = request_id
+    result["session_id"] = officer.get("jti") or ""
+    # Also expose request_id as a response header for tracing (if using JSONResponse, set header)
+    try:
+        from fastapi.responses import JSONResponse
+        # If the caller expects a dict, FastAPI will still handle JSONResponse
+        # We keep returning dict for simplicity, but also ensure request_id is in the JSON
+        pass
+    except Exception:
+        pass
 
     return result
 
