@@ -1025,8 +1025,8 @@ async def list_cases(
 @app.get("/cases/{case_id}", include_in_schema=False)
 @app.get("/api/cases/{case_id}")
 async def get_case(case_id: int, request: Request):
-    """Get full case report with all module results and extracted fields."""
-    await _auth(request)  # audit P1 §2: require auth
+    """Get full case report with least-privilege access control."""
+    officer = await _auth(request)
 
     async with async_session() as session:
         result = await session.execute(
@@ -1036,6 +1036,17 @@ async def get_case(case_id: int, request: Request):
 
         if not case:
             raise HTTPException(status_code=404, detail="Case not found")
+
+        # Least-privilege: check ownership / unit / auditor
+        role = officer.get("role", "officer")
+        officer_id = int(officer.get("sub", 0))
+        officer_unit = officer.get("unit") or "BORDER_UNIT_1"
+        if role == "officer" and case.officer_id != officer_id:
+            raise HTTPException(status_code=403, detail="Access denied: case belongs to another officer")
+        elif role == "supervisor" and case.unit and case.unit != officer_unit:
+            # Supervisor can only view cases in their unit (allow old cases with NULL unit for backward compat)
+            raise HTTPException(status_code=403, detail="Access denied: case outside your unit")
+        # auditor can view all
 
         # Load related data
         fields_result = await session.execute(
