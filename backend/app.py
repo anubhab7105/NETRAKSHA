@@ -532,6 +532,7 @@ async def _run_screening_pipeline(
         )
         doc_type = ocr_type or "unknown"
 
+    face_is_real_via_local = False
     # No live capture → face verification is impossible, not "mismatched".
     # Strip any live-vs-* claims Gemini may have guessed at so an officer who
     # only uploads the document gets an honest "inconclusive" (→ Yellow min),
