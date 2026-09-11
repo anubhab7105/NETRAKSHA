@@ -85,6 +85,13 @@ async def init_db() -> None:
         await ensure_model_columns()
     except Exception as e:
         print(f"[init_db] model-column migration warning: {e}")
+    # Legacy tables built with explicit IDs leave their SERIAL sequences
+    # behind max(id) → every autoincrement INSERT explodes with a duplicate
+    # pkey. Re-anchor sequences past max(id) on every startup (Postgres).
+    try:
+        await ensure_sequences()
+    except Exception as e:
+        print(f"[init_db] sequence repair warning: {e}")
     # Post-fix columns on a pre-existing table are NOT added by create_all —
     # backfill them so deployed SQLite/Postgres DBs pick up trust metadata
     # with just a restart (no manual migration).
@@ -267,6 +274,42 @@ async def ensure_auth_columns() -> dict:
             print(f"[init_db] auth-column backfill warning: {e}")
         print(f"[init_db] officers auth columns added: {added}")
     return {"added": added}
+
+
+async def ensure_sequences() -> dict:
+    """Re-anchor SERIAL sequences past max(id) on every table (Postgres).
+
+    Legacy databases (rows inserted with explicit IDs, restores, dashboard
+    edits) leave e.g. officers_id_seq behind max(officers.id), so the next
+    autoincrement INSERT dies with a duplicate-pkey IntegrityError and —
+    in production — crash-loops the backend at seed time. pg_get_serial_-
+    sequence() resolves the real sequence regardless of naming. No-op on
+    SQLite (rowid tables self-heal). Returns {"table": next_id}.
+    """
+    if _IS_SQLITE:
+        return {}
+    from sqlalchemy import text as _text
+
+    from .models import Base
+
+    fixed: dict[str, int] = {}
+    async with engine.begin() as conn:
+        for table in Base.metadata.tables.values():
+            pk = [c for c in table.columns if c.primary_key]
+            if len(pk) != 1 or pk[0].name != "id":
+                continue
+            try:
+                res = await conn.execute(_text(
+                    "SELECT setval(pg_get_serial_sequence(:t, 'id'), "
+                    "(SELECT COALESCE(max(id), 0) FROM " + table.name + "))"))
+                row = res.fetchone()
+                if row:
+                    fixed[table.name] = int(row[0])
+            except Exception:
+                pass  # non-serial PK or missing table — nothing to repair
+    if fixed:
+        print(f"[init_db] sequences re-anchored: {fixed}")
+    return fixed
 
 
 async def drop_db() -> None:
