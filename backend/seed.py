@@ -48,9 +48,11 @@ def _hash_password(plain: str) -> str:
 # ---------------------------------------------------------------------------
 
 OFFICERS = [
-    {"username": os.environ.get("SEED_OFFICER_USER", "officer1"), "password": os.environ.get("SEED_OFFICER_PASS", "Officer@123"), "role": "officer"},
-    {"username": os.environ.get("SEED_SUPERVISOR_USER", "supervisor1"), "password": os.environ.get("SEED_SUPERVISOR_PASS", "Supervisor@123"), "role": "supervisor"},
-    {"username": os.environ.get("SEED_AUDITOR_USER", "auditor1"), "password": os.environ.get("SEED_AUDITOR_PASS", "Auditor@123"), "role": "auditor"},
+    {"username": os.environ.get("SEED_OFFICER_USER", "officer1"), "password": os.environ.get("SEED_OFFICER_PASS", "Officer@123"), "role": "officer", "unit": "BORDER_UNIT_1"},
+    {"username": os.environ.get("SEED_SUPERVISOR_USER", "supervisor1"), "password": os.environ.get("SEED_SUPERVISOR_PASS", "Supervisor@123"), "role": "supervisor", "unit": "BORDER_UNIT_1"},
+    {"username": os.environ.get("SEED_AUDITOR_USER", "auditor1"), "password": os.environ.get("SEED_AUDITOR_PASS", "Auditor@123"), "role": "auditor", "unit": "HQ"},
+    # Additional unit for scope testing
+    {"username": "officer2", "password": "Officer@123", "role": "officer", "unit": "BORDER_UNIT_2"},
 ]
 
 CITIZENS = [

@@ -980,11 +980,26 @@ async def list_cases(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    """List screening cases with optional filters."""
-    await _auth(request)  # audit P1 §2: require auth
+    """List screening cases with least-privilege scoping."""
+    officer = await _auth(request)
 
     async with async_session() as session:
         query = select(ScreeningCase).order_by(ScreeningCase.timestamp.desc())
+
+        # Least-privilege: officer sees own cases only; supervisor sees unit; auditor sees all
+        if officer.get("role") == "officer":
+            query = query.where(ScreeningCase.officer_id == int(officer["sub"]))
+        elif officer.get("role") == "supervisor":
+            # Supervisor sees all cases in their unit (including own)
+            unit = officer.get("unit") or "BORDER_UNIT_1"
+            query = query.where(
+                (ScreeningCase.unit == unit) | (ScreeningCase.unit.is_(None))  # handle old cases with NULL unit
+            )
+        elif officer.get("role") == "auditor":
+            pass  # auditor sees all cases across units
+        else:
+            # Fallback: least privilege
+            query = query.where(ScreeningCase.officer_id == int(officer["sub"]))
 
         if verdict:
             query = query.where(ScreeningCase.verdict == verdict)
