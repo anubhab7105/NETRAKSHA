@@ -1730,6 +1730,29 @@ async def _run_screening_pipeline(
     face_sim = face_match_data.get("similarity_score")
     face_match_bool = face_match_data.get("live_vs_doc_match")
 
+    # Fairness & bias mitigation: log per-case signals for aggregate audit
+    # and flag low-confidence band for manual review (balanced training note:
+    # seed data is intentionally diverse across gender/age for demo).
+    try:
+        from pipeline.fairness import is_low_confidence, log_fairness_case
+        _low_conf = is_low_confidence(face_sim)
+        # Try to get quality report from liveness or face module
+        _quality = None
+        try:
+            _quality = (liveness_result.raw_output or {}).get("quality") or (face_match_data or {}).get("quality")
+        except Exception:
+            pass
+        log_fairness_case(
+            case_id=None,  # will be set after case creation; also logged in-memory for report
+            demographics=demographics,
+            face_similarity=face_sim,
+            face_match=face_match_bool,
+            quality_report=_quality,
+            low_confidence=_low_conf,
+        )
+    except Exception:
+        pass
+
     # Extract liveness signals
     liveness_raw = liveness_result.raw_output or {}
     liveness_live = liveness_raw.get("live")
