@@ -81,13 +81,14 @@ except ImportError:
     _HAS_PYJWT = False
 
 
-def _create_token(officer_id: int, username: str, role: str) -> str:
+def _create_token(officer_id: int, username: str, role: str, unit: str = "BORDER_UNIT_1") -> str:
     """Create a JWT token for an authenticated officer."""
     if _HAS_PYJWT:
         payload = {
             "sub": str(officer_id),
             "username": username,
             "role": role,
+            "unit": unit,
             "exp": datetime.now(timezone.utc) + timedelta(hours=_JWT_EXPIRY_HOURS),
             "iat": datetime.now(timezone.utc),
         }
@@ -99,6 +100,7 @@ def _create_token(officer_id: int, username: str, role: str) -> str:
             "sub": str(officer_id),
             "username": username,
             "role": role,
+            "unit": unit,
         })
         return base64.b64encode(payload.encode()).decode()
 
