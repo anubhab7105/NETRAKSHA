@@ -1300,7 +1300,7 @@ async def get_provenance(case_id: int, request: Request):
             payload = json.dumps(prov, sort_keys=True).encode() if isinstance(prov, dict) else str(prov).encode()
             expected = _hmac.new(_JWT_SECRET.encode(), payload, _hashlib.sha256).hexdigest()
             stored = case.provenance_signature or ""
-            verified = hmac.compare_digest(expected, stored)
+            verified = _hmac.compare_digest(expected, stored)
             reason = "signature matches" if verified else "signature mismatch"
         except Exception as e:
             reason = f"verification error: {e}"
