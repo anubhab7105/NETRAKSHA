@@ -936,6 +936,22 @@ async def get_case(case_id: int, request: Request):
             if citizen:
                 citizen_data = citizen.to_dict()
 
+    # Demo flag: case relied on simulated Gemini data (real AI offline).
+    # Computed from the persisted gemini module's is_mocked flag (set from
+    # is_simulated at screening time). Local InsightFace fallback clears the
+    # flag, so only truly simulated cases are labelled demo.
+    is_demo = any(m.is_mocked for m in modules if m.module_name == "gemini_ai")
+    # Also check the risk flags for the new DEMO marker (covers post-fallback demo cases)
+    try:
+        gem_mod = next((m for m in modules if m.module_name == "gemini_ai"), None)
+        if gem_mod and gem_mod.raw_output:
+            import json as _j
+            _raw = _j.loads(gem_mod.raw_output) if isinstance(gem_mod.raw_output, str) else gem_mod.raw_output
+            if isinstance(_raw, dict) and _raw.get("is_demo"):
+                is_demo = True
+    except Exception:
+        pass
+
     return {
         "case": case.to_dict(),
         "citizen": citizen_data,
@@ -943,6 +959,8 @@ async def get_case(case_id: int, request: Request):
         "extracted_fields": [f.to_dict() for f in fields],
         "module_results": [m.to_dict() for m in modules],
         "officer_actions": [a.to_dict() for a in actions],
+        "is_demo": is_demo,
+        "demo_label": "DEMO ONLY — simulated AI excluded from scoring" if is_demo else None,
     }
 
 
