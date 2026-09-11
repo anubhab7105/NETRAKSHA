@@ -833,6 +833,7 @@ async def _run_screening_pipeline(
             risk_score=risk.risk_score,
             verdict=risk.verdict,
             status="pending_review",
+            unit=officer_unit,
         )
         session.add(case)
         await session.flush()
