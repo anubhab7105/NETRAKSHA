@@ -635,7 +635,11 @@ async def change_password(req: ChangePasswordRequest, request: Request):
 
 @app.post("/api/auth/mfa/setup")
 async def mfa_setup(request: Request):
-    """Begin supervisor TOTP enrollment. Returns the manual key + otpauth URI."""
+    """Begin supervisor TOTP enrollment.
+
+    Returns a scannable QR (preferred — no typing), plus the manual key +
+    otpauth URI fallback. Confirm with POST /api/auth/mfa/verify.
+    """
     officer = await _auth(request, allow_stale_password=True, allow_mfa_setup=True)
     _require_role(officer, "supervisor")
     officer_id = int(officer["sub"])
@@ -656,12 +660,24 @@ async def mfa_setup(request: Request):
             officer_id=off.id,
         ))
         await session.commit()
+    uri = otpauth_uri(secret, off.username)
+    qr_data_uri = ""
+    try:
+        import base64 as _b64
+        import io as _io
+        import qrcode as _qr
+        _buf = _io.BytesIO()
+        _qr.make(uri).save(_buf, format="PNG")
+        qr_data_uri = "data:image/png;base64," + _b64.b64encode(_buf.getvalue()).decode()
+    except Exception:
+        qr_data_uri = ""  # manual key fallback below always works
     return {
         "status": "ok",
         "manual_key": secret,
-        "otpauth_uri": otpauth_uri(secret, off.username),
+        "otpauth_uri": uri,
+        "qr_data_uri": qr_data_uri,
         "server_time_utc": _utcnow_naive().isoformat() + "Z",
-        "message": "Open your authenticator app (or paste the URI), then confirm with POST /api/auth/mfa/verify.",
+        "message": "Scan the QR with your authenticator app (or enter the manual key), then confirm with POST /api/auth/mfa/verify.",
     }
 
 

@@ -22,6 +22,7 @@ export default function SecuritySetup() {
 
   const [mfaKey, setMfaKey] = useState('');
   const [mfaUri, setMfaUri] = useState('');
+  const [mfaQr, setMfaQr] = useState('');
   const [mfaServerTime, setMfaServerTime] = useState('');
   const [mfaCode, setMfaCode] = useState('');
   const [mfaMsg, setMfaMsg] = useState('');
@@ -66,6 +67,7 @@ export default function SecuritySetup() {
       const res = await api.post('/auth/mfa/setup');
       setMfaKey(res.data.manual_key);
       setMfaUri(res.data.otpauth_uri);
+      setMfaQr(res.data.qr_data_uri || '');
       setMfaServerTime(res.data.server_time_utc || '');
     } catch (err) {
       setMfaErr(apiErrorMessage(err, 'Could not start MFA enrollment.'));
@@ -157,7 +159,16 @@ export default function SecuritySetup() {
             ) : (
               <form onSubmit={confirmMfa} className="space-y-4">
                 <div className="rounded-lg border border-slate-700/50 bg-black/30 p-4">
-                  <p className="text-xs text-slate-400 mb-1">Manual key (enter in your app, or paste the URI below it):</p>
+                  {mfaQr && (
+                    <div className="mb-3 flex flex-col items-center">
+                      <img src={mfaQr} alt="MFA enrollment QR code — scan with your authenticator app"
+                        className="h-44 w-44 rounded-lg border border-slate-700 bg-white p-2" />
+                      <p className="text-xs text-slate-400 mt-2 text-center">
+                        Scan this with your authenticator app — no typing needed.
+                      </p>
+                    </div>
+                  )}
+                  <p className="text-xs text-slate-400 mb-1">Manual key (only if you can't scan):</p>
                   <p className="font-mono text-sm text-white break-all select-all">{mfaKey}</p>
                   <p className="font-mono text-[11px] text-slate-500 break-all select-all mt-2">{mfaUri}</p>
                   {mfaServerTime && (

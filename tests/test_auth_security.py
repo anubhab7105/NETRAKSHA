@@ -224,6 +224,57 @@ class _AuthedReq:
         self.client = None
 
 
+def test_mfa_setup_issues_qr_and_verify_loop():
+    """Full enrollment: setup issues a scannable QR + key, and a code from
+    that key verifies (catches secret round-trip / encoding regressions)."""
+    import asyncio
+    import base64
+
+    import backend.app as app
+    from backend.models import Officer
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+    async def go():
+        eng = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with eng.begin() as conn:
+            from backend.models import Base
+            await conn.run_sync(Base.metadata.create_all)
+        maker = async_sessionmaker(eng, class_=AsyncSession, expire_on_commit=False)
+        old = app.async_session
+        app.async_session = maker
+        try:
+            from passlib.context import CryptContext
+            ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+            async with maker() as s:
+                s.add(Officer(username="supqr", password_hash=ctx.hash("Old-Pass-2026!"),
+                              role="supervisor", unit="HQ"))
+                await s.commit()
+            login = await app.login(
+                app.LoginRequest(username="supqr", password="Old-Pass-2026!"),
+                _AnonReq())
+            assert login.token
+            setup = await app.mfa_setup(_AuthedReq(login.token))
+            assert len(setup["manual_key"]) >= 32
+            assert setup["otpauth_uri"].startswith("otpauth://totp/")
+            assert setup["qr_data_uri"].startswith("data:image/png;base64,")
+            raw = base64.b64decode(setup["qr_data_uri"].split(",", 1)[1])
+            assert raw[:8] == b"\x89PNG\r\n\x1a\n"  # real PNG, not an empty stub
+            code = totp_at(setup["manual_key"])
+            out = await app.mfa_verify(app.MfaVerifyRequest(code=code),
+                                       _AuthedReq(login.token))
+            assert out["status"] == "ok"
+            async with maker() as s:
+                off = (await s.execute(
+                    select(Officer).where(Officer.username == "supqr"))).scalar_one()
+                assert off.totp_enabled is True
+        finally:
+            app.async_session = old
+            await eng.dispose()
+
+    asyncio.run(go())
+
+
 def test_unhandled_errors_stay_json():
     """A crashing endpoint must still return JSON (via CORS middleware), so
     browsers never again misreport a 500 as a CORS failure."""
