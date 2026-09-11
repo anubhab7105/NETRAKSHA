@@ -220,6 +220,20 @@ export default function CaseReport() {
         </div>
       )}
 
+      {/* Cloud unavailable — network failure fallback, local checks only */}
+      {(data.cloud_unavailable || data.gemini_metadata?.cloud_unavailable || geminiData.cloud_unavailable) && (
+        <div className="flex items-start gap-4 rounded-xl border border-orange-500/40 bg-orange-500/10 p-4 sm:p-6">
+          <AlertTriangle size={24} className="text-orange-400 shrink-0 mt-0.5" />
+          <div>
+            <h2 className="text-lg font-bold text-orange-400">CLOUD UNAVAILABLE — Local Checks Only</h2>
+            <p className="text-sm text-orange-200/80 mt-1">
+              Cloud AI verification was unavailable due to network/cloud failure. Local forensic checks (tamper, liveness, OCR) completed, but final decision requires <strong>manual officer review</strong>. System did not halt — controlled fallback to Yellow applied.
+              {geminiData.cloud_fallback_reason && ` Reason: ${geminiData.cloud_fallback_reason}.`}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* No DB record / unverifiable — alert the officer instead of faking a comparison */}
       {!hasGenuineDbRecord && (
         <div className="flex items-start gap-4 rounded-xl border border-warning/50 bg-warning/10 p-4 sm:p-6">
