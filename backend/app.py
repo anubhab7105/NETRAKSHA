@@ -688,6 +688,49 @@ async def _run_screening_pipeline(
     # If we found a DB photo and Gemini was simulated or doc_vs_db is null,
     # we could re-run Gemini with the DB photo. For the MVP, we note this
     # in the output metadata so the officer sees the gap.
+    # --- Local 3-way DB enrichment: compute Doc vs DB / Live vs DB via InsightFace ---
+    if db_photo_path:
+        need_doc_db = face_match_data.get("doc_vs_db_match") is None
+        need_live_db = face_match_data.get("live_vs_db_match") is None and live_str is not None
+        if need_doc_db or need_live_db:
+            enrich_tasks = []
+            if need_doc_db:
+                enrich_tasks.append(loop.run_in_executor(None, _run_local_face, str(doc_path), db_photo_path, False))
+            else:
+                enrich_tasks.append(None)
+            if need_live_db:
+                enrich_tasks.append(loop.run_in_executor(None, _run_local_face, live_str, db_photo_path, False))
+            else:
+                enrich_tasks.append(None)
+            try:
+                results = []
+                for t in enrich_tasks:
+                    if t is None:
+                        results.append(None)
+                    else:
+                        results.append(await t)
+                doc_db_res, live_db_res = results[0], results[1]
+                if doc_db_res is not None and doc_db_res.status == "ok":
+                    raw = doc_db_res.raw_output or {}
+                    face_match_data["doc_vs_db_match"] = bool(raw.get("match"))
+                    face_match_data["doc_vs_db_similarity"] = float(raw.get("similarity")) if raw.get("similarity") is not None else None
+                    gemini_result["three_way_face_match"] = face_match_data
+                if live_db_res is not None and live_db_res.status == "ok":
+                    raw = live_db_res.raw_output or {}
+                    face_match_data["live_vs_db_match"] = bool(raw.get("match"))
+                    face_match_data["live_vs_db_similarity"] = float(raw.get("similarity")) if raw.get("similarity") is not None else None
+                    gemini_result["three_way_face_match"] = face_match_data
+                if (doc_db_res is not None and doc_db_res.status == "ok") or (live_db_res is not None and live_db_res.status == "ok"):
+                    extra = []
+                    if doc_db_res is not None and doc_db_res.status == "ok":
+                        extra.append(f"Doc vs DB local {doc_db_res.raw_output.get('similarity'):.3f}")
+                    if live_db_res is not None and live_db_res.status == "ok":
+                        extra.append(f"Live vs DB local {live_db_res.raw_output.get('similarity'):.3f}")
+                    if extra:
+                        face_match_data["visual_reasoning"] = (face_match_data.get("visual_reasoning") or "") + " | " + ", ".join(extra)
+                        gemini_result["three_way_face_match"] = face_match_data
+            except Exception as e:
+                print(f"[enrich] DB enrich exception {e}")
 
     # --- Watchlist check ---
     full_name = (demographics or {}).get("full_name", "")
