@@ -96,6 +96,8 @@ export default function CaseReport() {
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState('');
   const [reason, setReason] = useState('');
+  const [provenance, setProvenance] = useState(null);
+  const [provVerified, setProvVerified] = useState(null);
   const caseLabel = `Case #${(id ?? '').toString().padStart(4, '0')}`;
 
   useEffect(() => {
@@ -103,6 +105,14 @@ export default function CaseReport() {
       try {
         const res = await api.get(`/cases/${id}`);
         setData(res.data);
+        // Fetch provenance for reproducibility
+        try {
+          const provRes = await api.get(`/cases/${id}/provenance`);
+          setProvenance(provRes.data);
+          setProvVerified(provRes.data.verified);
+        } catch {
+          // no provenance for old cases
+        }
       } catch (err) {
         if (import.meta.env.DEV) console.error(err);
       } finally {
