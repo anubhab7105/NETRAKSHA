@@ -247,7 +247,7 @@ async def login(req: LoginRequest):
     if not officer or not _verify_password(req.password, officer.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    token = _create_token(officer.id, officer.username, officer.role)
+    token = _create_token(officer.id, officer.username, officer.role, getattr(officer, "unit", "BORDER_UNIT_1") or "BORDER_UNIT_1")
 
     # Audit
     async with async_session() as session:
