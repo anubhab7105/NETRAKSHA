@@ -451,12 +451,23 @@ async def _run_screening_pipeline(
         deepfake_target = str(doc_path)
     deepfake_task = loop.run_in_executor(None, run_deepfake, deepfake_target)
 
-    # Liveness: use the frame burst when supplied, else the single still.
-    # run_liveness accepts a list of frame paths (required for blink/EAR).
-    liveness_target = live_burst or (
-        [str(live_path)] if live_path else [str(doc_path)]
-    )
-    liveness_task = loop.run_in_executor(None, run_liveness, liveness_target)
+    # Liveness: requires a real camera burst. Never feed the document image
+    # as a liveness input — a document cannot prove a person is live and
+    # would create misleading signals. If no live data, mark unavailable.
+    if live_burst and len(live_burst) > 0:
+        liveness_task = loop.run_in_executor(None, run_liveness, live_burst)
+    elif live_path:
+        liveness_task = loop.run_in_executor(None, run_liveness, [str(live_path)])
+    else:
+        from pipeline.common import inconclusive_result as _liveness_inconclusive
+
+        async def _no_liveness():
+            return _liveness_inconclusive(
+                "liveness",
+                "no live capture provided — liveness requires a camera burst; manual review required",
+            )
+
+        liveness_task = asyncio.create_task(_no_liveness())
 
     # Gemini AI call (also in thread pool). When no single live capture is
     # supplied but a burst is available (burst-capture flow), use the middle
