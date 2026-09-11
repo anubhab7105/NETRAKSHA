@@ -55,8 +55,8 @@ At border checkpoints and airport immigration desks, security personnel must ver
 
 ## 2. Core Architectural Pillars
 
-### Pillar 1: The "Single-Call Multi-Task" AI Scanner
-Instead of making separate, sequential API requests for OCR and Face Verification, a single multi-image request is sent to **Google Gemini 1.5/2.0 Flash** containing:
+### Pillar 1: Hybrid scanner — local-authoritative face + cloud reasoning
+Local InsightFace `buffalo_l` decides all face matches (CPU fallback, threshold 0.55); a single multi-image request to **Google Gemini (`google-genai` SDK, default `GEMINI_MODEL=gemini-3.6-flash`)** adds classification/OCR/reasoning, containing:
 1. `Image 1`: Uploaded Document Image (Aadhaar, PAN, Voter ID, Passport)
 2. `Image 2`: Live Webcam Capture Still
 3. `Image 3`: Database Reference Photo (from `citizens_registry`, if found)
@@ -81,10 +81,10 @@ To eliminate any risk of AI digit hallucinations on blurry cards:
 - **Address Parity:** Locality, state, and pin code parity check.
 - **Hard Rule:** Any demographic discrepancy immediately flags the case as **Yellow** or **Red**, prohibiting automatic clearance.
 
-### Pillar 4: Sub-Second Local Computer Vision (Tamper & Liveness)
-- **Tamper Detection Optimization:** Downsamples analysis image to a maximum dimension of 500px with stride=16 for block cross-correlation, reducing execution time from 45 seconds to **< 0.8 seconds**.
-- **Liveness Detection:** MediaPipe FaceLandmarker tracks Eye Aspect Ratio (EAR) across a 12-frame rapid burst to verify natural blinking and defeat static photo / screen presentation attacks.
-- Runs **concurrently with the cloud AI call** via Python `asyncio`.
+### Pillar 4: Local Computer Vision (Tamper, Physical, Liveness)
+- **Tamper Detection:** ELA (JPEG q=90) + exact-duplicate SHA1 block-hash copy-move (tested **<1.5s** in `tests/test_pipeline.py`); physical-forgery suite (layout/MRZ-font/frame/moiré/QR) tested <5s.
+- **Liveness Detection:** MediaPipe `face_landmarker.task` EAR + motion + moiré across a 14-frame burst (~2.1s in app; `MIN_BURST=3`); randomized challenges `blink/head_turn/mouth_open`.
+- Runs **concurrently with the cloud AI call** via Python `asyncio` (sequential local OCR pre-pass for registry lookup is the only serial step).
 
 ### Pillar 5: Human-in-the-Loop & Audit Immutability
 - **The system can only flag risk; only a human officer can deny entry.**
@@ -104,9 +104,9 @@ To eliminate any risk of AI digit hallucinations on blurry cards:
   - `validate_pan_format(pan: str) -> bool`: Regex validator for Indian Permanent Account Number.
   - `validate_epic_format(epic: str) -> bool`: Regex validator for Voter ID EPIC codes.
 
-#### 1.2 `pipeline/gemini_scanner.py` (New Module)
-- Integrates `google-generativeai` using Gemini 1.5/2.0 Flash.
-- Includes a resilient **offline simulation fallback engine** so the system executes smoothly even if an API key is not yet configured or during network timeouts.
+#### 1.2 `pipeline/gemini_scanner.py`
+- Integrates `google-genai` (`from google import genai`, default `gemini-3.6-flash`, `response_mime_type=application/json`).
+- Includes a resilient **offline simulation fallback engine** (`is_simulated=True`) so the system executes smoothly even if an API key is not yet configured or during network timeouts. Simulated face/tamper scores are excluded from Red verdicts.
 - Configures strict JSON schema output:
   ```json
   {
@@ -132,8 +132,8 @@ To eliminate any risk of AI digit hallucinations on blurry cards:
   ```
 
 #### 1.3 `pipeline/tamper.py` (Optimized Module)
-- Multi-scale block normalized cross-correlation with max-dim downsampling (500px) and stride=16.
-- Executes in **< 0.8 seconds** on CPU.
+- ELA (JPEG q=90 residual) + exact-duplicate SHA1 block-hash copy-move (`bs=8,stride=8,min_dist=140`; `score=0.60*copy+0.40*ela`).
+- Executes in **<1.5 seconds** on CPU (asserted in `tests/test_pipeline.py`; physical suite <5s).
 - Renders and saves visual Error Level Analysis (ELA) heatmap overlay image for the Case Result UI.
 
 #### 1.4 `pipeline/demographic.py` (New Module)
@@ -180,14 +180,17 @@ To eliminate any risk of AI digit hallucinations on blurry cards:
 - Automatically selects the connection string via `os.environ.get("DATABASE_URL")`.
 
 #### 2.2 `backend/models.py`
-- ORM entities per `Schema.md`:
-  1. `Officer`: id, username, password_hash, role (`officer`, `supervisor`, `auditor`).
-  2. `CitizenRegistry`: id, document_type, document_number, full_name, date_of_birth, gender, address, photo_uri.
-  3. `ScreeningCase`: id, officer_id, timestamp, document_type, citizen_id, demographic_match, risk_score, verdict, status.
-  4. `ExtractedField`: id, case_id, field_name, extracted_value, database_value, match_status, confidence.
-  5. `ModuleResult`: id, case_id, module_name, score, status, raw_output, evidence_uri, is_mocked.
-  6. `OfficerAction`: id, case_id, officer_id, action (`clear`, `deny`, `escalate`), reason, timestamp.
-  7. `AuditLog`: id, actor, action, entity, timestamp, immutable.
+- 10 ORM tables per `Schema.md`:
+  1. `Officer`: id, username, password_hash (bcrypt), role, unit, must_change_password, totp_secret/enabled, password_changed_at.
+  2. `CitizenRegistry`: + source/source_ref/verification_method/photo_hash/enrolled_by/approved_by/last_reconciled_at/reconciliation_status; composite unique (document_type, document_number).
+  3. `RegistryEnrollment`: dual-approval queue (create/delete × pending/approved/rejected, four-eyes).
+  4. `ScreeningCase`: + unit, version (optimistic locking), provenance/signature, challenge_type; status pending_review|escalated|decided.
+  5. `ExtractedField`: as listed (match_status NULL when no DB record).
+  6. `ModuleResultDB`: module_name tamper|physical_forgery|deepfake|liveness|gemini_ai|watchlist|checksum; is_mocked for watchlist + simulated Gemini.
+  7. `OfficerAction`: RBAC-enforced (officer never deny, auditor never, escalated supervisor-only).
+  8. `AuditLog`: + officer_id/session_id/request_id/device_info/file_hashes/prev_hash/entry_hash (HMAC chain).
+  9. `IdempotencyRecord`: (officer_id, key) unique + input_hash + snapshot (10-min hash-window dedup).
+  10. `WatchlistEntry`: mocked high-risk list behind `WatchlistProvider`.
 
 #### 2.3 `backend/seed.py`
 - Seeds test accounts:
@@ -197,15 +200,14 @@ To eliminate any risk of AI digit hallucinations on blurry cards:
 - Seeds official citizen reference profiles for Aadhaar, PAN, Voter ID, and Passport.
 
 #### 2.4 `backend/app.py`
-- FastAPI REST Application:
-  - `POST /api/auth/login`: Authenticates officer, generates JWT session.
-  - `POST /api/auth/logout`: Terminates session.
-  - `POST /api/screen`: High-speed screening endpoint executing parallel local CV + Gemini AI.
-  - `GET /api/cases`: Filterable dashboard case queue.
-  - `GET /api/cases/{id}`: Full case report with 3-way face crops, ELA heatmap, and demographic parity table.
-  - `POST /api/cases/{id}/override`: Records officer decision and writes to audit log.
-  - `GET /api/audit`: Append-only audit trail viewer.
-  - Mounts static directories for evidence heatmaps and photo crops.
+- FastAPI REST Application (canonical `/api/*`, bare legacy aliases for auth/screen/cases/audit):
+  - `POST /api/auth/login|logout|mfa/challenge|mfa/setup|verify|disable|change-password`: JWT (`purpose=session`, 8h) + supervisor TOTP step-up + rotation + 5/300s throttles + unit scoping.
+  - `POST /api/screen`: multipart `document_image*` + `live_capture?` + `live_frames[]?`; requires `Idempotency-Key` (UUID v4); sequential OCR pre-pass + parallel local CV + Gemini; no citizen-ID param (auto-lookup).
+  - `GET /api/cases`, `GET /api/cases/{id}(+/provenance|/verify)`, `POST /api/cases/{id}/override` (RBAC + version/`If-Match`).
+  - `GET /api/audit` (auditor-only) + `/verify` + `/access-review`, `GET /api/fairness/report`.
+  - `GET|POST|DELETE /api/citizens*`: search, PENDING enroll, approve/reject (four-eyes), HMAC import, reconciliation report/run, orphan check/cleanup.
+  - `GET /api/evidence/token/{filename}|/view?token=|/{filename}`: authenticated signed evidence (no public mount; `/evidence/*` → 404).
+  - `GET /api/health`; `/{full_path}` SPA fallback from `frontend/dist` (must stay last).
 
 ---
 
@@ -217,17 +219,17 @@ To eliminate any risk of AI digit hallucinations on blurry cards:
 - Write unit tests for all mathematical checksums.
 
 ### Phase 2: AI Multi-Task Scanner & Fast CV
-- Implement `pipeline/gemini_scanner.py` with single-call 3-way face verification, document classification, and OCR demographic extraction.
-- Implement resilient offline simulation fallback for zero-API-key execution.
-- Optimize `pipeline/tamper.py` to run in < 0.8 seconds on CPU.
-- Implement `pipeline/demographic.py` for database reconciliation.
-- Implement `pipeline/watchlist.py` and `pipeline/risk_engine.py`.
+- Implement `pipeline/gemini_scanner.py` (`google-genai`, `gemini-3.6-flash`) for classification/OCR/reasoning alongside local InsightFace authoritative 3-way.
+- Implement resilient offline simulation fallback for zero-API-key execution (simulated scores excluded from Red).
+- Optimize `pipeline/tamper.py` to run in <1.5 seconds on CPU (tested); physical suite <5s.
+- Implement `pipeline/demographic.py` for database reconciliation (+ trust levels).
+- Implement `pipeline/watchlist.py` and `pipeline/risk_engine.py` (+ physical/quality/fairness/zones).
 
 ### Phase 3: Database & Backend API Development
-- Implement `backend/database.py` and `backend/models.py`.
-- Implement `backend/seed.py` with mock citizens and officer accounts.
-- Implement `backend/app.py` with all 7 REST endpoints and JWT auth.
-- Verify sub-2.5s execution on `/api/screen`.
+- Implement `backend/database.py` (dual engine + self-healing `ensure_*`) and `backend/models.py` (10 tables).
+- Implement `backend/seed.py` with mock citizens (incl. `L898902C3/Jasmine Specimen`) and officers (`officer1/supervisor1/auditor1` + `officer2`, all `must_change_password=True`).
+- Implement `backend/app.py` with full `/api/*` routes (auth/MFA, idempotent screen, cases/provenance/override, audit/fairness, citizens governance, signed evidence) + JWT/RBAC.
+- Measure `total_latency_ms` on `/api/screen` (sub-2.5s aspirational with added local inference).
 
 ### Phase 4: Integration Testing & SIH Presets
 - Update `tests/test_pipeline.py` to cover:
@@ -275,14 +277,16 @@ To transition from local development to a production-ready environment, the foll
   - Set the Build Command: `pip install -r requirements.txt` (or equivalent).
   - Set the Start Command: `uvicorn backend.app:app --host 0.0.0.0 --port $PORT`
 - **Environment Variables:** Define the following secrets in the Render dashboard:
-  - `DATABASE_URL` (from Supabase)
-  - `JWT_SECRET` (generate a strong secret)
-  - `GEMINI_API_KEY` (if using cloud AI features)
-- **CORS Configuration:** Update `backend/app.py` CORS middleware to explicitly allow the production Vercel frontend URL.
+  - `DATABASE_URL` (from Supabase; empty = SQLite fallback)
+  - `JWT_SECRET` (≥32 chars; production refuses default/short), `JWT_EXPIRY_HOURS=8`, `MFA_TOKEN_MINUTES=5`
+  - `GEMINI_API_KEY` (empty = simulated scanner) + `GEMINI_MODEL=gemini-3.6-flash`
+  - `APP_ENV=production`, `BOOTSTRAP_ADMIN_USER/PASS/UNIT` (only prod account), `REGISTRY_IMPORT_SECRET` (or falls back to JWT_SECRET with warning)
+  - `LOGIN|MFA_RATE_LIMIT_MAX_ATTEMPTS/WINDOW_SECONDS`, `DB_ECHO/POOL_SIZE/MAX_OVERFLOW`, `SCREEN_EVIDENCE_DIR`
+- **CORS Configuration:** Update `backend/app.py` allowlist (currently 5173/8000 + `sih-weld-psi.vercel.app` + `netraksha.xyz`) — no wildcard.
 
 ### 6.3 Frontend Deployment (Vercel)
 - **Configuration:** Link the Vercel project to the `frontend/` directory in the repository.
 - **Build Settings:** Ensure the build command (`npm run build`) and output directory (`dist` or `build`) are configured correctly for the framework in use (e.g., Vite).
-- **Environment Variables:** 
-  - Set the API base URL (e.g., `VITE_API_URL` or `REACT_APP_API_URL`) to point to the live Render backend URL (e.g., `https://my-backend.onrender.com`).
+- **Environment Variables:**
+  - Set `VITE_API_BASE_URL=https://<render-backend>/api` (must end with `/api`; DEV and `:8000` use same-origin `/api` via proxy) and `VITE_SITE_URL=https://<custom-domain>` (single source for canonical/sitemap/robots/llms.txt).
 - **Routing:** If using a Single Page Application (SPA), ensure proper rewrite rules are configured (e.g., a `vercel.json` file to redirect all requests to `index.html`).

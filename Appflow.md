@@ -1,9 +1,9 @@
 # App Flow
 ## Python Rule-Based Fake Identity & Document Screening System — MVP
 
-Scope note: this describes the flow for the MVP build only (single checkpoint, single process, per `Prd.md` / `Techspec.md`). Production-scale flow (multi-checkpoint, WebSocket push, Kafka-driven async stages) is in the source architecture PDF, Section 4, and is out of scope here.
+Scope note: this describes the flow for the MVP build only (single checkpoint, single process, per `PRD.md` / `Techspec.md`). Production-scale flow (multi-checkpoint, WebSocket push, Kafka-driven async stages) is in the source architecture PDF, Section 4, and is out of scope here.
 
-Auth note: per confirmed requirement, the MVP now uses **real login** (not the mock login `Prd.md` originally floated), so a login screen and session handling are in scope below.
+Auth note: the MVP uses **real login** (bcrypt + JWT + supervisor TOTP + forced rotation), not a mock. Throttling (429), step-up tokens, and 403 rotation/MFA gates are part of every flow below.
 
 ---
 
@@ -11,112 +11,104 @@ Auth note: per confirmed requirement, the MVP now uses **real login** (not the m
 
 | Actor | What they do in the MVP |
 |---|---|
-| **Officer** (primary persona) | Logs in, captures/uploads a document + live face, reviews the rule-based verdict and per-module evidence, records the final decision (clear / deny / escalate) |
-| **Supervisor/Auditor** (secondary persona) | Logs in, reviews case history and the audit trail; does not perform screenings |
+| **Officer** (primary persona) | Logs in (rotates password if forced), captures document + 14-frame face burst, reviews verdict + evidence, records `clear`/`escalate` (cannot `deny`) on own cases |
+| **Supervisor** (secondary) | Same login + TOTP enrollment; reviews own-unit cases; runs controlled enrollment (create/approve four-eyes, HMAC imports, reconciliation, orphan cleanup); can `clear`/`deny`/`escalate` |
+| **Auditor** (secondary) | Read-only: all cases + `GET /api/audit` + verify + access-review + fairness; cannot screen or override |
 | **SIH evaluators** (demo audience) | Watch the officer flow live; the UI must surface reasoning, not just a verdict |
 
-Both officer and supervisor share the same login screen; role determines which views/actions are available (see Design.md for role-gated UI, Shema.md for the roles column).
+Role determines views/actions (see `frontend/src/components/Sidebar.jsx`, `Schema.md` `officers.role/unit`).
 
 ---
 
 ### 2. High-level flow
 
 ```
-Login
+Login (username/password → JWT or mfa_token → TOTP → session; 403 if rotation/MFA pending)
   │
   ▼
-Dashboard (case list)
+Dashboard / Cases (GET /cases, role-scoped: officer=own, supervisor=unit, auditor=all)
   │
-  ├──► New Screening ──► Capture (doc image + live face burst) ──► POST /screen
+  ├──► New Screening (Scanner: doc webcam + face burst) ──► POST /api/screen (+ Idempotency-Key)
   │                                                                     │
   │                                                                     ▼
-  │                                                         Pipeline runs synchronously:
-  │                                                         OCR/MRZ → Tamper → Deepfake →
-  │                                                         3-Way AI Face Verification (Gemini: Live vs Doc vs DB) →
-  │                                                         Liveness (MediaPipe) → Watchlist →
-  │                                                         Risk Engine (Green/Yellow/Red)
+  │                                                         Sequential OCR pre-pass (registry hint)
+  │                                                         → parallel tamper/physical/deepfake/
+  │                                                           local 3-way + Gemini/liveness/watchlist
+  │                                                         → demographic reconcile → Risk Engine
   │                                                                     │
   │                                                                     ▼
-  │                                                            Case Result screen
+  │                                                            Case Result (/case/:id)
   │                                                            (verdict + per-module evidence)
   │                                                                     │
   │                                                 ┌───────────────────┴───────────────────┐
   │                                                 ▼                                       ▼
-  │                                        Green: officer can              Yellow/Red: officer MUST review
-  │                                        auto-clear or still                 evidence and record a decision
-  │                                        override manually                  (never an automatic denial)
-  │                                                 │                                       │
-  │                                                 └───────────────► POST /cases/{id}/override
-  │                                                                             │
-  │                                                                             ▼
-  │                                                                 Written to audit log
+  │                                        Green: officer can              Yellow/Red: stays
+  │                                        clear or escalate               pending_review/escalated
+  │                                        (never auto-denied)             until officer action
+  │                                                 │                       (officer: clear/escalate;
+  │                                                 └───────────────► POST /cases/{id}/override + reason
+  │                                                                             │  (auditor blocked;
+  │                                                                             ▼   version-checked)
+  │                                                                 Written to hash-chained audit log
   │
-  └──► Case History (GET /cases) ──► Case Detail (GET /cases/{id}) ──► Audit Trail (GET /audit)
+  ├──► Case Detail (GET /cases/{id} + /provenance) — read-only history + decision
+  ├──► Registry governance (supervisor): enroll → approve/reject, HMAC import, reconcile, orphan cleanup
+  └──► Audit Trail (auditor-only GET /audit + verify + access-review) + Fairness report
 ```
 
 ---
 
 ### 3. Screen-by-screen
 
-**3.1 Login**
-- Username/password (real auth — see Shema.md `officers` table).
-- On success, role (officer / supervisor / auditor) is attached to the session and drives what's visible next.
-- Failed login: generic error, no user enumeration.
+**3.1 Login (`/login`)**
+- Username/password → `POST /auth/login`. Unknown users dummy-verified (generic error, no enumeration); throttled (429).
+- Supervisor with TOTP gets `mfa_required` + `mfa_token` and completes `POST /auth/mfa/challenge` (6-digit, drift hint on failure).
+- `must_change_password` or unenrolled-supervisor accounts get 403 (`PASSWORD_CHANGE_REQUIRED` / `MFA_SETUP_REQUIRED`) and are routed to `/change-password` (`SecurityGate`) for rotation + TOTP setup/verify.
+- On success, `token/role/username` in `localStorage`; 401 (non-step-up) wipes session → `/login`.
 
-**3.2 Dashboard / Case List**
-- Table of recent cases: timestamp, traveler/doc reference, verdict (color-coded Green/Yellow/Red), officer, status.
-- Backed by `GET /cases`.
-- Officer role sees a "New Screening" action; supervisor/auditor role does not.
+**3.2 Dashboard / Case List (`/`)**
+- Table: Case ID | Timestamp | DocType | Verdict badge | Status | Action (row → `/case/:id`). Backed by `GET /cases`. Client search is by `#id/doctype` only (no server verdict/date filter in UI).
+- Roles: officer+supervisor see Scanner; supervisor+auditor see Audit (officers cannot view audit; auditors cannot scan).
 
-**3.3 New Screening — Capture**
-- Inputs:
-  - **Document Capture:** File upload / scanner feed (PNG, JPG, PDF) or preset specimens. The system instantly runs Python rule-based scanning to identify document type (Aadhaar Card, PAN Card, Voter ID, Passport).
-  - **Live Face Capture:** Webcam frame burst (12 frames over 1.5s for dynamic liveness + high-res still for 3-way face verification).
-  - **Database Cross-Reference:** Optional citizen selector or automatic lookup by extracted document number against the `citizens_registry`.
-- Client-side validation only (file present, image readable) — all AI/OCR processing runs server-side.
-- Submit → `POST /screen` (synchronous pipeline execution).
-- Loading state reflects sequential execution stages: Document Classification ➔ OCR Extraction ➔ Database Reconciliation ➔ Tamper ➔ Deepfake ➔ 3-Way Face Verification ➔ Liveness ➔ Watchlist ➔ Risk Engine.
+**3.3 New Screening — Capture (`/scan`)**
+- Inputs (webcam-only, no file upload/PDF input in UI):
+  - **Document Capture:** `WebcamCapture(facingMode=environment)` still.
+  - **Live Face Capture:** `WebcamCapture` burst — 14 frames × 150ms (~2.1s after 650ms delay); middle frame sent as `live_capture`, all as `live_frames[]`.
+  - No registry citizen selector — lookup is automatic by OCR document-number hint.
+- `Idempotency-Key` UUID minted per intent (regenerated when inputs change; sent as header + form fallback). In-flight 409 keeps the key; idempotency-mismatch 422 mints a fresh key.
+- Submit → `POST /api/screen` (sequential OCR pre-pass + parallel forensic fan-out + random `challenge_type`). Button shows `Processing...` only (no per-stage telemetry).
 
-**3.4 Case Result**
-- Verdict banner: Green / Yellow / Red, per Risk Engine output.
-- **Document Identification Badge:** Displays detected document type (e.g., `AADHAAR (UIDAI)`, `PAN CARD (INCOME TAX)`, `VOTER ID (ECI)`, `PASSPORT (REPUBLIC OF INDIA)`) with classification confidence.
-- **Demographic Database Reconciliation Panel (Core Explainability):**
-  - Side-by-side comparison table showing:
-    - `Field Name`: Full Name, Date of Birth, Gender, Document ID, Address / Father's Name.
-    - `Extracted Value (from Document)`: Value parsed via OCR.
-    - `Database Record (from Registry)`: Value retrieved from official `citizens_registry`.
-    - `Parity Status`: Green check for exact/fuzzy match, Red alert for discrepancies (e.g., altered DOB or forged name).
+**3.4 Case Result (`/case/:id`)**
+- Fetches `GET /cases/:id` + `GET /cases/:id/provenance`. Verdict banner: Green / Yellow / Red.
+- **Document Header:** type badge (no confidence % in UI) + extracted Document ID (Aadhaar masking `XXXX-XXXX-1234` is spec'd but not implemented — raw values render; see gap).
+- **Demographic Reconciliation Panel:** Attribute | Document Extracted | Registry Record | Status (`MATCH`/`MISMATCH`/`UNVERIFIED`; NULL database values when no DB record).
 - **Per-Module Forensic Panels:**
-  - **Tamper Detection:** Tamper score + interactive ELA heatmap residual overlay image.
-  - **Deepfake Detection:** Deepfake score & FFT frequency anomaly metrics.
-  - **Face Verification (3-Way Multimodal AI):**
-    - 3-image visual panel: (1) Cropped Document Photo, (2) Live Webcam Still, (3) Database Registered Record.
-    - Pairwise verification chips:
-      - Live vs. Document Photo: Validates traveler matches the physical card.
-      - Document vs. Database Record: Detects forged/substituted credential photos.
-      - Live vs. Database Record: Confirms traveler against the official government registry.
-    - Detailed forensic visual reasoning generated by Gemini (jawline, ear contours, eye spacing, aging markers).
-  - **Liveness Detection:** Liveness score + live/spoof boolean + blink count & EAR swing graph.
-  - **Watchlist Lookup:** Hit boolean, lookout circular category, issuing agency — **must show a "MOCKED DATA" label** (Prd.md §6/7).
-- Decision panel: officer selects clear / deny / escalate + free-text reason → `POST /cases/{id}/override`. This step is **mandatory for Yellow/Red**, optional (but always available) for Green — the system can flag, only a human denies (Prd.md §3, source PDF §7 "Human-in-the-loop guarantee").
+  - **Tamper:** score + signed-URL ELA overlay.
+  - **Physical forgery:** score + zone overlay (MRZ + PHOTO boxes).
+  - **Deepfake:** FFT metrics + anomaly indicator.
+  - **Face Verification (hybrid 3-way):** pair chips Live-vs-Doc (primary, local) + Doc-vs-DB + Live-vs-DB; Gemini reasoning callout; simulated cloud shows amber `DEMO ONLY — Simulated AI Excluded` (violet `MOCKED DATA` badge still TODO).
+  - **Quality/security zones:** numeric gates (EAR `swing.toFixed(4)`, blur/brightness, zone images where present).
+  - **Liveness:** Live/Spoof + blinks + challenge type.
+  - **Watchlist:** `HIT`/`CLEAR` chips when not mocked; mocked shows slate notice (violet badge TODO).
+- Decision panel: `clear`/`deny`/`escalate` + reason (≥3 chars) → `POST /cases/{id}/override` (+ `If-Match: version`). Rules enforced in UI and API: auditor read-only, officer `deny` disabled (must escalate), `escalated` supervisor-only, 409 on decided/version mismatch. Yellow/Red are never auto-denied; they persist until actioned.
 
 **3.5 Case Detail (history view)**
 - Same layout as Case Result, read-only, reached via `GET /cases/{id}` from the case list.
-- Shows the officer's recorded decision + reason alongside the rule-based verdict.
+- Shows the officer's recorded decision + reason alongside the verdict, plus provenance block (`verified`, signature, reason).
 
-**3.6 Audit Trail**
-- Read-only list, `GET /audit`: every automated verdict and every officer decision/override, with timestamp and actor.
-- Supervisor/auditor primary screen; officer can view but not edit.
+**3.6 Audit Trail (`/audit`, auditor-only)**
+- Read-only list, `GET /audit?limit&offset&actor&entity`: actor, action, entity, timestamp. `GET /audit/verify` chain check; `GET /audit/access-review` registry-access aggregates.
+- Officers cannot view audit (403); supervisors can only verify, not list. Auditors can read but not modify.
+
+**3.7 Registry governance (supervisor flows, no dedicated UI docs yet)**
+- Enroll (`POST /api/citizens` with photo ≤5MB, checksum-validated) → approve/reject by a different supervisor → live row or secure-delete.
+- Authority import (`POST /api/citizens/import` with `X-Import-Signature` HMAC), reconciliation report/run, orphan check/cleanup.
 
 ---
 
 ### 4. Error / degraded-state flow
 
 Per Techspec §5: any single module failing must not crash the pipeline.
-- If a module fails, its panel on the Case Result screen shows **"Inconclusive"** instead of a score, and the case is forced to at least Yellow.
-- This should be visually distinct from a genuine Yellow/Red flag (e.g. a module-level "inconclusive" tag vs. a risk-level color) so the officer isn't misled about *why* the case needs review.
-
----
-
-### 5. Open items affecting this flow
-See Tracker.md for the live list. The one directly affecting screens above: exact deepfake model choice may change what confidence/metadata the Deepfake panel can display (some models expose more explainability than others).
+- If a module fails, its panel shows **"Inconclusive"** (or "unavailable…not displayed" for simulated pairs) instead of a score, and the case is forced to at least Yellow.
+- This is visually distinct from a genuine Yellow/Red flag (module-level "inconclusive" tag vs. risk-level color) so the officer isn't misled about *why* the case needs review.
+- Transport errors: 409 = same key in progress (wait, don't mint a new key); 422 idempotency = mint a fresh key and retry; pipeline exceptions release the claim so same-key retry proceeds.
