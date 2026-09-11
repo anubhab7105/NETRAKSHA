@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Shield, Lock, Loader2, KeyRound, Smartphone } from 'lucide-react';
-import api from '../api';
+import api, { apiErrorMessage } from '../api';
 import SEO from '../components/SEO';
 
 const inputCls = "w-full bg-black/20 border border-slate-700/50 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all";
@@ -51,7 +51,7 @@ export default function SecuritySetup() {
       setConfirmPw('');
       maybeDone(true, false);
     } catch (err) {
-      setPwErr(err.response?.data?.detail || 'Password change failed.');
+      setPwErr(apiErrorMessage(err, 'Password change failed.'));
     } finally {
       setPwLoading(false);
     }
@@ -66,7 +66,7 @@ export default function SecuritySetup() {
       setMfaKey(res.data.manual_key);
       setMfaUri(res.data.otpauth_uri);
     } catch (err) {
-      setMfaErr(err.response?.data?.detail || 'Could not start MFA enrollment.');
+      setMfaErr(apiErrorMessage(err, 'Could not start MFA enrollment.'));
     } finally {
       setMfaLoading(false);
     }
@@ -84,7 +84,7 @@ export default function SecuritySetup() {
       setMfaCode('');
       maybeDone(false, true);
     } catch (err) {
-      setMfaErr(err.response?.data?.detail || 'MFA verification failed.');
+      setMfaErr(apiErrorMessage(err, 'MFA verification failed.'));
     } finally {
       setMfaLoading(false);
     }

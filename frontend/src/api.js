@@ -69,3 +69,27 @@ api.interceptors.response.use(
 );
 
 export default api;
+
+/** Human-readable message from an API failure. Never returns an object —
+ *  FastAPI 422 bodies carry detail as an ARRAY, which would otherwise either
+ *  render blank or crash React. Includes the HTTP status so field errors
+ *  (400/401/422/429) are distinguishable from transport failures. */
+export function apiErrorMessage(err, fallback = 'Request failed.') {
+  const status = err?.response?.status;
+  const data = err?.response?.data;
+  let detail = data?.detail;
+  if (Array.isArray(detail)) {
+    detail = detail
+      .map((d) => (typeof d === 'string' ? d : d?.msg || JSON.stringify(d)))
+      .join('; ');
+  } else if (detail && typeof detail === 'object') {
+    try {
+      detail = JSON.stringify(detail);
+    } catch {
+      detail = '';
+    }
+  }
+  if (detail) return status ? `HTTP ${status}: ${detail}` : String(detail);
+  if (err?.request && !err?.response) return 'No response from server. Check your connection and retry.';
+  return fallback;
+}

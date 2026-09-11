@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Shield, Lock, User, Loader2 } from 'lucide-react';
-import api from '../api';
+import api, { apiErrorMessage } from '../api';
 import SEO from '../components/SEO';
 
 export default function Login() {
@@ -42,7 +42,7 @@ export default function Login() {
       const status = err.response?.status;
       setError(status === 429
         ? (err.response?.data?.detail || 'Too many attempts. Please wait and retry.')
-        : (err.response?.data?.detail || 'Login failed. Please check credentials.'));
+        : apiErrorMessage(err, 'Login failed. Please check credentials.'));
     } finally {
       setLoading(false);
     }
@@ -58,7 +58,7 @@ export default function Login() {
       setMfaCode('');
       storeSession(res.data);
     } catch (err) {
-      setError(err.response?.data?.detail || 'MFA verification failed.');
+      setError(apiErrorMessage(err, 'MFA verification failed.'));
     } finally {
       setLoading(false);
     }

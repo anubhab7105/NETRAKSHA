@@ -299,9 +299,12 @@ async def ensure_sequences() -> dict:
             if len(pk) != 1 or pk[0].name != "id":
                 continue
             try:
+                # 3-arg form (is_called=false): safe on EMPTY tables too —
+                # next nextval() returns exactly max(id)+1 (or 1 when empty).
+                # The 2-arg form errors on empty tables (setval 0 out of bounds).
                 res = await conn.execute(_text(
                     "SELECT setval(pg_get_serial_sequence(:t, 'id'), "
-                    "(SELECT COALESCE(max(id), 0) FROM " + table.name + "))"))
+                    "(SELECT COALESCE(max(id), 0) FROM " + table.name + ") + 1, false"))
                 row = res.fetchone()
                 if row:
                     fixed[table.name] = int(row[0])
