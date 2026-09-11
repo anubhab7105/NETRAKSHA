@@ -163,10 +163,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount static evidence directory
+# Evidence directory (no longer publicly mounted — served via authenticated endpoints below)
 _EVIDENCE_DIR = _PROJECT_ROOT / "samples" / "evidence"
 _EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
-app.mount("/evidence", StaticFiles(directory=str(_EVIDENCE_DIR)), name="evidence")
 
 # Frontend build directory (served statically via the SPA fallback route)
 _FRONTEND_DIR = _PROJECT_ROOT / "frontend" / "dist"
@@ -1425,6 +1424,136 @@ async def delete_citizen(citizen_id: int, request: Request):
 
 
 # ---------------------------------------------------------------------------
+# 9. Evidence files — authenticated + expiring links (no public /evidence)
+# ---------------------------------------------------------------------------
+
+def _evidence_token_for(filename: str, officer_id: int, expires_in: int = 300) -> str:
+    """Create a short-lived signed token for an evidence file."""
+    if _HAS_PYJWT:
+        payload = {
+            "sub": str(officer_id),
+            "filename": filename,
+            "exp": datetime.now(timezone.utc) + timedelta(seconds=expires_in),
+            "iat": datetime.now(timezone.utc),
+            "type": "evidence",
+        }
+        return pyjwt.encode(payload, _JWT_SECRET, algorithm=_JWT_ALGORITHM)
+    else:
+        import base64
+        payload = json.dumps({
+            "sub": str(officer_id),
+            "filename": filename,
+            "exp": (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).timestamp(),
+        })
+        return base64.b64encode(payload.encode()).decode()
+
+def _verify_evidence_token(token: str) -> dict:
+    """Verify an evidence token and return its payload."""
+    if _HAS_PYJWT:
+        try:
+            payload = pyjwt.decode(token, _JWT_SECRET, algorithms=[_JWT_ALGORITHM])
+            if payload.get("type") != "evidence":
+                raise HTTPException(status_code=403, detail="Invalid evidence token type")
+            return payload
+        except pyjwt.ExpiredSignatureError:
+            raise HTTPException(status_code=403, detail="Evidence link expired")
+        except pyjwt.InvalidTokenError as e:
+            raise HTTPException(status_code=403, detail=f"Invalid evidence token: {e}")
+    else:
+        import base64
+        try:
+            payload = json.loads(base64.b64decode(token.encode()).decode())
+            if payload.get("exp", 0) < datetime.now(timezone.utc).timestamp():
+                raise HTTPException(status_code=403, detail="Evidence link expired")
+            return payload
+        except Exception as e:
+            raise HTTPException(status_code=403, detail=f"Invalid evidence token: {e}")
+
+
+async def _check_evidence_access(filename: str, officer: dict) -> None:
+    """Verify the officer has access to the case owning this evidence file."""
+    # Sanitize filename to prevent path traversal
+    safe_name = Path(filename).name
+    if safe_name != filename or "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    # Find which case(s) own this evidence file
+    async with async_session() as session:
+        result = await session.execute(
+            select(ModuleResultDB).where(ModuleResultDB.evidence_uri.contains(safe_name))
+        )
+        modules = result.scalars().all()
+        if not modules:
+            raise HTTPException(status_code=404, detail="Evidence file not found")
+        # Check if officer has access to at least one owning case
+        for mod in modules:
+            case_res = await session.execute(select(ScreeningCase).where(ScreeningCase.id == mod.case_id))
+            case = case_res.scalar_one_or_none()
+            if not case:
+                continue
+            role = officer.get("role", "officer")
+            officer_id = int(officer.get("sub", 0))
+            officer_unit = officer.get("unit") or "BORDER_UNIT_1"
+            if role == "auditor":
+                return  # auditor can access all
+            if role == "officer" and case.officer_id == officer_id:
+                return
+            if role == "supervisor" and (not case.unit or case.unit == officer_unit):
+                return
+        raise HTTPException(status_code=403, detail="Access denied: no permission for this evidence file")
+
+
+@app.get("/api/evidence/view")
+async def view_evidence_by_token(token: str = Query(...)):
+    """Serve an evidence file via a short-lived signed token (no auth header needed)."""
+    payload = _verify_evidence_token(token)
+    filename = payload.get("filename")
+    if not filename:
+        raise HTTPException(status_code=400, detail="Token missing filename")
+    safe_name = Path(filename).name
+    file_path = (_EVIDENCE_DIR / safe_name).resolve()
+    if _EVIDENCE_DIR.resolve() not in file_path.parents and file_path != _EVIDENCE_DIR.resolve():
+        if file_path.parent.resolve() != _EVIDENCE_DIR.resolve():
+            raise HTTPException(status_code=403, detail="Access denied")
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Evidence file not found")
+    # Also verify the officer still has access (optional but good for revocation)
+    # For expiring links we skip the ownership check and rely on token expiry and signature;
+    # the token was already verified to be issued to someone with access at issuance time.
+    from fastapi.responses import FileResponse
+    return FileResponse(str(file_path), media_type="image/png", headers={"Cache-Control": "no-store, max-age=0"})
+
+
+@app.get("/api/evidence/token/{filename}")
+async def get_evidence_token(filename: str, request: Request, expires_in: int = Query(300, ge=30, le=3600)):
+    """Generate a short-lived signed URL token for an evidence file."""
+    officer = await _auth(request)
+    await _check_evidence_access(filename, officer)
+    token = _evidence_token_for(Path(filename).name, int(officer["sub"]), expires_in)
+    return {
+        "filename": Path(filename).name,
+        "token": token,
+        "expires_in": expires_in,
+        "url": f"/api/evidence/view?token={token}",
+    }
+
+
+@app.get("/api/evidence/{filename}")
+async def get_evidence_file(filename: str, request: Request):
+    """Serve an evidence file — requires authentication and case ownership."""
+    officer = await _auth(request)
+    await _check_evidence_access(filename, officer)
+    safe_name = Path(filename).name
+    file_path = (_EVIDENCE_DIR / safe_name).resolve()
+    if _EVIDENCE_DIR.resolve() not in file_path.parents and file_path != _EVIDENCE_DIR.resolve():
+        if file_path.parent.resolve() != _EVIDENCE_DIR.resolve():
+            raise HTTPException(status_code=403, detail="Access denied: path traversal")
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Evidence file not found on disk")
+    from fastapi.responses import FileResponse
+    return FileResponse(str(file_path), media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
+# ---------------------------------------------------------------------------
 # Health check
 # ---------------------------------------------------------------------------
 
@@ -1438,6 +1567,12 @@ async def health():
         "version": "0.1.0",
         "database": get_engine_info(),
     }
+
+@app.get("/evidence/{path:path}")
+async def block_public_evidence(path: str):
+    """Block the old public /evidence URL — evidence is now via authenticated /api/evidence."""
+    raise HTTPException(status_code=404, detail="Evidence files are now served via authenticated /api/evidence endpoints — please use the case report view")
+
 
 # ---------------------------------------------------------------------------
 # SPA Fallback (Must be at the very bottom)

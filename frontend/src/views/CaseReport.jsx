@@ -55,6 +55,39 @@ const StatusBadge = ({ status, score }) => {
   return <span className="text-xs px-2 py-0.5 bg-success/10 text-success rounded border border-success/30">OK</span>;
 };
 
+/** Authenticated evidence image — fetches a short-lived signed URL */
+const EvidenceImage = ({ evidenceUri, alt }) => {
+  const [src, setSrc] = useState(null);
+  const [error, setError] = useState(false);
+  useEffect(() => {
+    if (!evidenceUri) return;
+    const filename = evidenceUri.split('/').pop();
+    let cancelled = false;
+    const fetchToken = async () => {
+      try {
+        const res = await api.get(`/evidence/token/${encodeURIComponent(filename)}`);
+        if (!cancelled && res.data?.token) {
+          setSrc(`/api/evidence/view?token=${encodeURIComponent(res.data.token)}`);
+        }
+      } catch {
+        if (!cancelled) setError(true);
+      }
+    };
+    fetchToken();
+    return () => { cancelled = true; };
+  }, [evidenceUri]);
+  if (error) return <p className="text-sm text-slate-500">Evidence unavailable (access denied or expired).</p>;
+  if (!src) return <div className="bg-black/20 rounded-lg p-8 flex items-center justify-center text-slate-500"><Loader2 size={24} className="animate-spin" /></div>;
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className="w-full h-auto object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+      onError={() => setError(true)}
+    />
+  );
+};
+
 export default function CaseReport() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -297,11 +330,9 @@ export default function CaseReport() {
             </div>
             {tamperModule?.evidence_uri ? (
               <div className="relative rounded-lg overflow-hidden border border-slate-700 group">
-                <img
-                  src={`${(import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api').replace('/api', '')}/evidence/${tamperModule.evidence_uri.split('/').pop()}`}
+                <EvidenceImage
+                  evidenceUri={tamperModule.evidence_uri}
                   alt="Error Level Analysis heatmap overlay highlighting suspected tampered regions of the submitted identity document"
-                  className="w-full h-auto object-cover opacity-80 group-hover:opacity-100 transition-opacity"
-                  onError={(e) => { e.target.style.display = 'none'; }}
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none flex items-end p-4">
                    <p className="text-xs text-white">ELA Heatmap Overlay</p>
