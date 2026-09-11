@@ -530,7 +530,18 @@ async def _run_screening_pipeline(
             ),
             None,
         )
-        doc_type = ocr_type or "unknown"
+        # Visible-field OCR often misses the type; fall back to MRZ document_type
+        if not ocr_type:
+            mrz_type = (ocr_result.raw_output or {}).get("mrz", {}).get("fields", {}).get("document_type")
+            if mrz_type:
+                mt = str(mrz_type).strip().upper()
+                if mt == "P":
+                    ocr_type = "passport"
+                elif mt.lower() in ("aadhaar", "pan", "voter_id", "passport"):
+                    ocr_type = mt.lower()
+                else:
+                    ocr_type = mt.lower()
+        doc_type = (ocr_type or "unknown").strip().lower()
 
     face_is_real_via_local = False
     # No live capture → face verification is impossible, not "mismatched".
