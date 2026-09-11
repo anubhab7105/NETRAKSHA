@@ -1177,8 +1177,10 @@ async def list_audit(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
-    """View the append-only audit trail."""
-    await _auth(request)  # audit P1 §2: require auth
+    """View the append-only audit trail — auditor role only (least-privilege)."""
+    officer = await _auth(request)
+    if officer.get("role") not in ("auditor", "supervisor"):
+        raise HTTPException(status_code=403, detail="Access denied: auditor role required to view audit logs")
 
     async with async_session() as session:
         query = select(AuditLog).order_by(AuditLog.timestamp.desc())
