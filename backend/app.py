@@ -682,6 +682,22 @@ async def _run_screening_pipeline(
     liveness_live = liveness_raw.get("live")
     liveness_score_val = liveness_raw.get("liveness_score")
 
+    # Simulated Gemini outputs must NEVER influence the risk score — a fake
+    # face mismatch or tamper flag in demo/offline mode would trigger a
+    # real Yellow/Red on a genuine traveler. Null them out for scoring and
+    # mark the case as demo-only (labelled in the response + audit).
+    is_demo_case = bool(is_simulated)
+    if is_demo_case:
+        face_sim = None
+        face_match_bool = None
+        face_status_for_risk = "inconclusive"
+        gemini_face_for_risk = None
+        gemini_tamper_for_risk = None
+    else:
+        face_status_for_risk = "ok" if face_sim is not None else "inconclusive"
+        gemini_face_for_risk = face_match_data
+        gemini_tamper_for_risk = photo_tamper
+
     risk = assess_risk(
         demographic_result=demographic_result,
         tamper_score=tamper_result.score if tamper_result.status == "ok" else None,
@@ -690,15 +706,26 @@ async def _run_screening_pipeline(
         deepfake_status=deepfake_result.status,
         face_similarity=face_sim,
         face_match=face_match_bool,
-        face_status="ok" if face_sim is not None else "inconclusive",
+        face_status=face_status_for_risk,
         liveness_live=liveness_live,
         liveness_score=liveness_score_val,
         liveness_status=liveness_result.status,
         watchlist_hit=watchlist_result.is_hit,
         watchlist_result=watchlist_result.to_dict(),
-        gemini_face_match=face_match_data,
-        gemini_photo_tamper=photo_tamper,
+        gemini_face_match=gemini_face_for_risk,
+        gemini_photo_tamper=gemini_tamper_for_risk,
     )
+    # Demo cases: force at least Yellow (needs human review) and tag the
+    # assessment so the UI can show a prominent "DEMO ONLY" banner.
+    if is_demo_case:
+        if risk.verdict == "Green":
+            risk.verdict = "Yellow"
+            if "DEMO_MODE_SIMULATED_DATA" not in risk.flags:
+                risk.flags.append("DEMO_MODE_SIMULATED_DATA")
+            risk.recommendations.append(
+                "Demo mode: Gemini AI was offline, so face/tamper AI results were simulated and excluded from scoring. "
+                "Manual officer review required — this verdict is DEMO ONLY."
+            )
 
     # ------------------------------------------------------------------
     # Step 5: Persist to database
