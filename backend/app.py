@@ -127,6 +127,78 @@ def _decode_token(token: str) -> dict:
             raise HTTPException(status_code=401, detail="Invalid token")
 
 
+def collect_provenance(file_hashes: Optional[dict] = None, extra: Optional[dict] = None) -> tuple[dict, str]:
+    """Collect immutable provenance for a screening decision and sign it.
+
+    Returns (provenance_dict, signature).
+    Provenance includes: code version, model versions/thresholds, dependency versions,
+    input checksums, and config. Signed with HMAC-SHA256 using JWT secret.
+    """
+    import hashlib as _hashlib
+    import hmac as _hmac
+    # Code version
+    try:
+        import subprocess as _sp
+        git_commit = _sp.check_output(["git", "rev-parse", "HEAD"], cwd=str(_PROJECT_ROOT), text=True).strip()[:12]
+    except Exception:
+        git_commit = "unknown"
+    # Model / threshold versions
+    try:
+        from pipeline.face_match import MATCH_THRESHOLD as _face_thr
+    except Exception:
+        _face_thr = 0.55
+    try:
+        from pipeline.tamper import COPY_FLOOR as _copy_floor, COPY_SAT as _copy_sat  # type: ignore
+    except Exception:
+        _copy_floor, _copy_sat = 10, 90
+    # Dependency versions
+    deps = {}
+    for pkg in ["opencv-python-headless", "insightface", "mediapipe", "numpy", "onnxruntime", "fastapi", "sqlalchemy"]:
+        try:
+            import importlib.metadata as _im
+            deps[pkg] = _im.version(pkg)
+        except Exception:
+            try:
+                import pkg_resources as _pr  # type: ignore
+                deps[pkg] = _pr.get_distribution(pkg).version
+            except Exception:
+                deps[pkg] = "unknown"
+    prov = {
+        "code_version": git_commit,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "models": {
+            "face_match": {"name": "insightface/buffalo_l", "threshold": _face_thr, "providers": "CPUExecutionProvider"},
+            "liveness": {"name": "mediapipe/face_landmarker", "model": "face_landmarker.task"},
+            "tamper": {"ela_threshold": 8.0, "copy_floor": _copy_floor, "copy_sat": _copy_sat},
+            "deepfake": {"method": "fft_frequency_artifact_heuristic"},
+            "gemini": {"model": os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")},
+            "risk_engine": {"version": "1.0", "rules": "Green<0.35<Yellow<0.65<Red"},
+        },
+        "thresholds": {
+            "face_match": _face_thr,
+            "tamper_high": 0.7,
+            "tamper_moderate": 0.4,
+            "deepfake_high": 0.7,
+            "liveness": 0.45,
+        },
+        "dependencies": deps,
+        "config": {
+            "demo_mode": _DEMO_MODE,
+            "jwt_expiry_hours": _JWT_EXPIRY_HOURS,
+        },
+        "input_hashes": file_hashes or {},
+    }
+    if extra:
+        prov.update(extra)
+    # Sign with HMAC-SHA256
+    try:
+        payload = json.dumps(prov, sort_keys=True).encode()
+        sig = _hmac.new(_JWT_SECRET.encode(), payload, _hashlib.sha256).hexdigest()
+    except Exception:
+        sig = ""
+    return prov, sig
+
+
 def _verify_password(plain: str, hashed: str) -> bool:
     """Verify a password against its hash.
 
