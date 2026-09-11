@@ -152,3 +152,99 @@ def test_auth_rejects_mfa_token_for_apis():
         assert getattr(e.value, "status_code", None) == 401
 
     asyncio.run(go())
+
+
+def test_utcnow_naive_is_naive():
+    import backend.app as app
+
+    now = app._utcnow_naive()
+    assert now.tzinfo is None
+
+
+def test_change_password_stores_postgres_safe_datetimes():
+    """Regression: tz-aware datetimes crash asyncpg (TIMESTAMP WITHOUT TIME
+    ZONE) with a 500 that browsers misreport as CORS. Every DateTime the
+    app writes must be naive UTC."""
+    import asyncio
+
+    import backend.app as app
+    from backend.models import Officer
+    from sqlalchemy import select
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+    async def go():
+        eng = create_async_engine("sqlite+aiosqlite:///:memory:")
+        async with eng.begin() as conn:
+            from backend.models import Base
+            await conn.run_sync(Base.metadata.create_all)
+        maker = async_sessionmaker(eng, class_=AsyncSession, expire_on_commit=False)
+        old = app.async_session
+        app.async_session = maker
+        try:
+            from passlib.context import CryptContext
+            ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+            async with maker() as s:
+                s.add(Officer(username="chg1", password_hash=ctx.hash("Old-Pass-2026!"),
+                              role="officer", unit="U1", must_change_password=True))
+                await s.commit()
+            login = await app.login(
+                app.LoginRequest(username="chg1", password="Old-Pass-2026!"),
+                _AnonReq())
+            assert login.must_change_password is True
+            await app.change_password(
+                app.ChangePasswordRequest(current_password="Old-Pass-2026!",
+                                          new_password="New-Pass-2026!"),
+                _AuthedReq(login.token))
+            async with maker() as s:
+                off = (await s.execute(
+                    select(Officer).where(Officer.username == "chg1"))).scalar_one()
+                assert off.must_change_password is False
+                assert off.password_changed_at is not None
+                assert off.password_changed_at.tzinfo is None
+            # New password verifies (rotation actually took effect).
+            login2 = await app.login(
+                app.LoginRequest(username="chg1", password="New-Pass-2026!"),
+                _AnonReq())
+            assert login2.token
+        finally:
+            app.async_session = old
+            await eng.dispose()
+
+    asyncio.run(go())
+
+
+class _AnonReq:
+    headers = {}
+    client = None
+
+
+class _AuthedReq:
+    def __init__(self, token):
+        self.headers = {"Authorization": f"Bearer {token}"}
+        self.client = None
+
+
+def test_unhandled_errors_stay_json():
+    """A crashing endpoint must still return JSON (via CORS middleware), so
+    browsers never again misreport a 500 as a CORS failure."""
+    import asyncio
+
+    import backend.app as app
+    from fastapi.responses import JSONResponse
+
+    async def go():
+        class _Req:
+            method = "POST"
+            url = type("U", (), {"path": "/api/auth/change-password"})()
+
+        resp = await app._unhandled_exception_handler(_Req(), RuntimeError("boom"))
+        assert isinstance(resp, JSONResponse)
+        assert resp.status_code == 500
+        import json
+        assert "detail" in json.loads(resp.body.decode())
+
+        http_resp = await app._unhandled_exception_handler(
+            _Req(), app.HTTPException(status_code=403, detail="NOPE"))
+        assert http_resp.status_code == 403
+
+    asyncio.run(go())

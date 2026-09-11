@@ -93,6 +93,18 @@ _LOGIN_LIMITER = rate_limit_from_env("LOGIN_RATE_LIMIT", 5, 300)
 _MFA_LIMITER = rate_limit_from_env("MFA_RATE_LIMIT", 5, 300)
 _MFA_TOKEN_MINUTES = int(os.environ.get("MFA_TOKEN_MINUTES", "5"))
 
+
+def _utcnow_naive() -> datetime:
+    """Naive UTC timestamp for DATABASE columns.
+
+    Postgres asyncpg rejects timezone-aware datetimes for TIMESTAMP WITHOUT
+    TIME ZONE (500s the request), while SQLite silently accepts them — so
+    only production explodes. All app-written DateTime columns must use this
+    (server_default columns are already naive). Never use
+    datetime.now(timezone.utc) for a model attribute.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 try:
     import jwt as pyjwt
     _HAS_PYJWT = True
@@ -268,6 +280,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    """Last-resort JSON 500 that still passes through CORSMiddleware.
+
+    Without this, an unhandled crash returns Starlette's bare 500 with NO
+    CORS headers, and cross-origin browsers misreport it as a CORS error —
+    hiding the real traceback from both the UI and the Render logs reader.
+    HTTPException subclasses keep their own status/detail (handled above us).
+    """
+    from fastapi.responses import JSONResponse
+
+    if isinstance(exc, HTTPException):
+        return JSONResponse(status_code=exc.status_code,
+                            content={"detail": exc.detail})
+    print(f"[unhandled] {request.method} {request.url.path}: "
+          f"{type(exc).__name__}: {exc}")
+    return JSONResponse(status_code=500, content={
+        "detail": "Internal server error. The incident has been logged — "
+                  "retry once, then contact support with the time.",
+    })
 
 # Evidence directory (no longer publicly mounted — served via authenticated endpoints below)
 _EVIDENCE_DIR = _PROJECT_ROOT / "samples" / "evidence"
@@ -586,7 +620,7 @@ async def change_password(req: ChangePasswordRequest, request: Request):
         off.password_hash = CryptContext(schemes=["bcrypt"], deprecated="auto").hash(req.new_password)
         off.must_change_password = False
         try:
-            off.password_changed_at = datetime.now(timezone.utc)
+            off.password_changed_at = _utcnow_naive()
         except Exception:
             pass
         session.add(AuditLog(
@@ -2823,7 +2857,7 @@ async def approve_enrollment(enrollment_id: int, request: Request):
             req.approved_by_id = approver_id
             req.approved_by = approver
             req.resulting_citizen_id = citizen.id
-            req.decided_at = datetime.now(timezone.utc)
+            req.decided_at = _utcnow_naive()
             session.add(AuditLog(actor=approver, action="enrollment_approved:create",
                                  entity=f"enrollment:{req.id}:citizen:{citizen.id}",
                                  officer_id=approver_id))
@@ -2859,7 +2893,7 @@ async def approve_enrollment(enrollment_id: int, request: Request):
             req.status = "approved"
             req.approved_by_id = approver_id
             req.approved_by = approver
-            req.decided_at = datetime.now(timezone.utc)
+            req.decided_at = _utcnow_naive()
             session.add(AuditLog(actor=approver, action="enrollment_approved:delete",
                                  entity=f"enrollment:{req.id}:citizen:{req.target_citizen_id}:{detail}",
                                  officer_id=approver_id))
@@ -2896,7 +2930,7 @@ async def reject_enrollment(enrollment_id: int, req_body: _ReviewNote, request: 
         req.approved_by_id = approver_id
         req.approved_by = approver
         req.review_note = note
-        req.decided_at = datetime.now(timezone.utc)
+        req.decided_at = _utcnow_naive()
         session.add(AuditLog(actor=approver, action=f"enrollment_rejected:{req.action}",
                              entity=f"enrollment:{req.id}", officer_id=approver_id))
         await session.commit()
@@ -3176,7 +3210,7 @@ async def reconciliation_run(request: Request):
     async with async_session() as session:
         result = await session.execute(select(CitizenRegistry).order_by(CitizenRegistry.id.asc()))
         citizens = result.scalars().all()
-        now = datetime.now(timezone.utc)
+        now = _utcnow_naive()
         n_ok, n_review = 0, 0
         for c in citizens:
             check = _reconcile_citizen_row(c, authority_by_key)
