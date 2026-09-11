@@ -120,10 +120,22 @@ export default function CaseReport() {
     setActionError('');
     setActionLoading(true);
     try {
-      await api.post(`/cases/${id}/override`, { action, reason });
+      await api.post(`/cases/${id}/override`, { action, reason, version: data?.case?.version }, {
+        headers: data?.case?.version != null ? { 'If-Match': String(data.case.version) } : {}
+      });
       navigate('/');
-    } catch {
-      setActionError('Failed to submit the decision. Check your connection and try again.');
+    } catch (err) {
+      const detail = err.response?.data?.detail || '';
+      const status = err.response?.status;
+      if (status === 409) {
+        setActionError(detail || 'This case was modified by another officer. Please refresh the page and try again.');
+      } else if (status === 403 && detail.toLowerCase().includes('supervisor')) {
+        setActionError(detail + ' — use Escalate instead.');
+      } else if (detail) {
+        setActionError(detail);
+      } else {
+        setActionError('Failed to submit the decision. Check your connection and try again.');
+      }
       setActionLoading(false);
     }
   };
@@ -506,60 +518,75 @@ export default function CaseReport() {
         )}
       </div>
 
-      {/* Officer Action */}
-      {c.status === 'pending_review' ? (
-        <div className="glass-panel mt-6 border-t-4 border-t-primary p-4 sm:p-6">
-          <h2 className="text-lg font-semibold text-white mb-4">Officer Adjudication</h2>
-          <div className="space-y-4">
-            <label htmlFor="adjudication-reason" className="block text-sm font-medium text-slate-300">
-              Decision justification <span className="text-slate-500">(required, minimum 3 characters)</span>
-            </label>
-            <textarea
-              id="adjudication-reason"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              className="w-full bg-black/20 border border-slate-700 rounded-lg p-4 text-white focus:outline-none focus:border-primary transition-colors text-sm min-h-[100px]"
-              placeholder="Record the grounds for this decision..."
-            />
-            {actionError && (
-              <div role="alert" className="bg-danger/10 border border-danger/50 text-danger rounded-lg p-3 text-sm">
-                {actionError}
+      {/* Officer Action — state machine: pending_review -> escalated -> decided; deny requires supervisor */}
+      {(() => {
+        const myRole = (localStorage.getItem('role') || 'officer').toLowerCase();
+        const isAuditor = myRole === 'auditor';
+        const isOfficer = myRole === 'officer';
+        const isSupervisor = myRole === 'supervisor';
+        if (c.status === 'decided') {
+          return (
+            <div className="glass-panel mt-6 flex flex-col gap-4 bg-white/5 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+              <div className="flex items-center gap-3 text-slate-300">
+                <Shield size={20} className="text-slate-500"/>
+                <span className="font-medium">Case Adjudicated</span>
               </div>
-            )}
-            <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
-              <button 
-                onClick={() => handleAction('clear')}
-                disabled={actionLoading}
-                className="flex-1 bg-success/10 hover:bg-success/20 text-success border border-success/30 py-3 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
-              >
-                <CheckCircle size={18} /> Clear Traveler
-              </button>
-              <button 
-                onClick={() => handleAction('deny')}
-                disabled={actionLoading}
-                className="flex-1 bg-danger/10 hover:bg-danger/20 text-danger border border-danger/30 py-3 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
-              >
-                <X size={18} /> Deny Entry
-              </button>
-              <button 
-                onClick={() => handleAction('escalate')}
-                disabled={actionLoading}
-                className="flex-1 bg-warning/10 hover:bg-warning/20 text-warning border border-warning/30 py-3 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
-              >
-                <Shield size={18} /> Escalate to Supervisor
-              </button>
+              <span className="uppercase text-sm tracking-wider bg-slate-800 px-3 py-1 rounded text-white border border-slate-700">Status: decided (v{c.version ?? 0})</span>
+            </div>
+          );
+        }
+        if (c.status === 'escalated') {
+          return (
+            <div className="glass-panel mt-6 border-t-4 border-t-warning p-4 sm:p-6">
+              <div className="flex items-center gap-2 mb-4 text-warning">
+                <AlertTriangle size={20} />
+                <h2 className="text-lg font-semibold">Escalated — Awaiting Supervisor Decision</h2>
+              </div>
+              <p className="text-sm text-slate-400 mb-4">This case was escalated for supervisor review. Only a supervisor can clear or deny it.</p>
+              {isAuditor ? (
+                <p className="text-sm text-slate-500">Auditor role is read-only.</p>
+              ) : isOfficer ? (
+                <p className="text-sm text-slate-500">Your role cannot decide escalated cases.</p>
+              ) : (
+                <div className="space-y-4">
+                  <label htmlFor="adjudication-reason" className="block text-sm font-medium text-slate-300">
+                    Decision justification <span className="text-slate-500">(required, minimum 3 characters)</span>
+                  </label>
+                  <textarea id="adjudication-reason" value={reason} onChange={(e) => setReason(e.target.value)} className="w-full bg-black/20 border border-slate-700 rounded-lg p-4 text-white focus:outline-none focus:border-primary transition-colors text-sm min-h-[100px]" placeholder="Record the grounds for this decision..." />
+                  {actionError && (<div role="alert" className="bg-danger/10 border border-danger/50 text-danger rounded-lg p-3 text-sm">{actionError}</div>)}
+                  <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
+                    <button onClick={() => handleAction('clear')} disabled={actionLoading} className="flex-1 bg-success/10 hover:bg-success/20 text-success border border-success/30 py-3 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"><CheckCircle size={18} /> Clear Traveler</button>
+                    <button onClick={() => handleAction('deny')} disabled={actionLoading} className="flex-1 bg-danger/10 hover:bg-danger/20 text-danger border border-danger/30 py-3 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"><X size={18} /> Deny Entry</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        }
+        // pending_review
+        return (
+          <div className="glass-panel mt-6 border-t-4 border-t-primary p-4 sm:p-6">
+            <h2 className="text-lg font-semibold text-white mb-4">Officer Adjudication <span className="text-xs font-normal text-slate-500">(v{c.version ?? 0})</span></h2>
+            <div className="space-y-4">
+              <label htmlFor="adjudication-reason" className="block text-sm font-medium text-slate-300">
+                Decision justification <span className="text-slate-500">(required, minimum 3 characters)</span>
+              </label>
+              <textarea id="adjudication-reason" value={reason} onChange={(e) => setReason(e.target.value)} className="w-full bg-black/20 border border-slate-700 rounded-lg p-4 text-white focus:outline-none focus:border-primary transition-colors text-sm min-h-[100px]" placeholder="Record the grounds for this decision..." />
+              {actionError && (<div role="alert" className="bg-danger/10 border border-danger/50 text-danger rounded-lg p-3 text-sm">{actionError}</div>)}
+              <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
+                <button onClick={() => handleAction('clear')} disabled={actionLoading} className="flex-1 bg-success/10 hover:bg-success/20 text-success border border-success/30 py-3 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"><CheckCircle size={18} /> Clear Traveler</button>
+                {isOfficer ? (
+                  <button disabled className="flex-1 bg-slate-800 text-slate-500 border border-slate-700 py-3 rounded-lg font-medium flex items-center justify-center gap-2 cursor-not-allowed" title="Deny requires supervisor approval — use Escalate"><X size={18} /> Deny (Supervisor Only)</button>
+                ) : (
+                  <button onClick={() => handleAction('deny')} disabled={actionLoading || isAuditor} className="flex-1 bg-danger/10 hover:bg-danger/20 text-danger border border-danger/30 py-3 rounded-lg font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50"><X size={18} /> Deny Entry</button>
+                )}
+                <button onClick={() => handleAction('escalate')} disabled={actionLoading || isAuditor} className="flex-1 bg-warning/10 hover:bg-warning/20 text-warning border border-warning/30 py-3 rounded-lg font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50"><Shield size={18} /> Escalate to Supervisor</button>
+              </div>
+              {isAuditor && <p className="text-xs text-slate-500">Auditor is read-only.</p>}
             </div>
           </div>
-        </div>
-      ) : (
-        <div className="glass-panel mt-6 flex flex-col gap-4 bg-white/5 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
-          <div className="flex items-center gap-3 text-slate-300">
-            <Shield size={20} className="text-slate-500"/>
-            <span className="font-medium">Case Adjudicated</span>
-          </div>
-          <span className="uppercase text-sm tracking-wider bg-slate-800 px-3 py-1 rounded text-white border border-slate-700">Status: {c.status}</span>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

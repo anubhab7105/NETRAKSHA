@@ -214,6 +214,7 @@ class LoginResponse(BaseModel):
 class OverrideRequest(BaseModel):
     action: str  # clear | deny | escalate
     reason: str
+    version: Optional[int] = None  # for optimistic locking (client's expected version)
 
 
 # ---------------------------------------------------------------------------
@@ -1145,6 +1146,37 @@ async def override_case(case_id: int, req: OverrideRequest, request: Request):
         if role == "supervisor" and case.unit and case.unit != officer_unit:
             raise HTTPException(status_code=403, detail="Access denied: case outside your unit")
 
+        # State transition & optimistic locking
+        # 1. Already decided? -> 409 Conflict (integrity)
+        if case.status == "decided":
+            raise HTTPException(status_code=409, detail="Conflict: case already has a final decision and cannot be modified")
+        # 2. Optimistic locking: if client supplied version/If-Match, verify it matches current
+        client_version = req.version
+        # Also support If-Match header as alternative
+        if_match = request.headers.get("If-Match")
+        if if_match is not None:
+            try:
+                client_version = int(if_match.strip().strip('"'))
+            except ValueError:
+                pass
+        current_version = getattr(case, "version", 0) or 0
+        if client_version is not None and int(client_version) != int(current_version):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Conflict: case was modified by another officer (expected version {client_version}, current {current_version}). Please refresh and retry.",
+            )
+        # 3. Supervisor approval for final denial
+        if req.action == "deny" and role == "officer":
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied: final denial requires supervisor approval — please use 'escalate' to send to supervisor",
+            )
+        # 4. Valid state transitions
+        # pending_review -> clear/deny (supervisor) or escalate (officer)
+        # escalated -> clear/deny (supervisor only)
+        if case.status == "escalated" and role == "officer":
+            raise HTTPException(status_code=403, detail="Access denied: escalated cases can only be decided by a supervisor")
+
         # Record officer action
         session.add(OfficerAction(
             case_id=case_id,
@@ -1153,8 +1185,16 @@ async def override_case(case_id: int, req: OverrideRequest, request: Request):
             reason=req.reason.strip(),
         ))
 
-        # Update case status
-        case.status = "decided"
+        # Update case status with state machine
+        if req.action == "escalate":
+            case.status = "escalated"
+        else:  # clear or deny
+            case.status = "decided"
+        # Optimistic locking: bump version
+        try:
+            case.version = int(current_version) + 1
+        except Exception:
+            case.version = 1
 
         # Audit log
         session.add(AuditLog(
