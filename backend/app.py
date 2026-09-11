@@ -2659,9 +2659,50 @@ async def list_citizens(
     q: Optional[str] = Query(None, description="Search by name or document number"),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    reason: Optional[str] = Query(None, description="Reason for search (required for sensitive/broad searches)"),
 ):
-    """List registered citizens with least-privilege scoping."""
+    """List registered citizens with least-privilege scoping and misuse protection."""
     officer = await _auth(request)
+    # Sensitive search detection: broad listing, name-only, or bulk
+    is_sensitive = False
+    sensitivity_reason = ""
+    if not q or not q.strip():
+        is_sensitive = True
+        sensitivity_reason = "broad listing (no query)"
+    elif q.strip() and not any(c.isdigit() for c in q):
+        # Name-only search without document number
+        is_sensitive = True
+        sensitivity_reason = "name-only search"
+    elif limit > 50:
+        is_sensitive = True
+        sensitivity_reason = f"bulk search (limit={limit})"
+    # Sensitive searches require a reason and are flagged for audit
+    if is_sensitive:
+        if not reason or len(reason.strip()) < 5:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Sensitive registry search ({sensitivity_reason}) requires a reason (min 5 chars) for audit. Provide ?reason=... and supervisor approval may be required for bulk/name-only queries.",
+            )
+        # Log the sensitive search as an audit alert (auditor review)
+        try:
+            async with async_session() as _sess:
+                _sess.add(AuditLog(
+                    actor=officer.get("username", "unknown"),
+                    action=f"registry_search:sensitive:{sensitivity_reason}",
+                    entity=f"citizens:q={q} reason:{reason[:80]}",
+                    officer_id=int(officer.get("sub", 0)) or None,
+                    request_id=request.headers.get("X-Request-ID") or "",
+                    device_info=f"UA:{request.headers.get('User-Agent','')[:100]} IP:{request.client.host if request.client else ''}",
+                ))
+                await _sess.commit()
+        except Exception:
+            pass
+        # For highly sensitive (bulk >100 or name-only), require supervisor approval
+        if (limit > 100 or (q and not any(c.isdigit() for c in q) and len(q.strip()) < 4)) and officer.get("role") == "officer":
+            raise HTTPException(
+                status_code=403,
+                detail="Sensitive search requires supervisor approval — please request approval or narrow your search to a specific document number",
+            )
     # Officer can only view citizens linked to their own cases; supervisor/auditor can view all
     if officer.get("role") == "officer":
         async with async_session() as session:
