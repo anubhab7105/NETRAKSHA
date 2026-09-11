@@ -202,6 +202,40 @@ def _extract_frame_features(landmarker, mp, frame: np.ndarray):
     return (float((left + right) / 2.0), pts, (min_x, min_y, max_x, max_y))
 
 
+def _mouth_open_ratio(landmarks) -> Optional[float]:
+    """Estimate mouth opening from landmarks (upper lip 13 vs lower lip 14)."""
+    try:
+        # Use landmarks 13 (upper) and 14 (lower) and 78/308 for mouth corners for scale
+        upper = np.array([landmarks[13].x, landmarks[13].y])
+        lower = np.array([landmarks[14].x, landmarks[14].y])
+        left = np.array([landmarks[78].x, landmarks[78].y])
+        right = np.array([landmarks[308].x, landmarks[308].y])
+        mouth_w = np.linalg.norm(right - left) + 1e-6
+        opening = np.linalg.norm(lower - upper) / mouth_w
+        return float(opening)
+    except Exception:
+        return None
+
+
+def _head_yaw(landmarks) -> Optional[float]:
+    """Estimate head yaw via face_quality helper."""
+    try:
+        from .face_quality import yaw_proxy_from_kps
+        kps = [(landmarks[i].x, landmarks[i].y) for i in [33, 263, 1, 61, 291]]  # eyes, nose, mouth
+        # Use the 5-point proxy
+        pts = [landmarks[33], landmarks[263], landmarks[1]]
+        # Reuse face_quality logic with 3 points
+        import numpy as np
+        left = np.array([landmarks[33].x, landmarks[33].y])
+        right = np.array([landmarks[263].x, landmarks[263].y])
+        nose = np.array([landmarks[1].x, landmarks[1].y])
+        eye_dist = np.linalg.norm(right - left) + 1e-6
+        mid_x = (left[0] + right[0]) / 2.0
+        return float((nose[0] - mid_x) / eye_dist)
+    except Exception:
+        return None
+
+
 def _screen_artifact_score(frame: np.ndarray, bbox) -> float:
     """Estimate display-replay likelihood from moire/pixel-grid energy.
 
