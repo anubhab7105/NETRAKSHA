@@ -227,6 +227,7 @@ class ScreeningCase(Base):
     version = Column(Integer, default=0, nullable=False)  # optimistic locking version
     provenance = Column(Text, nullable=True)  # JSON of model/config/input hashes for reproducibility
     provenance_signature = Column(Text, nullable=True)  # HMAC signature of provenance
+    challenge_type = Column(String(20), nullable=True)  # active liveness challenge: blink | head_turn | mouth_open | smile
 
     # Relationships
     officer = relationship("Officer", back_populates="screening_cases")
