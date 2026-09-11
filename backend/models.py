@@ -410,7 +410,37 @@ class AuditLog(Base):
             "request_id": self.request_id,
             "device_info": self.device_info,
             "file_hashes": self.file_hashes,
+            "prev_hash": self.prev_hash,
+            "entry_hash": self.entry_hash,
         }
+
+    @staticmethod
+    async def create_with_chain(session, **kwargs):
+        """Create an audit log entry with hash chaining."""
+        import hashlib, hmac, os
+        # Get previous hash
+        try:
+            from sqlalchemy import select as _select, desc as _desc
+            # Use raw query to avoid circular import
+            result = await session.execute(
+                _select(AuditLog).order_by(AuditLog.id.desc()).limit(1)
+            )
+            last = result.scalar_one_or_none()
+            prev_hash = last.entry_hash if last and last.entry_hash else "0" * 64
+        except Exception:
+            prev_hash = "0" * 64
+        # Compute entry hash
+        try:
+            secret = os.environ.get("JWT_SECRET", "sih-hackathon-dev-secret-change-in-prod")
+            payload = f"{prev_hash}{kwargs.get('actor','')}{kwargs.get('action','')}{kwargs.get('entity','')}".encode()
+            entry_hash = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+        except Exception:
+            entry_hash = None
+        kwargs["prev_hash"] = prev_hash
+        kwargs["entry_hash"] = entry_hash
+        entry = AuditLog(**kwargs)
+        session.add(entry)
+        return entry
 
 
 # ---------------------------------------------------------------------------
