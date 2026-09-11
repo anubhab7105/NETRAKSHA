@@ -2368,6 +2368,37 @@ async def list_audit(
     }
 
 
+@app.get("/api/fairness/report", include_in_schema=False)
+async def get_fairness_report(request: Request, limit: int = Query(200, ge=1, le=1000)):
+    """Fairness & bias audit — aggregated face-matching metrics per demographic / env group.
+
+    Access: supervisor or auditor. Returns per-group mean similarity, low-confidence
+    rates, and balanceness of the enrollment data so systemic skew can be detected.
+    """
+    officer = await _auth(request)
+    if officer.get("role") not in ("supervisor", "auditor"):
+        raise HTTPException(status_code=403, detail="Access denied: supervisor or auditor role required")
+    try:
+        from pipeline.fairness import get_fairness_report as _get_report
+        report = _get_report(limit=limit)
+    except Exception as e:
+        report = {"error": str(e), "total": 0}
+    # Also report registry enrollment balance
+    try:
+        async with async_session() as session:
+            from sqlalchemy import func as _func
+            # Gender balance
+            g_res = await session.execute(select(CitizenRegistry.gender, _func.count()).group_by(CitizenRegistry.gender))
+            gender_counts = {row[0] or "unknown": row[1] for row in g_res.all()}
+            # Type balance
+            t_res = await session.execute(select(CitizenRegistry.document_type, _func.count()).group_by(CitizenRegistry.document_type))
+            type_counts = {row[0]: row[1] for row in t_res.all()}
+            report["enrollment_balance"] = {"by_gender": gender_counts, "by_document_type": type_counts}
+    except Exception:
+        pass
+    return report
+
+
 # ---------------------------------------------------------------------------
 # 8. Citizen Registry management — CONTROLLED ENROLLMENT WORKFLOW
 #
