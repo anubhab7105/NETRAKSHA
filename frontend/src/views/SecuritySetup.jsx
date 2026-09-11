@@ -22,6 +22,7 @@ export default function SecuritySetup() {
 
   const [mfaKey, setMfaKey] = useState('');
   const [mfaUri, setMfaUri] = useState('');
+  const [mfaServerTime, setMfaServerTime] = useState('');
   const [mfaCode, setMfaCode] = useState('');
   const [mfaMsg, setMfaMsg] = useState('');
   const [mfaErr, setMfaErr] = useState('');
@@ -65,6 +66,7 @@ export default function SecuritySetup() {
       const res = await api.post('/auth/mfa/setup');
       setMfaKey(res.data.manual_key);
       setMfaUri(res.data.otpauth_uri);
+      setMfaServerTime(res.data.server_time_utc || '');
     } catch (err) {
       setMfaErr(apiErrorMessage(err, 'Could not start MFA enrollment.'));
     } finally {
@@ -158,6 +160,11 @@ export default function SecuritySetup() {
                   <p className="text-xs text-slate-400 mb-1">Manual key (enter in your app, or paste the URI below it):</p>
                   <p className="font-mono text-sm text-white break-all select-all">{mfaKey}</p>
                   <p className="font-mono text-[11px] text-slate-500 break-all select-all mt-2">{mfaUri}</p>
+                  {mfaServerTime && (
+                    <p className="text-[11px] text-slate-500 mt-2">
+                      Server time: {mfaServerTime.replace('T', ' ')}. If your phone's clock differs by more than a minute, turn on automatic date &amp; time — codes won't match otherwise.
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-300 mb-1" htmlFor="mfa-code">6-digit code from the app</label>

@@ -660,6 +660,7 @@ async def mfa_setup(request: Request):
         "status": "ok",
         "manual_key": secret,
         "otpauth_uri": otpauth_uri(secret, off.username),
+        "server_time_utc": _utcnow_naive().isoformat() + "Z",
         "message": "Open your authenticator app (or paste the URI), then confirm with POST /api/auth/mfa/verify.",
     }
 
