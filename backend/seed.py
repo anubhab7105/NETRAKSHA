@@ -171,14 +171,21 @@ async def seed_all() -> dict:
             existing = await session.execute(
                 select(Officer).where(Officer.username == o["username"])
             )
-            if existing.scalar_one_or_none() is None:
+            officer = existing.scalar_one_or_none()
+            if officer is None:
                 session.add(Officer(
                     username=o["username"],
                     password_hash=_hash_password(o["password"]),
                     role=o["role"],
+                    unit=o.get("unit", "BORDER_UNIT_1"),
                 ))
                 summary["officers_created"] += 1
             else:
+                # Update unit/role if changed (handles migration for new unit scoping)
+                expected_unit = o.get("unit", "BORDER_UNIT_1")
+                if getattr(officer, "unit", None) != expected_unit or officer.role != o["role"]:
+                    officer.unit = expected_unit
+                    officer.role = o["role"]
                 summary["officers_existed"] += 1
 
         # --- Citizens Registry ---
