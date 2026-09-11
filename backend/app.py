@@ -1836,6 +1836,22 @@ async def _run_screening_pipeline(
                 "Demo mode: Gemini AI was offline, so face/tamper AI results were simulated and excluded from scoring. "
                 "Manual officer review required — this verdict is DEMO ONLY."
             )
+    # Cloud unavailable (network failure) — controlled fallback, not a halt:
+    # local checks continued, but final result must be Yellow/Manual Review.
+    if cloud_unavailable_for_risk:
+        if risk.verdict == "Green":
+            risk.verdict = "Yellow"
+        if "CLOUD_UNAVAILABLE_FALLBACK" not in risk.flags:
+            risk.flags.append("CLOUD_UNAVAILABLE_FALLBACK")
+        # Ensure the recommendation mentions manual review due to cloud
+        if not any("cloud" in rec.lower() for rec in risk.recommendations):
+            risk.recommendations.append(
+                "Cloud AI verification was unavailable due to network/cloud failure — local checks completed, "
+                "but final decision requires manual officer review. System did not halt; fallback policy applied."
+            )
+        # Also ensure at least Yellow
+        if risk.verdict == "Green":
+            risk.verdict = "Yellow"
     # Face quality recapture: the capture was too poor to match (never a
     # verdict). Flag it explicitly so the officer knows the fix is a
     # recapture, not a mismatch investigation. (Verdict is already ≥Yellow
