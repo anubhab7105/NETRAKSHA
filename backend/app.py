@@ -222,12 +222,26 @@ class OverrideRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 async def _auth(request) -> dict:
-    """Extract officer info from Authorization header."""
+    """Extract officer info from Authorization header and enrich with fresh DB state."""
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing Bearer token")
     token = auth[7:]
-    return _decode_token(token)
+    payload = _decode_token(token)
+    # Enrich with current DB state for unit/role (handles old tokens missing unit)
+    try:
+        async with async_session() as session:
+            res = await session.execute(select(Officer).where(Officer.id == int(payload.get("sub", 0))))
+            off = res.scalar_one_or_none()
+            if off:
+                payload["unit"] = getattr(off, "unit", None) or payload.get("unit") or "BORDER_UNIT_1"
+                payload["role"] = off.role or payload.get("role", "officer")
+                payload["username"] = off.username
+    except Exception:
+        pass
+    payload.setdefault("unit", "BORDER_UNIT_1")
+    payload.setdefault("role", "officer")
+    return payload
 
 
 # ---------------------------------------------------------------------------
