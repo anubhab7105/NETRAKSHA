@@ -1265,6 +1265,55 @@ async def get_case(case_id: int, request: Request):
     }
 
 
+@app.get("/api/cases/{case_id}/provenance", include_in_schema=False)
+@app.get("/api/cases/{case_id}/provenance/verify", include_in_schema=False)
+async def get_provenance(case_id: int, request: Request):
+    """Return the signed provenance for a case and verify its integrity."""
+    officer = await _auth(request)
+    # Check access to the case first
+    async with async_session() as session:
+        result = await session.execute(select(ScreeningCase).where(ScreeningCase.id == case_id))
+        case = result.scalar_one_or_none()
+        if not case:
+            raise HTTPException(status_code=404, detail="Case not found")
+        # Least-privilege check
+        role = officer.get("role", "officer")
+        officer_id = int(officer.get("sub", 0))
+        officer_unit = officer.get("unit") or "BORDER_UNIT_1"
+        if role == "officer" and case.officer_id != officer_id:
+            raise HTTPException(status_code=403, detail="Access denied")
+        if role == "supervisor" and case.unit and case.unit != officer_unit:
+            raise HTTPException(status_code=403, detail="Access denied: case outside your unit")
+        # auditor can view all
+
+        if not case.provenance:
+            return {"case_id": case_id, "provenance": None, "verified": False, "reason": "No provenance recorded (case created before provenance tracking)"}
+        try:
+            prov = json.loads(case.provenance) if isinstance(case.provenance, str) else case.provenance
+        except Exception:
+            prov = case.provenance
+        # Verify signature
+        verified = False
+        reason = "unknown"
+        try:
+            import hmac as _hmac, hashlib as _hashlib
+            payload = json.dumps(prov, sort_keys=True).encode() if isinstance(prov, dict) else str(prov).encode()
+            expected = _hmac.new(_JWT_SECRET.encode(), payload, _hashlib.sha256).hexdigest()
+            stored = case.provenance_signature or ""
+            verified = hmac.compare_digest(expected, stored)
+            reason = "signature matches" if verified else "signature mismatch"
+        except Exception as e:
+            reason = f"verification error: {e}"
+        return {
+            "case_id": case_id,
+            "provenance": prov,
+            "provenance_signature": case.provenance_signature,
+            "verified": verified,
+            "verification_reason": reason,
+            "is_demo": any(m.is_mocked for m in (await session.execute(select(ModuleResultDB).where(ModuleResultDB.case_id == case_id))).scalars().all() if m.module_name == "gemini_ai"),
+        }
+
+
 # ---------------------------------------------------------------------------
 # 6. POST /api/cases/{id}/override — Officer decision
 # ---------------------------------------------------------------------------
