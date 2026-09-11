@@ -1179,7 +1179,7 @@ async def list_audit(
 ):
     """View the append-only audit trail — auditor role only (least-privilege)."""
     officer = await _auth(request)
-    if officer.get("role") not in ("auditor", "supervisor"):
+    if officer.get("role") != "auditor":
         raise HTTPException(status_code=403, detail="Access denied: auditor role required to view audit logs")
 
     async with async_session() as session:
