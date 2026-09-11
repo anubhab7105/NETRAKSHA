@@ -166,6 +166,21 @@ def assess_risk(
                 )
 
     # --- Face Verification (InsightFace local + Gemini 3-way) ---
+    # Bias mitigation: low-confidence band around the threshold is routed to manual review
+    # to avoid unfair targeting of groups where the model is less certain.
+    FACE_LOW_CONF_BAND = (0.45, 0.65)  # around MATCH_THRESHOLD 0.55
+    is_low_confidence = False
+    if face_similarity is not None and FACE_LOW_CONF_BAND[0] <= face_similarity <= FACE_LOW_CONF_BAND[1]:
+        is_low_confidence = True
+        flags.append(f"FACE_LOW_CONFIDENCE:{face_similarity:.3f}")
+        # Low confidence always requires manual review, even if match==True
+        min_verdict = _escalate(min_verdict, "Yellow")
+        risk_components.append(0.55)  # moderate risk for uncertainty
+        recommendations.append(
+            f"Face similarity {face_similarity:.3f} is near the decision threshold (0.55) — low confidence. "
+            "Manual officer review required to avoid bias. Environmental factors (lighting, camera quality) "
+            "or demographic variations may have affected the score. Do not auto-clear."
+        )
     if face_status == "inconclusive":
         flags.append("FACE_VERIFICATION_INCONCLUSIVE")
         min_verdict = _escalate(min_verdict, "Yellow")
@@ -173,7 +188,7 @@ def assess_risk(
         recommendations.append(
             "Face verification module was inconclusive. Manual face comparison required."
         )
-    elif face_match is False:
+    elif face_match is False and not is_low_confidence:
         flags.append("FACE_MISMATCH")
         min_verdict = _escalate(min_verdict, "Red")
         risk_components.append(0.9)
@@ -181,8 +196,8 @@ def assess_risk(
             "CRITICAL: Face on document does not match live capture. "
             "Possible impersonation or photo substitution."
         )
-    elif face_similarity is not None:
-        # Score inversely: high similarity = low risk
+    elif face_similarity is not None and not is_low_confidence:
+        # Score inversely: high similarity = low risk (only when not low-confidence)
         face_risk = max(0.0, 1.0 - face_similarity)
         risk_components.append(face_risk)
 
