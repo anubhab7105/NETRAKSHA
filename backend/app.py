@@ -2433,6 +2433,44 @@ async def list_audit(
     }
 
 
+@app.get("/api/audit/verify", include_in_schema=False)
+async def verify_audit_chain(request: Request):
+    """Verify the tamper-evident hash chain for the audit log."""
+    officer = await _auth(request)
+    if officer.get("role") not in ("auditor", "supervisor"):
+        raise HTTPException(status_code=403, detail="Access denied: auditor or supervisor required")
+    async with async_session() as session:
+        result = await session.execute(select(AuditLog).order_by(AuditLog.id.asc()))
+        logs = result.scalars().all()
+    prev_hash = "0" * 64
+    valid = True
+    first_broken = None
+    for log in logs:
+        if log.prev_hash != prev_hash:
+            valid = False
+            first_broken = log.id
+            break
+        try:
+            import hmac, hashlib, os
+            secret = os.environ.get("JWT_SECRET", "sih-hackathon-dev-secret-change-in-prod")
+            payload = f"{log.prev_hash}{log.actor}{log.action}{log.entity}".encode()
+            expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+            if log.entry_hash and log.entry_hash != expected:
+                valid = False
+                first_broken = log.id
+                break
+        except Exception:
+            pass
+        prev_hash = log.entry_hash or prev_hash
+    return {
+        "valid": valid,
+        "total_entries": len(logs),
+        "first_broken_id": first_broken,
+        "last_hash": prev_hash,
+        "verified_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+    }
+
+
 @app.get("/api/audit/access-review", include_in_schema=False)
 async def access_review(request: Request, days: int = Query(30, ge=1, le=365)):
     """Periodic access review — aggregate registry and case access by officer (auditor only)."""

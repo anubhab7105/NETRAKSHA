@@ -608,6 +608,36 @@ export default function CaseReport() {
             <p className="text-sm text-slate-500">No checksum data available.</p>
           )}
         </div>
+        {/* Security Zones */}
+        <div className="glass-panel p-4 sm:p-6">
+          <div className="flex items-center gap-2 mb-4 border-b border-slate-700/50 pb-4">
+            <ShieldAlert size={20} className="text-amber-400" />
+            <h2 className="text-base font-semibold text-white">Security Zones</h2>
+          </div>
+          {(() => {
+            const sz = module_results.find(m => m.module_name === 'security_zones');
+            if (!sz) return <p className="text-sm text-slate-500">No security zone analysis available.</p>;
+            return (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm text-slate-400">Status</span>
+                  <StatusBadge status={sz.status} score={sz.score} />
+                </div>
+                {sz.raw_output?.checks && (
+                  <div className="bg-black/20 rounded p-3 space-y-1 text-xs">
+                    {Object.entries(sz.raw_output.checks).map(([k,v]) => (
+                      <div key={k} className="flex justify-between gap-3">
+                        <span className="text-slate-400">{k.replace(/_/g,' ')}</span>
+                        <span className="text-slate-300 font-mono text-[11px]">{String(v).slice(0,40)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {sz.evidence_uri && <p className="text-xs text-slate-500">Zone overlay: {sz.evidence_uri.split('/').pop()}</p>}
+              </div>
+            );
+          })()}
+        </div>
       </div>
 
       {/* Watchlist Panel — always shown, even on clear (audit P2 §6) */}

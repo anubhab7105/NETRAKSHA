@@ -11,6 +11,7 @@ export default function AuditTrail() {
   const [entityFilter, setEntityFilter] = useState('');
   const [offset, setOffset] = useState(0);
   const [count, setCount] = useState(0);
+  const [verifyResult, setVerifyResult] = useState(null);
   const limit = 50;
 
   const fetchLogs = useCallback(async () => {
@@ -39,6 +40,24 @@ export default function AuditTrail() {
     fetchLogs();
   };
 
+  const handleVerify = async () => {
+    try {
+      const res = await api.get('/audit/verify');
+      setVerifyResult(res.data);
+    } catch (err) {
+      setVerifyResult({ valid: false, reason: err.response?.data?.detail || 'Verification failed' });
+    }
+  };
+
+  const handleVerify = async () => {
+    try {
+      const res = await api.get('/audit/verify');
+      setVerifyResult(res.data);
+    } catch (err) {
+      setVerifyResult({ valid: false, reason: err.response?.data?.detail || 'Verification failed' });
+    }
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       <SEO
@@ -55,8 +74,18 @@ export default function AuditTrail() {
           Audit Trail
         </h1>
         <p className="text-slate-400 text-sm mt-1">
-          Immutable event ledger — every automated check and officer decision.
+          Immutable event ledger — every automated check and officer decision. Hash-chained for tamper evidence.
         </p>
+        <div className="mt-4 flex items-center gap-3">
+          <button onClick={handleVerify} className="px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 rounded-lg text-sm font-medium">
+            Verify Chain
+          </button>
+          {verifyResult && (
+            <span className={`text-xs px-2 py-1 rounded border ${verifyResult.valid ? 'bg-success/10 text-success border-success/30' : 'bg-danger/10 text-danger border-danger/30'}`}>
+              {verifyResult.valid ? `✓ Verified (${verifyResult.total_entries} entries, last ${String(verifyResult.last_hash).slice(0,8)}…)` : `✗ Broken at #${verifyResult.first_broken_id}: ${verifyResult.reason || ''}`}
+            </span>
+          )}
+        </div>
       </header>
 
       {/* Filters */}
@@ -112,6 +141,7 @@ export default function AuditTrail() {
                   <th className="px-6 py-3 font-medium">Actor</th>
                   <th className="px-6 py-3 font-medium">Action</th>
                   <th className="px-6 py-3 font-medium">Entity</th>
+                  <th className="px-6 py-3 font-medium">Hash</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-700/30">
@@ -126,6 +156,7 @@ export default function AuditTrail() {
                     </td>
                     <td className="px-6 py-3 font-mono text-xs">{log.action}</td>
                     <td className="px-6 py-3 font-mono text-xs text-slate-400">{log.entity || '-'}</td>
+                    <td className="px-6 py-3 font-mono text-[10px] text-slate-500" title={`${log.prev_hash} → ${log.entry_hash}`}>{log.entry_hash ? `${String(log.entry_hash).slice(0,8)}…` : '-'}</td>
                   </tr>
                 ))}
               </tbody>
