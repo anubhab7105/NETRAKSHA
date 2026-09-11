@@ -809,7 +809,18 @@ async def _run_screening_pipeline(
                 "ok", checksum_result, None, False,
             ))
 
+        # Tag the persisted gemini payload with the demo flag so detail can label it
+        try:
+            gemini_result["is_demo"] = bool(is_demo_case)
+        except Exception:
+            pass
         for mod_name, score, mod_status, raw, evidence, mocked in modules:
+            # Ensure demo flag is in the persisted JSON for the detail endpoint
+            if mod_name == "gemini_ai" and isinstance(raw, dict):
+                try:
+                    raw = {**raw, "is_demo": bool(is_demo_case)}
+                except Exception:
+                    pass
             session.add(ModuleResultDB(
                 case_id=case_id,
                 module_name=mod_name,

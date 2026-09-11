@@ -148,6 +148,20 @@ export default function CaseReport() {
 
       <VerdictBanner verdict={c.verdict || 'Unknown'} />
 
+      {/* Demo-only: simulated AI was excluded from scoring */}
+      {(data.is_demo || geminiModule?.is_mocked) && (
+        <div className="flex items-start gap-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 sm:p-6">
+          <ShieldAlert size={24} className="text-amber-400 shrink-0 mt-0.5" />
+          <div>
+            <h2 className="text-lg font-bold text-amber-400">DEMO ONLY — Simulated AI Excluded</h2>
+            <p className="text-sm text-amber-200/80 mt-1">
+              {data.demo_label || geminiData.is_demo && 'This case used offline simulation for face/tamper AI. Those simulated results were excluded from the risk score — this verdict is DEMO ONLY and requires manual officer review.'}
+              {!data.demo_label && !geminiData.is_demo && 'Gemini AI was offline, so face/tamper results are simulated and were excluded from scoring. Manual review required.'}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* No DB record / unverifiable — alert the officer instead of faking a comparison */}
       {!hasGenuineDbRecord && (
         <div className="flex items-start gap-4 rounded-xl border border-warning/50 bg-warning/10 p-4 sm:p-6">
