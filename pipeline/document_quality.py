@@ -14,10 +14,10 @@ from .common import load_image, inconclusive_result, ok_result, ModuleResult
 
 MODULE_NAME = "document_quality"
 
-MIN_DIM = 600  # min width/height for a readable document
-BLUR_THRESH = 50.0
-DARK_THRESH = 40.0
-BRIGHT_THRESH = 220.0
+MIN_DIM = 480  # min width/height for a readable document (webcam 640x480 is common)
+BLUR_THRESH = 35.0  # was 50, too strict for webcam
+DARK_THRESH = 35.0
+BRIGHT_THRESH = 225.0
 
 def assess_document(bgr: np.ndarray) -> Dict[str, Any]:
     h, w = bgr.shape[:2]

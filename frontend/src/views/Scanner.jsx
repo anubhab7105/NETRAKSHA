@@ -292,9 +292,10 @@ export default function Scanner() {
     } catch (err) {
       if (import.meta.env.DEV) console.error(err);
       const status = err.response?.status;
-      const detail =
-        err.response?.data?.detail ||
-        (typeof err.response?.data === 'string' ? err.response.data : null);
+      const rawDetail = err.response?.data?.detail;
+      const detail = typeof rawDetail === 'string' ? rawDetail : rawDetail ? JSON.stringify(rawDetail, null, 2) : (typeof err.response?.data === 'string' ? err.response.data : null);
+      // Special handling for document_quality_failed
+      const isDocQuality = rawDetail && typeof rawDetail === 'object' && rawDetail.error === 'document_quality_failed';
       if (status === 409) {
         // Duplicate in flight — the original request is still processing.
         // Keep the SAME key so a manual retry joins the original, not a new case.
@@ -315,6 +316,12 @@ export default function Scanner() {
             ? `Screening failed (HTTP 422): ${detail} A fresh idempotency key was generated — please retry.`
             : 'Screening failed: idempotency key mismatch. A fresh key was generated — please retry.'
         );
+        setScanning(false);
+        return;
+      }
+      if (isDocQuality) {
+        const reasons = (rawDetail.recapture_reasons || []).join(', ') || 'low quality';
+        setError(`Document quality too low (${reasons}). Please recapture in good light, hold steady, and ensure the document fills the frame.`);
         setScanning(false);
         return;
       }

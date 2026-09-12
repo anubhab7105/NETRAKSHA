@@ -73,6 +73,7 @@ from backend.models import (
     CitizenRegistry,
     ExtractedField,
     IdempotencyRecord,
+    IrisTemplate,
     ModuleResultDB,
     Officer,
     OfficerAction,
@@ -1268,25 +1269,20 @@ async def _run_screening_pipeline(
       4. Risk engine (with liveness params)
       5. Persist all module results with honest ok/inconclusive (P1 §5)
     """
-    # 0. Document quality hard gate
+    # 0. Document quality gate — soft gate for now (logs + risk, not hard 400)
+    # Low-res/blurry webcam captures are common; we flag them Yellow and show
+    # recapture guidance in the case report, but still run OCR/tamper so the
+    # officer gets a result. Change to hard 400 only after threshold calibration.
+    _doc_quality_res = None
     try:
         from pipeline.document_quality import run_document_quality
-        dq_res = run_document_quality(str(doc_path), save_evidence=False)
-        if dq_res.status == "ok" and dq_res.raw_output.get("gate") == "failed":
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "document_quality_failed",
-                    "recapture_reasons": dq_res.raw_output.get("issues", []),
-                    "metrics": dq_res.raw_output.get("metrics", {}),
-                    "message": f"Document image quality too low: {', '.join(dq_res.raw_output.get('issues', []))}. Please recapture in good light, hold steady.",
-                },
-            )
-    except HTTPException:
-        raise
+        _doc_quality_res = run_document_quality(str(doc_path), save_evidence=False)
+        if _doc_quality_res.status == "ok" and _doc_quality_res.raw_output.get("gate") == "failed":
+            print(f"[document_quality] soft gate: { _doc_quality_res.raw_output.get('issues')} metrics={_doc_quality_res.raw_output.get('metrics')}")
+            # Do not raise — let screening continue; risk engine will handle the score
     except Exception as e:
-        # Document quality check should not halt screening on unexpected error — log and continue
         print(f"[document_quality] gate check failed: {e}")
+        _doc_quality_res = None
 
     # Import pipeline modules
     from pipeline.tamper import run_tamper
