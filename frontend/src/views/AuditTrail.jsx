@@ -49,15 +49,6 @@ export default function AuditTrail() {
     }
   };
 
-  const handleVerify = async () => {
-    try {
-      const res = await api.get('/audit/verify');
-      setVerifyResult(res.data);
-    } catch (err) {
-      setVerifyResult({ valid: false, reason: err.response?.data?.detail || 'Verification failed' });
-    }
-  };
-
   return (
     <div className="space-y-6 animate-fade-in">
       <SEO

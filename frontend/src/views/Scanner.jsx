@@ -219,9 +219,12 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
   );
 }
 
+import IrisCapture from '../components/IrisCapture';
+
 export default function Scanner() {
   const [docFile, setDocFile] = useState(null);
   const [faceFile, setFaceFile] = useState(null);
+  const [irisFile, setIrisFile] = useState(null);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState(null);
   const navigate = useNavigate();
@@ -268,6 +271,10 @@ export default function Scanner() {
         );
       } else {
         formData.append('live_capture', faceFile);
+      }
+      if (irisFile) {
+        formData.append('iris_image', irisFile);
+        formData.append('iris_eye', irisFile.eye || 'left');
       }
     }
 
@@ -362,6 +369,9 @@ export default function Scanner() {
             onClear={() => setFaceFile(null)}
             onAllowBurst
           />
+        </div>
+        <div className="mt-6">
+          <IrisCapture file={irisFile} onCapture={setIrisFile} onClear={() => setIrisFile(null)} />
         </div>
 
         <div className="flex justify-stretch border-t border-slate-700/50 pt-4 sm:justify-end">

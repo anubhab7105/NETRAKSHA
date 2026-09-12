@@ -299,6 +299,40 @@ class ExtractedField(Base):
 
 
 # ---------------------------------------------------------------------------
+# Iris Templates — encrypted biometric storage
+# ---------------------------------------------------------------------------
+
+class IrisTemplate(Base):
+    __tablename__ = "iris_templates"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    citizen_id = Column(Integer, ForeignKey("citizens_registry.id"), nullable=False)
+    template = Column(Text, nullable=False)  # base64-encoded encrypted template
+    mask = Column(Text, nullable=True)  # base64 mask
+    quality = Column(Float, nullable=True)
+    eye = Column(String(10), nullable=False, default="left")  # left/right
+    created_at = Column(DateTime, server_default=func.now())
+    enrolled_by = Column(Integer, ForeignKey("officers.id"), nullable=True)
+
+    citizen = relationship("CitizenRegistry", backref="iris_templates")
+    officer = relationship("Officer")
+
+    def to_dict(self, include_template: bool = False) -> dict:
+        d = {
+            "id": self.id,
+            "citizen_id": self.citizen_id,
+            "quality": self.quality,
+            "eye": self.eye,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "enrolled_by": self.enrolled_by,
+        }
+        if include_template:
+            # Never expose raw template via API — only for internal matching
+            d["template"] = "***REDACTED***"
+        return d
+
+
+# ---------------------------------------------------------------------------
 # 5. ModuleResult (DB model — distinct from pipeline.common.ModuleResult)
 # ---------------------------------------------------------------------------
 

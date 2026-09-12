@@ -60,6 +60,10 @@ def assess_risk(
     gemini_photo_tamper: Optional[bool] = None,
     registry_trust: Optional[dict] = None,
     db_face_pairs: Optional[dict] = None,
+    iris_match: Optional[bool] = None,
+    iris_quality: Optional[dict] = None,
+    iris_liveness: Optional[dict] = None,
+    **kwargs
 ) -> RiskAssessment:
     """Evaluate composite risk from all module outputs.
 
@@ -301,6 +305,27 @@ def assess_risk(
         # Low liveness = higher risk
         live_risk = max(0.0, 1.0 - liveness_score)
         risk_components.append(live_risk * 0.5)  # weight liveness lower than face/tamper
+
+    # --- Iris Verification ---
+    # Iris is an additional biometric signal; poor quality → Yellow, mismatch → Red
+    # (explicit iris_* params, **kwargs already captured)
+    if iris_quality is not None and not iris_quality.get("usable", True):
+        flags.append("IRIS_QUALITY_POOR")
+        min_verdict = _escalate(min_verdict, "Yellow")
+        risk_components.append(0.6)
+        recommendations.append("Iris image quality poor — recapture eye in good light.")
+    elif iris_match is False:
+        flags.append("IRIS_MISMATCH")
+        min_verdict = _escalate(min_verdict, "Red")
+        risk_components.append(0.85)
+        recommendations.append("Iris does not match enrolled template — possible impersonation.")
+    elif iris_liveness is not None and iris_liveness.get("passed") is False:
+        flags.append("IRIS_LIVENESS_FAILED")
+        min_verdict = _escalate(min_verdict, "Yellow")
+        risk_components.append(0.7)
+        recommendations.append("Iris liveness failed — possible contact lens or replay.")
+    elif iris_match is True:
+        risk_components.append(0.0)  # strong positive signal
 
     # --- Composite Risk Score ---
     if risk_components:

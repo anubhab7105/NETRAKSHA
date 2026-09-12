@@ -879,6 +879,8 @@ async def screen_document(
     document_image: UploadFile = File(...),
     live_capture: UploadFile = File(None),
     live_frames: List[UploadFile] = File(None),
+    iris_image: UploadFile = File(None),
+    iris_eye: Optional[str] = Form(None),
     idempotency_key: Optional[str] = Form(None),
 ):
     """Execute parallel local CV + Gemini AI screening pipeline.
@@ -943,6 +945,16 @@ async def screen_document(
     burst = [str(p) for p in live_frame_tmps] or (
         [str(live_tmp)] if live_tmp else None
     )
+
+    # Iris capture (optional) — single eye image for verification
+    iris_tmp = None
+    iris_eye_val = (iris_eye or "left").strip().lower()
+    if iris_image and iris_image.filename:
+        iris_bytes = await iris_image.read()
+        file_hashes["iris"] = hashlib.sha256(iris_bytes).hexdigest()
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix="screen_iris_") as tmp:
+            tmp.write(iris_bytes)
+            iris_tmp = Path(tmp.name)
 
     input_hash = _compute_input_hash(file_hashes)
 
@@ -1132,7 +1144,14 @@ async def screen_document(
             "device_info": device_info,
             "file_hashes": file_hashes,
         }
-        result = await _run_screening_pipeline(doc_tmp, live_tmp, officer_id, officer_unit, burst, audit_context)
+        # Include iris if provided
+        _iris_path = str(iris_tmp) if 'iris_tmp' in locals() and iris_tmp else None
+        _iris_eye = iris_eye_val if 'iris_eye_val' in locals() else "left"
+        try:
+            result = await _run_screening_pipeline(doc_tmp, live_tmp, officer_id, officer_unit, burst, audit_context, iris_path=_iris_path, iris_eye=_iris_eye)
+        except TypeError:
+            # Fallback for pipeline without iris support
+            result = await _run_screening_pipeline(doc_tmp, live_tmp, officer_id, officer_unit, burst, audit_context)
     except Exception:
         # Pipeline failed — release the key immediately so a retry with the
         # SAME key can proceed instead of hitting 409 for 5 minutes.
@@ -1236,16 +1255,38 @@ async def _run_screening_pipeline(
     officer_unit: str = "BORDER_UNIT_1",
     live_burst: Optional[List[str]] = None,
     audit_context: Optional[dict] = None,
+    iris_path: Optional[str] = None,
+    iris_eye: str = "left",
 ) -> dict:
     """Execute the full screening pipeline with parallel local+cloud execution.
 
     Pipeline order (audit fixes applied):
+      0. Document quality gate — fail fast on blurry/dark/low-res
       1. Citizen DB lookup FIRST → retrieve photo_uri for 3-way face (P1 §4)
       2. Parallel: tamper + deepfake(live) + liveness + Gemini(3 images) (P1 §3, P2 §1)
       3. Post-process: checksums, demographics, watchlist
       4. Risk engine (with liveness params)
       5. Persist all module results with honest ok/inconclusive (P1 §5)
     """
+    # 0. Document quality hard gate
+    try:
+        from pipeline.document_quality import run_document_quality
+        dq_res = run_document_quality(str(doc_path), save_evidence=False)
+        if dq_res.status == "ok" and dq_res.raw_output.get("gate") == "failed":
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "document_quality_failed",
+                    "recapture_reasons": dq_res.raw_output.get("issues", []),
+                    "metrics": dq_res.raw_output.get("metrics", {}),
+                    "message": f"Document image quality too low: {', '.join(dq_res.raw_output.get('issues', []))}. Please recapture in good light, hold steady.",
+                },
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Document quality check should not halt screening on unexpected error — log and continue
+        print(f"[document_quality] gate check failed: {e}")
 
     # Import pipeline modules
     from pipeline.tamper import run_tamper
@@ -1761,6 +1802,52 @@ async def _run_screening_pipeline(
     full_name = (demographics or {}).get("full_name", "")
     watchlist_result = check_watchlist(name=full_name, id_number=doc_number)
 
+    # --- Iris verification (if eye image provided and citizen has template) ---
+    iris_result = None
+    if iris_path and citizen_id:
+        try:
+            from backend.biometric.iris.provider import get_provider
+            # Fetch latest template
+            async with async_session() as _iris_sess:
+                from sqlalchemy import select as _sel
+                _res = await _iris_sess.execute(
+                    __import__("backend.models", fromlist=["IrisTemplate"]).IrisTemplate.__table__.select().where(
+                        __import__("backend.models", fromlist=["IrisTemplate"]).IrisTemplate.citizen_id == citizen_id
+                    ).order_by(__import__("backend.models", fromlist=["IrisTemplate"]).IrisTemplate.created_at.desc()).limit(1)
+                )
+                # Use ORM instead
+                from backend.models import IrisTemplate
+                _r2 = await _iris_sess.execute(select(IrisTemplate).where(IrisTemplate.citizen_id == citizen_id).order_by(IrisTemplate.created_at.desc()).limit(1))
+                tmpl = _r2.scalar_one_or_none()
+                if tmpl:
+                    prov_iris = get_provider("rgb")
+                    # Decrypt template
+                    import base64, hmac, hashlib
+                    try:
+                        enc = tmpl.template
+                        if ":" in enc:
+                            _, b64 = enc.split(":", 1)
+                            ref_t = base64.b64decode(b64.encode())
+                        else:
+                            ref_t = base64.b64decode(enc.encode())
+                        ref_m = None
+                        if tmpl.mask and ":" in tmpl.mask:
+                            _, mb64 = tmpl.mask.split(":", 1)
+                            ref_m = base64.b64decode(mb64.encode())
+                        elif tmpl.mask:
+                            ref_m = base64.b64decode(tmpl.mask.encode())
+                    except Exception:
+                        ref_t, ref_m = None, None
+                    if ref_t:
+                        iris_result = prov_iris.verify(iris_path, ref_t, ref_m)
+                    else:
+                        iris_result = {"match": None, "decision": "INCONCLUSIVE", "reason": "template decrypt failed"}
+                else:
+                    iris_result = {"match": None, "decision": "INCONCLUSIVE", "reason": "no template enrolled"}
+        except Exception as e:
+            iris_result = {"match": None, "decision": "INCONCLUSIVE", "reason": str(e)[:80]}
+    # If no iris provided, keep None for risk engine
+
     # ------------------------------------------------------------------
     # Step 4: Risk Engine (with liveness — audit P1 §3)
     # ------------------------------------------------------------------
@@ -1841,6 +1928,14 @@ async def _run_screening_pipeline(
     except Exception:
         db_face_pairs = None
 
+    # Iris for risk (if provided)
+    iris_match_val = (iris_result or {}).get("match") if iris_result else None
+    iris_quality_val = (iris_result or {}).get("quality") if iris_result else None
+    iris_liveness_val = (iris_result or {}).get("liveness") if iris_result else None
+    # Fallback: if iris_result has direct liveness
+    if iris_result and "liveness" not in iris_result and "passed" in iris_result:
+        iris_liveness_val = iris_result
+
     risk = assess_risk(
         demographic_result=demographic_result,
         tamper_score=tamper_result.score if tamper_result.status == "ok" else None,
@@ -1861,6 +1956,9 @@ async def _run_screening_pipeline(
         gemini_photo_tamper=gemini_tamper_for_risk,
         registry_trust=registry_trust,
         db_face_pairs=db_face_pairs,
+        iris_match=iris_match_val,
+        iris_quality=iris_quality_val,
+        iris_liveness=iris_liveness_val,
     )
     # Demo cases: force at least Yellow (needs human review) and tag the
     # assessment so the UI can show a prominent "DEMO ONLY" banner.
@@ -3693,7 +3791,187 @@ async def cleanup_orphan_files(request: Request):
 
 
 # ---------------------------------------------------------------------------
-# 9. Evidence files — authenticated + expiring links (no public /evidence)
+# 9. Iris Biometric — enrollment / verification (RGB prototype, NIR stub)
+# ---------------------------------------------------------------------------
+
+def _encrypt_template(data: bytes) -> str:
+    """Encrypt template for at-rest storage (HMAC + base64, not just plaintext)."""
+    import base64, hmac, hashlib
+    # Simple envelope: base64(template) + HMAC; in production use Fernet/AES-GCM
+    try:
+        b64 = base64.b64encode(data).decode()
+        sig = hmac.new(_JWT_SECRET.encode(), data, hashlib.sha256).hexdigest()[:16]
+        return f"{sig}:{b64}"
+    except Exception:
+        import base64 as _b64
+        return _b64.b64encode(data).decode()
+
+def _decrypt_template(enc: str) -> bytes:
+    """Decrypt template."""
+    import base64
+    try:
+        if ":" in enc:
+            _, b64 = enc.split(":", 1)
+            return base64.b64decode(b64.encode())
+        return base64.b64decode(enc.encode())
+    except Exception:
+        return base64.b64decode(enc.encode())
+
+
+@app.post("/api/biometric/iris/enroll", include_in_schema=False)
+async def enroll_iris(
+    request: Request,
+    citizen_id: int = Form(...),
+    eye: str = Form("left"),
+    provider: str = Form("rgb"),
+    eye_image: UploadFile = File(...),
+):
+    """Enroll an iris template for a citizen — supervisor only, eye image is deleted after."""
+    officer = await _auth(request)
+    _require_role(officer, "supervisor")
+    if eye not in ("left", "right"):
+        raise HTTPException(status_code=400, detail="eye must be left or right")
+    # Validate citizen exists
+    async with async_session() as session:
+        res = await session.execute(select(CitizenRegistry).where(CitizenRegistry.id == citizen_id))
+        citizen = res.scalar_one_or_none()
+        if not citizen:
+            raise HTTPException(status_code=404, detail="Citizen not found")
+    # Process eye image
+    eye_bytes = await eye_image.read()
+    if len(eye_bytes) > 5_000_000:
+        raise HTTPException(status_code=400, detail="Eye image too large (max 5 MB)")
+    # Use provider
+    try:
+        from backend.biometric.iris.provider import get_provider
+        prov = get_provider(provider)
+        # Need to write to temp file for the provider (expects path or bytes)
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+            tmp.write(eye_bytes)
+            tmp_path = tmp.name
+        result = prov.enroll(tmp_path, eye=eye)
+        Path(tmp_path).unlink(missing_ok=True)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Iris enrollment failed: {e}")
+    if not result.get("template"):
+        raise HTTPException(status_code=400, detail=f"Iris quality insufficient: {result.get('quality')}")
+    # Encrypt and store
+    enc_template = _encrypt_template(result["template"])
+    enc_mask = _encrypt_template(result["mask"]) if result.get("mask") else None
+    async with async_session() as session:
+        tmpl = IrisTemplate(
+            citizen_id=citizen_id,
+            template=enc_template,
+            mask=enc_mask,
+            quality=float(result["quality"].get("quality", 0.0)) if isinstance(result.get("quality"), dict) else 0.0,
+            eye=eye,
+            enrolled_by=int(officer["sub"]),
+        )
+        session.add(tmpl)
+        await session.flush()
+        tid = tmpl.id
+        session.add(AuditLog(
+            actor=officer.get("username", "unknown"),
+            action=f"iris_enroll:{eye}",
+            entity=f"citizen:{citizen_id}:template:{tid}",
+            officer_id=int(officer["sub"]),
+            request_id=request.headers.get("X-Request-ID") or "",
+            device_info=f"provider:{prov.name} version:{prov.version}",
+        ))
+        await session.commit()
+    # Raw eye image is already deleted (temp file) — never stored
+    return {
+        "template_id": tid,
+        "citizen_id": citizen_id,
+        "eye": eye,
+        "quality": result["quality"],
+        "liveness": result.get("liveness", {"passed": None}),
+        "provider": prov.name,
+        "version": prov.version,
+    }
+
+
+@app.post("/api/biometric/iris/verify", include_in_schema=False)
+async def verify_iris(
+    request: Request,
+    citizen_id: Optional[int] = Form(None),
+    case_id: Optional[int] = Form(None),
+    eye_image: UploadFile = File(...),
+    provider: str = Form("rgb"),
+):
+    """Verify a probe eye image against a stored template."""
+    officer = await _auth(request)
+    if not citizen_id and not case_id:
+        raise HTTPException(status_code=400, detail="Provide citizen_id or case_id")
+    # Resolve citizen_id from case if needed
+    if case_id and not citizen_id:
+        async with async_session() as session:
+            res = await session.execute(select(ScreeningCase).where(ScreeningCase.id == case_id))
+            case = res.scalar_one_or_none()
+            if not case or not case.citizen_id:
+                raise HTTPException(status_code=404, detail="Case has no linked citizen for iris verification")
+            citizen_id = case.citizen_id
+    # Fetch latest template for this citizen/eye
+    async with async_session() as session:
+        res = await session.execute(
+            select(IrisTemplate).where(IrisTemplate.citizen_id == citizen_id).order_by(IrisTemplate.created_at.desc()).limit(1)
+        )
+        tmpl = res.scalar_one_or_none()
+        if not tmpl:
+            raise HTTPException(status_code=404, detail="No iris template enrolled for this citizen")
+        ref_template = _decrypt_template(tmpl.template)
+        ref_mask = _decrypt_template(tmpl.mask) if tmpl.mask else None
+    eye_bytes = await eye_image.read()
+    if len(eye_bytes) > 5_000_000:
+        raise HTTPException(status_code=400, detail="Eye image too large")
+    import tempfile
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
+        tmp.write(eye_bytes)
+        tmp_path = tmp.name
+    try:
+        from backend.biometric.iris.provider import get_provider
+        prov = get_provider(provider)
+        result = prov.verify(tmp_path, ref_template, ref_mask)
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+    # Audit
+    async with async_session() as session:
+        session.add(AuditLog(
+            actor=officer.get("username", "unknown"),
+            action=f"iris_verify:{'match' if result.get('match') else 'no_match' if result.get('match') is False else 'inconclusive'}",
+            entity=f"citizen:{citizen_id}",
+            officer_id=int(officer.get("sub")),
+        ))
+        await session.commit()
+    return {
+        "match": result.get("match"),
+        "distance": result.get("distance"),
+        "quality": result.get("quality"),
+        "decision": result.get("decision"),
+        "provider": prov.name,
+        "version": prov.version,
+    }
+
+
+@app.get("/api/biometric/iris/template/{citizen_id}", include_in_schema=False)
+async def get_iris_template_status(citizen_id: int, request: Request):
+    """Return only whether a template exists and its quality — never the raw template."""
+    officer = await _auth(request)
+    if officer.get("role") not in ("supervisor", "auditor"):
+        raise HTTPException(status_code=403, detail="Supervisor or auditor required")
+    async with async_session() as session:
+        res = await session.execute(
+            select(IrisTemplate).where(IrisTemplate.citizen_id == citizen_id).order_by(IrisTemplate.created_at.desc()).limit(1)
+        )
+        tmpl = res.scalar_one_or_none()
+        if not tmpl:
+            return {"template_exists": False, "quality": None, "eye": None}
+        return {"template_exists": True, "quality": tmpl.quality, "eye": tmpl.eye, "created_at": tmpl.created_at.isoformat() if tmpl.created_at else None}
+
+
+# ---------------------------------------------------------------------------
+# 10. Evidence files — authenticated + expiring links (no public /evidence)
 # ---------------------------------------------------------------------------
 
 def _evidence_token_for(filename: str, officer_id: int, expires_in: int = 300) -> str:
