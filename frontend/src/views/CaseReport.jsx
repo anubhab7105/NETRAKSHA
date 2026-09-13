@@ -573,6 +573,33 @@ export default function CaseReport() {
                 {(physicalData.checks_fired?.length > 0) && (
                   <p className="text-xs text-slate-500">Fired: {physicalData.checks_fired.join(', ').replace(/_/g, ' ')}</p>
                 )}
+                {(() => {
+                  const qr = physicalChecks.qr_barcode;
+                  const codes = qr?.details?.codes || [];
+                  if (!qr || qr.status !== 'ok' || codes.length === 0) return null;
+                  return (
+                    <div className="rounded-lg border border-teal-500/30 bg-teal-500/5 p-3">
+                      <p className="text-sm font-medium text-teal-300">
+                        QR / Barcode — {qr.details.codes_found} decoded ({(qr.details.formats || []).join(', ')})
+                      </p>
+                      <div className="mt-2 space-y-2">
+                        {codes.map((c, i) => (
+                          <div key={i} className="rounded bg-black/30 p-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-xs text-slate-400">{c.format}</span>
+                              <span className={`text-[11px] font-medium ${c.cross_check === 'consistent_with_document_number' ? 'text-success' : c.cross_check === 'payload_differs_from_document_number' ? 'text-danger' : 'text-slate-500'}`}>
+                                {c.cross_check === 'consistent_with_document_number' ? '✓ matches document number'
+                                  : c.cross_check === 'payload_differs_from_document_number' ? '✗ differs from document number — possible swapped code'
+                                  : 'no document link asserted'}
+                              </span>
+                            </div>
+                            <p className="mt-1 break-all font-mono text-[11px] text-slate-300">{c.payload}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             )}
             {physicalModule?.evidence_uri && (

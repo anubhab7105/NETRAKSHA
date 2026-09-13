@@ -314,47 +314,118 @@ def _check_font(gray: np.ndarray, doc_type: str) -> Tuple[float, str, dict]:
 # 3. Photo-boundary integrity (portrait frame geometry)
 # ---------------------------------------------------------------------------
 
-def _portrait_quad(gray: np.ndarray):
-    """Largest near-rectangular contour in the portrait zone (or None).
-
-    Returns (quad_4x2, rectangularity 0..1). The genuine frame is a clean
-    axis-aligned rectangle; a pasted substitute leaves either no closed
-    quad or a deformed one.
-    """
+def _quad_in_roi(roi: np.ndarray, x_off: int, page_area: float):
+    """Best near-rectangular contour inside one portrait ROI (or (None, 0))."""
     import cv2
 
-    h, w = gray.shape
-    ph, pw = int(h * 0.52), int(w * 0.44)
-    roi = gray[0:ph, w - pw:w]
     edges = cv2.Canny(roi, 50, 150)
     edges = cv2.dilate(edges, np.ones((3, 3), np.uint8), iterations=1)
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    page_area = float(h * w)
     best, best_rect = None, 0.0
     for cnt in contours:
         area = float(cv2.contourArea(cnt))
         if not (0.015 * page_area <= area <= 0.16 * page_area):
             continue
         peri = cv2.arcLength(cnt, True)
-        approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
+        approx = cv2.approxPolyDP(cnt, 0.025 * peri, True)
         if len(approx) != 4 or not cv2.isContourConvex(approx):
             continue
         pts = approx.reshape(4, 2).astype(float)
-        # rectangularity: corner angles near 90° + opposite sides equal
+        # rectangularity: corner angles near 90° + opposite sides equal.
+        # ±18° tolerates handheld perspective tilt; a pasted substitute
+        # still fails via deformed (non-quad) contours, not via angles.
         def _ang(a, b, c):
             v1, v2 = a - b, c - b
             n = (np.linalg.norm(v1) * np.linalg.norm(v2)) + 1e-9
             return float(np.degrees(np.arccos(np.clip(np.dot(v1, v2) / n, -1, 1))))
         angs = [_ang(pts[(i - 1) % 4], pts[i], pts[(i + 1) % 4]) for i in range(4)]
-        ang_ok = sum(abs(a - 90) < 14 for a in angs) / 4.0
+        ang_ok = sum(abs(a - 90) < 18 for a in angs) / 4.0
         sides = [float(np.linalg.norm(pts[(i + 1) % 4] - pts[i])) for i in range(4)]
         side_ok = 1.0 - min(1.0, abs(sides[0] - sides[2]) / max(1, sides[0] + sides[2])
                             + abs(sides[1] - sides[3]) / max(1, sides[1] + sides[3]))
         rect = 0.5 * ang_ok + 0.5 * side_ok
         if rect > best_rect:
             best_rect = rect
-            best = pts + np.array([w - pw, 0])
+            best = pts + np.array([x_off, 0])
     return best, best_rect
+
+
+def _portrait_quad(gray: np.ndarray):
+    """Largest near-rectangular contour in the portrait zones (or None).
+
+    Searches the top-right ROI (passport-style) AND the top-left ROI
+    (Aadhaar-style) and keeps the better quad. Returns (quad_4x2,
+    rectangularity 0..1). A pasted substitute leaves either no closed
+    quad or a deformed one.
+    """
+    h, w = gray.shape
+    ph, pw = int(h * 0.52), int(w * 0.44)
+    page_area = float(h * w)
+    best, best_rect = _quad_in_roi(gray[0:ph, w - pw:w], w - pw, page_area)
+    left_best, left_rect = _quad_in_roi(gray[0:ph, 0:pw], 0, page_area)
+    if left_rect > best_rect:
+        best, best_rect = left_best, left_rect
+    return best, best_rect
+
+
+def _frame_remnant_length(gray: np.ndarray) -> float:
+    """Total length of long axis-aligned edge segments in portrait zones.
+
+    A pasted-over photo destroys the closed frame quad but leaves its
+    interrupted straight border lines (plus the paste's own straight
+    edges). A genuinely frameless design has almost none. Used only
+    when no closed quad was found.
+    """
+    import cv2
+
+    h, w = gray.shape
+    zone = gray[0:int(h * 0.6), :]
+    edges = cv2.Canny(zone, 50, 150)
+    lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=60,
+                            minLineLength=80, maxLineGap=12)
+    if lines is None:
+        return 0.0
+    total = 0.0
+    for x1, y1, x2, y2 in np.asarray(lines).reshape(-1, 4):
+        ang = abs(float(np.degrees(np.arctan2(y2 - y1, x2 - x1)))) % 180.0
+        if min(ang, abs(ang - 90.0), abs(ang - 180.0)) < 8.0:
+            total += float(np.hypot(x2 - x1, y2 - y1))
+    return total
+
+
+def _portrait_face_present(bgr: np.ndarray) -> bool:
+    """Face-presence fallback: is there any face in either portrait half?
+
+    Used only when no closed frame quad is found, to distinguish a
+    frameless design / tilted capture (face present, low suspicion) from
+    a missing/destroyed photo (no face either, genuinely alarming).
+    Uses the MediaPipe FaceLandmarker (same model as liveness) — Haar
+    cascades are absent from headless OpenCV builds.
+    """
+    try:
+        import mediapipe as mp
+
+        from .liveness import _face_mesh
+
+        landmarker = _face_mesh()
+        try:
+            h, w = bgr.shape[:2]
+            for x0 in (0, w // 2):
+                half = bgr[0:int(h * 0.7), x0:x0 + w // 2]
+                rgb = half[:, :, ::-1]
+                res = landmarker.detect(
+                    mp.Image(image_format=mp.ImageFormat.SRGB,
+                             data=np.ascontiguousarray(rgb, dtype=np.uint8)))
+                if res and res.face_landmarks:
+                    return True
+            return False
+        finally:
+            try:
+                landmarker.close()
+            except Exception:
+                pass
+    except Exception:
+        return False
 
 
 def _check_photo_boundary(bgr: np.ndarray, gray: np.ndarray) -> Tuple[float, str, dict]:
@@ -364,10 +435,27 @@ def _check_photo_boundary(bgr: np.ndarray, gray: np.ndarray) -> Tuple[float, str
     quad, rectangularity = _portrait_quad(gray)
     details: Dict[str, Any] = {"rectangularity": round(rectangularity, 3)}
     if quad is None:
-        # No closed portrait quad — the frame is destroyed (or a frameless
-        # design). Face presence itself is asserted by the layout check.
+        # No closed portrait quad — three distinct cases:
+        #  1. interrupted straight frame lines remain -> a frame EXISTED and
+        #     was broken/covered (pasted substitute) -> alarm;
+        #  2. no lines but a face is present -> frameless design or capture
+        #     angle -> low score, manual glance advised;
+        #  3. neither lines nor face -> photo missing/destroyed -> alarm.
+        remnants = _frame_remnant_length(gray)
+        details["frame_remnants_px"] = round(remnants, 1)
+        face_present = _portrait_face_present(bgr)
+        details["face_present"] = face_present
+        if remnants >= 400.0:
+            return 0.7, "ok", {**details, "portrait_quad": False,
+                                "findings": ["portrait frame lines are interrupted but present — "
+                                             "frame broken or covered by a pasted photo; possible substitution"]}
+        if face_present:
+            return 0.25, "ok", {**details, "portrait_quad": False,
+                                 "findings": ["no closed portrait frame, but a face is present — "
+                                              "frameless design or capture angle; glance at the photo manually"]}
         return 0.6, "ok", {**details, "portrait_quad": False,
-                            "findings": ["no closed portrait frame detected — possible frame destruction"]}
+                            "findings": ["no portrait frame and no face detected in portrait zones — "
+                                         "possible photo removal or destruction"]}
     details["portrait_quad"] = True
     # Frame-line presence: at sample points along the quad, the 11×11 patch
     # must contain a dark VALLEY (the outline) between brighter borders —

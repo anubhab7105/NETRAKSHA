@@ -4,14 +4,31 @@ import { Camera, Loader2, RefreshCw, X, Video } from 'lucide-react';
 const STATUS_MESSAGES = {
   idle: 'Position face inside the frame',
   starting: 'Opening camera…',
-  ready: 'Position face inside the frame — move slightly closer if needed',
-  capturing: 'Capturing… hold still',
-  faceDetected: 'Face detected',
-  eyesDetected: 'Eyes detected',
+  ready: 'Face in the oval, eyes in the circles — then press Capture and follow the actions',
+  capturing: 'Follow the on-screen action…',
+  faceDetected: 'Look straight at the camera…',
+  eyesDetected: 'Now BLINK — close and open your eyes…',
   checkingLiveness: 'Checking liveness…',
   processingIris: 'Processing iris…',
   complete: 'Capture complete',
 };
+
+// Action prompts sequenced across the ~2.1s / 14-frame burst. Any one of
+// these actions certifies liveness server-side — the sequence just makes
+// sure at least one is clearly observed.
+const BURST_PROMPTS = [
+  { until: 4, title: 'Look straight at the camera', sub: 'Keep your face inside the oval' },
+  { until: 8, title: 'BLINK NOW — close and open your eyes', sub: 'One slow, clear blink' },
+  { until: 11, title: 'Turn your head slowly left and right', sub: 'Small movement is enough' },
+  { until: 14, title: 'Open your mouth wide', sub: 'Almost done — stay in frame' },
+];
+
+const FACE_GUIDE_STEPS = [
+  { n: '1', title: 'Light + uncover', text: 'Face the light. Remove sunglasses, mask, cap or anything covering the face.' },
+  { n: '2', title: 'Frame the face', text: 'Face inside the oval, eyes inside the two circles. Move closer if needed.' },
+  { n: '3', title: 'Follow the actions', text: 'During the 2-second capture: look → BLINK → turn head → open mouth.' },
+  { n: '4', title: 'Stay in frame', text: 'Keep still otherwise. Do not hold a photo or another screen to the camera.' },
+];
 
 /**
  * PersonBiometricCapture — ONE camera session, ONE button, ONE burst.
@@ -37,6 +54,7 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
   const [videoReady, setVideoReady] = useState(false);
   const [bursting, setBursting] = useState(false);
   const [status, setStatus] = useState('idle');
+  const [burstStep, setBurstStep] = useState(0);
   const [error, setError] = useState(null);
   const urlRef = useRef(null);
   const previewUrl = React.useMemo(() => (file?.primaryPreviewUrl ? file.primaryPreviewUrl : null), [file]);
@@ -108,6 +126,7 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
 
     setBursting(true);
     setError(null);
+    setBurstStep(0);
     try {
       setStatus('capturing');
       // Brief settle so the officer sees the guide before motion starts
@@ -117,8 +136,9 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
       for (let i = 0; i < totalFrames; i++) {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         frames.push(new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), 'image/png')));
-        if (i === 3) setStatus('faceDetected');
-        if (i === 7) setStatus('eyesDetected');
+        setBurstStep(i + 1);
+        if (i < 4) setStatus('faceDetected');
+        else if (i < 8) setStatus('eyesDetected');
         await new Promise((r) => setTimeout(r, 150));
       }
       setStatus('checkingLiveness');
@@ -156,11 +176,11 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
               <img src={previewUrl} alt="Captured traveler preview" className="mb-3 max-h-[180px] max-w-full rounded-lg border border-slate-700/50 object-contain" />
             )}
             <p className="text-sm font-medium text-slate-200">Person captured — {count} frames</p>
-            <p className="text-xs text-slate-500 mt-1">One capture feeds face + liveness + iris</p>
+            <p className="text-xs text-slate-500 mt-1">One capture feeds face + liveness + iris analysis</p>
             <div className="mt-2 flex flex-col gap-1 text-xs text-success">
-              <span>✓ Face captured</span>
-              <span>✓ Liveness captured</span>
-              <span>✓ Iris captured</span>
+              <span>✓ Face frames recorded</span>
+              <span>✓ Action burst recorded (liveness)</span>
+              <span>✓ Eye frames recorded (iris)</span>
             </div>
             <div className="mt-4 flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
               <button onClick={() => { stopStream(); onClear(); }} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-400 hover:bg-slate-700 hover:text-white">
@@ -201,11 +221,32 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
                 </div>
               </div>
               {bursting && (
-                <div className="absolute inset-0 rounded-lg bg-black/70 flex flex-col items-center justify-center">
-                  <p className="text-white font-bold text-lg animate-pulse">
-                    {status === 'checkingLiveness' ? 'Checking liveness…' : status === 'processingIris' ? 'Processing iris…' : 'Hold still — capturing…'}
-                  </p>
-                  <p className="text-slate-300 text-xs mt-1">Face + eyes in frame</p>
+                <div className="absolute inset-0 rounded-lg bg-black/70 flex flex-col items-center justify-center px-4">
+                  {(() => {
+                    if (status === 'checkingLiveness') return (
+                      <>
+                        <p className="text-white font-bold text-lg">Checking liveness…</p>
+                        <p className="text-slate-300 text-xs mt-1">Analyzing your actions</p>
+                      </>
+                    );
+                    if (status === 'processingIris') return (
+                      <>
+                        <p className="text-white font-bold text-lg">Processing iris…</p>
+                        <p className="text-slate-300 text-xs mt-1">Locating eyes in the capture</p>
+                      </>
+                    );
+                    const prompt = BURST_PROMPTS.find((p) => burstStep <= p.until) || BURST_PROMPTS[0];
+                    return (
+                      <>
+                        <p className="text-white font-bold text-lg animate-pulse text-center">{prompt.title}</p>
+                        <p className="text-slate-300 text-xs mt-1">{prompt.sub}</p>
+                        <div className="mt-3 h-1.5 w-3/4 overflow-hidden rounded-full bg-white/20">
+                          <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${Math.min(100, (burstStep / 14) * 100)}%` }} />
+                        </div>
+                        <p className="text-slate-400 text-[11px] mt-1">Step {Math.min(burstStep, 14)} of 14</p>
+                      </>
+                    );
+                  })()}
                 </div>
               )}
             </div>
@@ -222,6 +263,19 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
                 {bursting ? 'Capturing…' : 'Capture Person'}
               </button>
             </div>
+            {!bursting && (
+              <ol className="mt-3 space-y-2 rounded-lg bg-black/20 p-3 text-left">
+                {FACE_GUIDE_STEPS.map((s) => (
+                  <li key={s.n} className="flex items-start gap-2.5">
+                    <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[11px] font-bold text-primary">{s.n}</span>
+                    <span className="text-xs text-slate-300">
+                      <span className="font-semibold text-slate-100">{s.title} — </span>
+                      {s.text}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            )}
           </>
         )}
       </div>
