@@ -108,9 +108,9 @@ Thresholds: `pipeline/thresholds.json` (`face_match 0.55` band 0.45–0.65, `tam
 1. **Hybrid face verification (local-authoritative):**
    - InsightFace `buffalo_l` runs locally (CPU `CPUExecutionProvider` — no GPU on dev box) and decides all match booleans.
    - Gemini (`google-genai` SDK, default `GEMINI_MODEL=gemini-3.6-flash`) adds classification, OCR, and biometric reasoning. Offline simulation (`is_simulated=True`) keeps demos/tests working without a key; simulated scores never force Red.
-2. **Dual Database Engine (10 tables):**
+2. **Supabase PostgreSQL only (10 tables, no local fallback):**
    - `officers`, `citizens_registry`, `registry_enrollments`, `screening_cases`, `extracted_fields`, `module_results`, `officer_actions`, `audit_log`, `screening_idempotency`, `watchlist_entries` (see `Schema.md`).
-   - Empty `DATABASE_URL` = local `sqlite+aiosqlite:///screening.db`; else `postgresql+asyncpg://`. Schema self-heals at startup (`ensure_*`); no Alembic.
+   - `DATABASE_URL` is **required** (`postgresql+asyncpg://`, `postgresql://` auto-rewritten); the backend refuses to start without it. Schema self-heals at startup (`ensure_*`); no Alembic.
 3. **Fault Isolation Guarantee:**
    - Every `run_*` catches all errors → `status="inconclusive"`, `score=None`. Any inconclusive forces verdict ≥ Yellow. `POST /api/screen` never 500s on module failure.
 4. **Auth & governance built in:**
@@ -189,7 +189,7 @@ Thresholds: `pipeline/thresholds.json` (`face_match 0.55` band 0.45–0.65, `tam
 - Node.js 18+ and npm
 - System Tesseract OCR (Windows: `winget install UB-Mannheim.TesseractOCR`; Debian: `sudo apt-get install -y tesseract-ocr tesseract-ocr-eng`) — no vendored binary is shipped
 - Google Gemini API Key (optional — without it the scanner runs simulated; free from Google AI Studio)
-- Supabase PostgreSQL account (optional — without `DATABASE_URL` the app uses local SQLite)
+- Supabase PostgreSQL account (**required** — the backend refuses to start without `DATABASE_URL`; there is no local/SQLite fallback)
 
 ### Environment Setup
 ```powershell
@@ -207,7 +207,7 @@ uv pip install -r requirements.txt
 # 4. Configure environment (copy .env.example → .env):
 # GEMINI_API_KEY=""            # empty = offline simulated scanner (tests rely on this)
 # GEMINI_MODEL="gemini-3.6-flash"
-# DATABASE_URL=""              # empty = sqlite+aiosqlite:///screening.db
+# DATABASE_URL="postgresql://..."  # REQUIRED — Supabase; no local fallback
 # APP_ENV=development JWT_SECRET=<dev default> JWT_EXPIRY_HOURS=8
 # MFA_TOKEN_MINUTES=5 LOGIN_RATE_LIMIT_MAX_ATTEMPTS=5 LOGIN_RATE_LIMIT_WINDOW_SECONDS=300
 # BOOTSTRAP_ADMIN_USER/PASS/UNIT (production only) REGISTRY_IMPORT_SECRET=...

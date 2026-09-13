@@ -1,19 +1,18 @@
-"""Async database engine configuration.
+"""Async database engine configuration — Supabase PostgreSQL ONLY.
 
-Supports dual-engine setup:
-  * Primary (Hackathon / Production): Supabase PostgreSQL via asyncpg
-    (`postgresql+asyncpg://...`)
-  * Offline Fallback: Local SQLite via aiosqlite
-    (`sqlite+aiosqlite:///screening.db`)
+There is no local/SQLite fallback. The backend refuses to import without a
+usable ``DATABASE_URL`` so a misconfigured deploy fails loudly at startup
+instead of silently writing cases, users and audit rows to a throwaway
+local file that diverges from the production registry.
 
-Automatically selects the connection string via `DATABASE_URL` env var.
-Falls back to SQLite if the env var is not set or empty.
+URL forms accepted:
+  * ``postgresql+asyncpg://...`` (preferred)
+  * ``postgresql://...`` (auto-rewritten to the above)
 """
 
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -22,39 +21,43 @@ from sqlalchemy.ext.asyncio import (
 )
 
 # ---------------------------------------------------------------------------
-# Database URL resolution
+# Database URL resolution — Postgres required, fail fast
 # ---------------------------------------------------------------------------
-
-_DEFAULT_SQLITE = f"sqlite+aiosqlite:///{Path(__file__).resolve().parent.parent / 'screening.db'}"
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
 if not DATABASE_URL:
-    DATABASE_URL = _DEFAULT_SQLITE
-elif DATABASE_URL.startswith("postgresql://"):
+    raise RuntimeError(
+        "DATABASE_URL is not set. This backend is Supabase-PostgreSQL-only "
+        "(no local/SQLite fallback). Set DATABASE_URL to your Supabase "
+        "connection string, e.g. "
+        "postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres"
+    )
+if DATABASE_URL.startswith("sqlite"):
+    raise RuntimeError(
+        "SQLite DATABASE_URLs are not supported. This backend is "
+        "Supabase-PostgreSQL-only — point DATABASE_URL at Supabase."
+    )
+if DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
-
-# Detect engine type for conditional configuration
-_IS_SQLITE = DATABASE_URL.startswith("sqlite")
+if not DATABASE_URL.startswith("postgresql+asyncpg://"):
+    raise RuntimeError(
+        f"Unsupported DATABASE_URL scheme {DATABASE_URL.split('://', 1)[0]!r}. "
+        "Use postgresql://... or postgresql+asyncpg://... (Supabase)."
+    )
 
 # ---------------------------------------------------------------------------
-# Engine & session factory
+# Engine & session factory (PostgreSQL / asyncpg)
 # ---------------------------------------------------------------------------
 
 _engine_kwargs = {
     "echo": os.environ.get("DB_ECHO", "").lower() in ("1", "true"),
-}
-
-if _IS_SQLITE:
-    # SQLite-specific: allow check_same_thread=False for async
-    _engine_kwargs["connect_args"] = {"check_same_thread": False}
-else:
-    # PostgreSQL asyncpg settings
-    _engine_kwargs["pool_size"] = int(os.environ.get("DB_POOL_SIZE", "5"))
-    _engine_kwargs["max_overflow"] = int(os.environ.get("DB_MAX_OVERFLOW", "10"))
-    _engine_kwargs["pool_pre_ping"] = True
-    _engine_kwargs["connect_args"] = {
+    "pool_size": int(os.environ.get("DB_POOL_SIZE", "5")),
+    "max_overflow": int(os.environ.get("DB_MAX_OVERFLOW", "10")),
+    "pool_pre_ping": True,
+    "connect_args": {
         "statement_cache_size": 0
-    }
+    },
+}
 
 engine = create_async_engine(DATABASE_URL, **_engine_kwargs)
 
@@ -93,7 +96,7 @@ async def init_db() -> None:
     except Exception as e:
         print(f"[init_db] sequence repair warning: {e}")
     # Post-fix columns on a pre-existing table are NOT added by create_all —
-    # backfill them so deployed SQLite/Postgres DBs pick up trust metadata
+    # backfill them so deployed Postgres DBs pick up trust metadata
     # with just a restart (no manual migration).
     try:
         await ensure_registry_trust_columns()
@@ -109,35 +112,28 @@ async def ensure_model_columns() -> dict:
     """Add every ORM-mapped column missing from the live database.
 
     Generic drift repair: compares each model's columns against the actual
-    table (information_schema on Postgres, PRAGMA on SQLite) and ALTERs in
-    whatever is absent — e.g. officers.unit on databases created before
-    unit scoping shipped. Idempotent, race-safe (per-column try/except),
-    runs on every startup. Returns {"table": [added, ...]}.
+    table (information_schema) and ALTERs in whatever is absent — e.g.
+    officers.unit on databases created before unit scoping shipped.
+    Idempotent, race-safe (per-column try/except), runs on every startup.
+    Returns {"table": [added, ...]}.
     """
     from .models import Base
 
-    if _IS_SQLITE:
-        from sqlalchemy.dialects import sqlite as _sqlite_dialect
-        _dialect = _sqlite_dialect.dialect()
-    else:
-        from sqlalchemy.dialects import postgresql as _pg_dialect
-        _dialect = _pg_dialect.dialect()
+    from sqlalchemy.dialects import postgresql as _pg_dialect
+
+    _dialect = _pg_dialect.dialect()
 
     from sqlalchemy import text as _text
 
     added: dict[str, list[str]] = {}
     async with engine.begin() as conn:
         for table in Base.metadata.tables.values():
-            if _IS_SQLITE:
-                res = await conn.execute(_text(f"PRAGMA table_info({table.name})"))
-                existing = {row[1] for row in res.all()}
-            else:
-                res = await conn.execute(
-                    _text("SELECT column_name FROM information_schema.columns "
-                          "WHERE table_name = :t"),
-                    {"t": table.name},
-                )
-                existing = {row[0] for row in res.all()}
+            res = await conn.execute(
+                _text("SELECT column_name FROM information_schema.columns "
+                      "WHERE table_name = :t"),
+                {"t": table.name},
+            )
+            existing = {row[0] for row in res.all()}
             for col in table.columns:
                 if col.primary_key or col.name in existing:
                     continue
@@ -151,11 +147,8 @@ async def ensure_model_columns() -> dict:
                         default_sql = f" DEFAULT {col.server_default._compiler_dispatch(_dialect, None)}"
                 except Exception:
                     default_sql = ""
-                if _IS_SQLITE:
-                    stmt = f'ALTER TABLE {table.name} ADD COLUMN "{col.name}" {ddl_type}{default_sql}'
-                else:
-                    stmt = (f'ALTER TABLE {table.name} ADD COLUMN IF NOT EXISTS '
-                            f'"{col.name}" {ddl_type}{default_sql}')
+                stmt = (f'ALTER TABLE {table.name} ADD COLUMN IF NOT EXISTS '
+                        f'"{col.name}" {ddl_type}{default_sql}')
                 try:
                     await conn.execute(_text(stmt))
                     added.setdefault(table.name, []).append(col.name)
@@ -182,7 +175,7 @@ async def ensure_model_columns() -> dict:
 
 
 # Trust columns added to citizens_registry after the enrollment audit.
-# (name, DDL fragment used for ALTER TABLE on both SQLite and Postgres.)
+# (name, DDL fragment used for ALTER TABLE.)
 _REGISTRY_TRUST_COLUMNS: tuple[tuple[str, str], ...] = (
     ("source", "VARCHAR(30)"),
     ("source_ref", "TEXT"),
@@ -200,27 +193,18 @@ async def ensure_registry_trust_columns() -> dict:
 
     Safe to run on every startup (idempotent). Returns {"added": [...]}.
     """
+    from sqlalchemy import text as _text
+
     added: list[str] = []
-    if _IS_SQLITE:
-        from sqlalchemy import text as _text
-        async with engine.begin() as conn:
-            res = await conn.execute(_text("PRAGMA table_info(citizens_registry)"))
-            existing = {row[1] for row in res.all()}
-            for name, ddl in _REGISTRY_TRUST_COLUMNS:
-                if name not in existing:
-                    await conn.execute(_text(f"ALTER TABLE citizens_registry ADD COLUMN {name} {ddl}"))
-                    added.append(name)
-    else:
-        from sqlalchemy import text as _text
-        async with engine.begin() as conn:
-            for name, ddl in _REGISTRY_TRUST_COLUMNS:
-                try:
-                    await conn.execute(_text(
-                        f"ALTER TABLE citizens_registry ADD COLUMN IF NOT EXISTS {name} {ddl}"
-                    ))
-                    added.append(name)
-                except Exception:
-                    pass
+    async with engine.begin() as conn:
+        for name, ddl in _REGISTRY_TRUST_COLUMNS:
+            try:
+                await conn.execute(_text(
+                    f"ALTER TABLE citizens_registry ADD COLUMN IF NOT EXISTS {name} {ddl}"
+                ))
+                added.append(name)
+            except Exception:
+                pass
     if added:
         print(f"[init_db] citizens_registry trust columns added: {added}")
     return {"added": added}
@@ -237,27 +221,18 @@ _AUTH_COLUMNS: tuple[tuple[str, str], ...] = (
 
 async def ensure_auth_columns() -> dict:
     """Add missing auth columns to officers. Idempotent; runs every startup."""
+    from sqlalchemy import text as _text
+
     added: list[str] = []
-    if _IS_SQLITE:
-        from sqlalchemy import text as _text
-        async with engine.begin() as conn:
-            res = await conn.execute(_text("PRAGMA table_info(officers)"))
-            existing = {row[1] for row in res.all()}
-            for name, ddl in _AUTH_COLUMNS:
-                if name not in existing:
-                    await conn.execute(_text(f"ALTER TABLE officers ADD COLUMN {name} {ddl}"))
-                    added.append(name)
-    else:
-        from sqlalchemy import text as _text
-        async with engine.begin() as conn:
-            for name, ddl in _AUTH_COLUMNS:
-                try:
-                    await conn.execute(_text(
-                        f"ALTER TABLE officers ADD COLUMN IF NOT EXISTS {name} {ddl}"
-                    ))
-                    added.append(name)
-                except Exception:
-                    pass
+    async with engine.begin() as conn:
+        for name, ddl in _AUTH_COLUMNS:
+            try:
+                await conn.execute(_text(
+                    f"ALTER TABLE officers ADD COLUMN IF NOT EXISTS {name} {ddl}"
+                ))
+                added.append(name)
+            except Exception:
+                pass
     # Backfill NULLs left by ADD COLUMN on rows predating the default.
     if added:
         from sqlalchemy import text as _text
@@ -277,17 +252,15 @@ async def ensure_auth_columns() -> dict:
 
 
 async def ensure_sequences() -> dict:
-    """Re-anchor SERIAL sequences past max(id) on every table (Postgres).
+    """Re-anchor SERIAL sequences past max(id) on every table.
 
     Legacy databases (rows inserted with explicit IDs, restores, dashboard
     edits) leave e.g. officers_id_seq behind max(officers.id), so the next
     autoincrement INSERT dies with a duplicate-pkey IntegrityError and —
     in production — crash-loops the backend at seed time. pg_get_serial_-
-    sequence() resolves the real sequence regardless of naming. No-op on
-    SQLite (rowid tables self-heal). Returns {"table": next_id}.
+    sequence() resolves the real sequence regardless of naming. Returns
+    {"table": next_id}.
     """
-    if _IS_SQLITE:
-        return {}
     from sqlalchemy import text as _text
 
     from .models import Base
@@ -315,18 +288,10 @@ async def ensure_sequences() -> dict:
     return fixed
 
 
-async def drop_db() -> None:
-    """Drop all tables. Used only in testing."""
-    from .models import Base
-
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-
-
 def get_engine_info() -> dict:
     """Return diagnostic info about the current database engine."""
     return {
         "url": DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else DATABASE_URL,
-        "is_sqlite": _IS_SQLITE,
-        "driver": "aiosqlite" if _IS_SQLITE else "asyncpg",
+        "driver": "asyncpg",
+        "backend": "postgresql",
     }

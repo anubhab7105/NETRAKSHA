@@ -273,11 +273,11 @@ async def seed_all() -> dict:
     return summary
 
 
-async def reset_and_seed() -> dict:
-    """Drop all tables, recreate, and re-seed. For testing only."""
-    from backend.database import drop_db
-    await drop_db()
-    return await seed_all()
+# NOTE: there is intentionally no drop/reset helper. The backend is
+# Supabase-PostgreSQL-only and shares one production database — a
+# drop-all-tables helper is a data-loss footgun. Tests that need isolation
+# use their own in-memory engines (see test_auth_security.py), never this
+# module's engine.
 
 
 # ---------------------------------------------------------------------------

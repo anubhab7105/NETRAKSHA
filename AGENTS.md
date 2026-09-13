@@ -1,10 +1,10 @@
 # AGENTS.md
 
 ## Stack & layout
-- Single-process FastAPI backend: `backend/app.py` (all `/api/*` routes + SPA fallback), `backend/database.py` (dual engine + `ensure_*` self-heal), `backend/models.py` (10 tables), `backend/seed.py` (idempotent), `backend/auth_security.py` (JWT/TOTP/password/throttles).
+- Single-process FastAPI backend: `backend/app.py` (all `/api/*` routes + SPA fallback), `backend/database.py` (Supabase-PostgreSQL-only, fail-fast + `ensure_*` self-heal), `backend/models.py` (10 tables), `backend/seed.py` (idempotent), `backend/auth_security.py` (JWT/TOTP/password/throttles).
 - Forensic pipeline: `pipeline/` — `ocr_mrz`, `checksums`, `demographic`, `tamper` (ELA + exact-hash copy-move), `physical_forgery`, `deepfake` (FFT), `face_match` (InsightFace `buffalo_l` local-authoritative), `face_quality` + `document_quality` (gates), `liveness` (MediaPipe EAR/motion/moiré), `gemini_scanner` (`google-genai`, `gemini-3.6-flash` + simulated fallback), `watchlist` (`WatchlistProvider`), `risk_engine`, `security_zones` (legacy), `fairness`; contract in `pipeline/common.py` (`ModuleResult`, `ok_result`/`inconclusive_result`); thresholds in `pipeline/thresholds.json`. Never inline module logic into routes. Note: `__init__.py` exports only 10 of 15 modules.
 - Frontend: `frontend/` React 19 + Vite 8 + Tailwind 4 (**JS/JSX only, no TS**), axios + react-router 7, lint = `oxlint`. Views: `Login/Dashboard/Scanner/CaseReport/AuditTrail/SecuritySetup`; client `src/api.js`.
-- DB: empty `DATABASE_URL` = `sqlite+aiosqlite:///screening.db`; else `postgresql+asyncpg://` (auto-rewritten). No Alembic.
+- DB: Supabase-PostgreSQL-only — `DATABASE_URL` required (`postgresql+asyncpg://`, `postgresql://` auto-rewritten); missing/SQLite URL raises at import. No Alembic. (`aiosqlite` remains in requirements test-only for isolated `:memory:` fixtures in `test_auth_security.py`; never used at runtime.)
 
 ## Commands
 - Setup (PowerShell): `uv venv --python 3.11 .venv; .venv\Scripts\Activate.ps1; uv pip install -r requirements.txt`
@@ -18,7 +18,7 @@
 ## Env & startup gotchas
 - `GEMINI_API_KEY` empty → `scan_document` returns `is_simulated=True`; simulated face/tamper never force Red (tests rely on this). Default model `gemini-3.6-flash` (not 1.5/2.0).
 - `APP_ENV=production` raises on default/short `JWT_SECRET` and on missing `BOOTSTRAP_ADMIN_*`; never creates demo users. `REGISTRY_IMPORT_SECRET` falls back to `JWT_SECRET` with warning.
-- Naive datetimes only: `_utcnow_naive()` for DB writes. Aware `datetime.now(timezone.utc)` 500s on Postgres, passes on SQLite.
+- Naive datetimes only: `_utcnow_naive()` for DB writes. Aware `datetime.now(timezone.utc)` 500s on Postgres via asyncpg.
 - Startup self-heals (`ensure_model_columns/auth/registry_trust/sequences`); don't write migrations. Postgres explicit-ID legacy DBs re-anchor via `setval(max(id)+1)`.
 - Evidence: `SCREEN_EVIDENCE_DIR` or `samples/evidence/` (blank=unset; gitignored). No public mount — `GET /evidence/*` is 404; use signed `/api/evidence/token|view|{filename}` (`expires_in` 30–3600s).
 - CPU-only (no GPU); InsightFace uses `CPUExecutionProvider`. Sub-2.5s end-to-end is aspirational (sequential OCR + 3× local face + Gemini).

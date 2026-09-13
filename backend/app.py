@@ -2894,44 +2894,56 @@ def _normalize_doc_number(number: str) -> str:
     return (number or "").strip().replace(" ", "").replace("-", "").upper()
 
 
+def _citizen_identity_clause(doc_type: str, norm_number: str):
+    """Case/format-insensitive (type + number) match for CitizenRegistry.
+
+    Legacy rows predate write-path normalization (`'Aadhaar'` vs `'aadhaar'`,
+    `'7848 4723 6650'` vs `'784847236650'`), and exact-match lookups miss
+    them — surfacing as a false "NO DOCUMENT FOUND IN THE DATABASE".
+    Comparing lower(type) and the space/hyphen-stripped, uppercased number
+    on BOTH sides keeps those rows matchable. Type scoping is preserved: a
+    PAN never matches an Aadhaar holding the same digits.
+    """
+    from sqlalchemy import func
+
+    norm_type = (doc_type or "").strip().lower()
+    norm_num = _normalize_doc_number(norm_number)
+    db_number = func.upper(
+        func.replace(func.replace(CitizenRegistry.document_number, " ", ""), "-", "")
+    )
+    return (
+        func.lower(CitizenRegistry.document_type) == norm_type,
+        db_number == norm_num,
+    )
+
+
 async def _find_citizen_by_number(doc_type: str, doc_number: str):
     """Registry lookup scoped to (type + number). Returns CitizenRegistry or None.
 
     A PAN must never match an Aadhaar holding the same digits, so every
-    attempt is type-scoped; both the normalized and the raw number forms
-    are tried (legacy rows predate normalization).
+    attempt is type-scoped. Matching is case/format-insensitive on both
+    sides (see `_citizen_identity_clause`) so legacy rows that predate
+    write-path normalization still match.
     """
     if not doc_type or not doc_number:
         return None
-    candidates = [doc_number]
-    try:
-        norm = _normalize_doc_number(doc_number)
-        if norm and norm != doc_number:
-            candidates.insert(0, norm)
-    except Exception:
-        pass
     async with async_session() as session:
-        for cand in candidates:
-            result = await session.execute(
-                select(CitizenRegistry).where(
-                    (CitizenRegistry.document_type == doc_type)
-                    & (CitizenRegistry.document_number == cand)
-                )
-            )
-            citizen = result.scalar_one_or_none()
-            if citizen is None:
-                continue
-            # Touch the columns we need while bound, then detach.
-            try:
-                _ = (citizen.id, citizen.photo_uri, citizen.document_type, citizen.document_number)
-            except Exception:
-                continue
-            try:
-                session.expunge(citizen)
-            except Exception:
-                pass
-            return citizen
-    return None
+        result = await session.execute(
+            select(CitizenRegistry).where(*_citizen_identity_clause(doc_type, doc_number))
+        )
+        citizen = result.scalar_one_or_none()
+        if citizen is None:
+            return None
+        # Touch the columns we need while bound, then detach.
+        try:
+            _ = (citizen.id, citizen.photo_uri, citizen.document_type, citizen.document_number)
+        except Exception:
+            return None
+        try:
+            session.expunge(citizen)
+        except Exception:
+            pass
+        return citizen
 
 
 def _validate_enrollment_doc_number(doc_type: str, doc_number: str) -> dict:
@@ -3390,8 +3402,7 @@ async def approve_enrollment(enrollment_id: int, request: Request):
             _validate_enrollment_doc_number(req.document_type or "", req.document_number or "")
             dup = await session.execute(
                 select(CitizenRegistry).where(
-                    (CitizenRegistry.document_type == req.document_type)
-                    & (CitizenRegistry.document_number == req.document_number)
+                    *_citizen_identity_clause(req.document_type or "", req.document_number or "")
                 )
             )
             if dup.scalar_one_or_none() is not None:
@@ -3581,8 +3592,7 @@ async def import_authority_citizens(request: Request):
                 _validate_enrollment_doc_number(doc_type, doc_number)
                 dup = await session.execute(
                     select(CitizenRegistry).where(
-                        (CitizenRegistry.document_type == doc_type)
-                        & (CitizenRegistry.document_number == doc_number)
+                        *_citizen_identity_clause(doc_type, doc_number)
                     )
                 )
                 if dup.scalar_one_or_none() is not None:

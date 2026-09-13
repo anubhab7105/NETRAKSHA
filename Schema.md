@@ -1,7 +1,7 @@
 # Schema
-## Database Design (MVP — Supabase PostgreSQL & SQLite Dual Engine)
+## Database Design (MVP — Supabase PostgreSQL only, no local fallback)
 
-Storage is configured using **Supabase PostgreSQL** (cloud-managed PostgreSQL 15/16) as the primary database (`postgresql+asyncpg://...`, `postgresql://` auto-rewritten) with zero-installation setup on Windows, built-in object storage, and a live app dashboard for evaluators. The system maintains an automatic local **SQLite async fallback** (`sqlite+aiosqlite:///screening.db`) so the application operates seamlessly even in offline or network-throttled border scenarios. Selection is via `DATABASE_URL` (empty = SQLite). No Alembic — `init_db()` runs `create_all` plus idempotent `ensure_model_columns` / `ensure_auth_columns` / `ensure_registry_trust_columns` / `ensure_sequences` (re-anchors Postgres SERIALs past `max(id)`) on every startup.
+Storage is **Supabase PostgreSQL** (cloud-managed PostgreSQL 15/16) as the only database (`postgresql+asyncpg://...`, `postgresql://` auto-rewritten) with zero-installation setup on Windows, built-in object storage, and a live app dashboard for evaluators. `DATABASE_URL` is required — the backend raises at import without it, so a misconfigured deploy fails loudly instead of silently diverging into a throwaway local file. No Alembic — `init_db()` runs `create_all` plus idempotent `ensure_model_columns` / `ensure_auth_columns` / `ensure_registry_trust_columns` / `ensure_sequences` (re-anchors Postgres SERIALs past `max(id)`) on every startup.
 
 Real authentication is enforced via the `officers` table with bcrypt-only password hashing (passlib, no SHA fallback) and JWT sessions plus supervisor TOTP and forced rotation. 10 tables total.
 
