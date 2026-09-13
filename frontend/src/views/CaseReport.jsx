@@ -169,11 +169,26 @@ export default function CaseReport() {
   const livenessModule = findModule('liveness');
   const checksumModule = findModule('checksum');
   const watchlistModule = findModule('watchlist');
-  
+  const irisModule = findModule('iris');
+
   const geminiData = geminiModule?.raw_output || {};
   const faceMatch = geminiData.three_way_face_match || {};
   const physicalData = physicalModule?.raw_output || {};
   const physicalChecks = physicalData.checks || {};
+  // Iris verification: prefer top-level response field, fall back to persisted module
+  const irisData = data.iris_verification || irisModule?.raw_output || null;
+  const faceLive = livenessModule?.raw_output?.live;
+  const biometricOverall = (() => {
+    const faceOk = faceMatch.live_vs_doc_match === true;
+    const faceBad = faceMatch.live_vs_doc_match === false;
+    const irisOk = irisData?.match === true;
+    const irisBad = irisData?.match === false;
+    const liveBad = faceLive === false || irisData?.liveness_passed === false;
+    if (faceBad || irisBad || liveBad) return 'FAIL';
+    if (faceOk && (irisOk || !irisData?.captured)) return 'PASS';
+    if (faceOk && irisOk) return 'PASS';
+    return 'REVIEW';
+  })();
 
   // A genuine registry comparison exists only when the backend actually
   // matched a citizen using trusted extraction (real Gemini or real local OCR)
@@ -395,6 +410,54 @@ export default function CaseReport() {
                 )}
               </>
             )}
+          </div>
+
+          {/* Biometric Verification — one person capture: face + iris + liveness */}
+          <div className="glass-panel p-4 sm:p-6">
+            <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-slate-700/50 pb-4">
+              <Eye className="text-cyan-400" size={20} />
+              <h2 className="text-lg font-semibold text-white">Biometric Verification</h2>
+              <span className={`sm:ml-auto text-xs px-2 py-1 rounded border font-medium ${biometricOverall === 'PASS' ? 'bg-success/10 text-success border-success/30' : biometricOverall === 'FAIL' ? 'bg-danger/10 text-danger border-danger/30' : 'bg-warning/10 text-warning border-warning/30'}`}>
+                {biometricOverall}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div className="rounded-lg border border-slate-700/50 bg-black/30 p-4">
+                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Face</h3>
+                <div className="space-y-1 text-xs">
+                  <div className="flex justify-between"><span className="text-slate-500">Captured</span><span className="text-slate-300">{faceMatch.similarity_score != null || faceMatch.live_vs_doc_match != null ? 'Yes' : 'No'}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Match</span><span className={faceMatch.live_vs_doc_match === true ? 'text-success' : faceMatch.live_vs_doc_match === false ? 'text-danger' : 'text-slate-500'}>{faceMatch.live_vs_doc_match === true ? 'Match' : faceMatch.live_vs_doc_match === false ? 'Mismatch' : 'N/A'}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Similarity</span><span className="text-slate-300 font-mono">{faceMatch.similarity_score != null ? `${(faceMatch.similarity_score * 100).toFixed(1)}%` : 'N/A'}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Quality</span><span className="text-slate-300">{faceMatch.face_quality?.gate || 'N/A'}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Liveness</span><span className={faceLive === true ? 'text-success' : faceLive === false ? 'text-danger' : 'text-slate-500'}>{faceLive === true ? 'Passed' : faceLive === false ? 'Failed' : 'N/A'}</span></div>
+                </div>
+              </div>
+              <div className="rounded-lg border border-slate-700/50 bg-black/30 p-4">
+                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Iris</h3>
+                {!irisData?.captured ? (
+                  <p className="text-xs text-slate-500">Not captured — single person capture includes iris when eyes are visible.</p>
+                ) : (
+                  <div className="space-y-1 text-xs">
+                    <div className="flex justify-between"><span className="text-slate-500">Captured</span><span className="text-slate-300">Yes{irisData.source === 'unified_burst_derived' ? ' (same capture)' : ''}</span></div>
+                    <div className="flex justify-between"><span className="text-slate-500">Eye</span><span className="text-slate-300">{irisData.eye || 'N/A'}</span></div>
+                    <div className="flex justify-between"><span className="text-slate-500">Match</span><span className={irisData.match === true ? 'text-success' : irisData.match === false ? 'text-danger' : 'text-slate-500'}>{irisData.match === true ? 'Match' : irisData.match === false ? 'Mismatch' : 'N/A'}</span></div>
+                    <div className="flex justify-between"><span className="text-slate-500">Distance</span><span className="text-slate-300 font-mono">{irisData.distance != null ? Number(irisData.distance).toFixed(3) : 'N/A'}</span></div>
+                    <div className="flex justify-between"><span className="text-slate-500">Quality</span><span className="text-slate-300">{irisData.quality != null ? Number(irisData.quality).toFixed(2) : 'N/A'}{irisData.quality_usable === false ? ' (low)' : ''}</span></div>
+                    <div className="flex justify-between"><span className="text-slate-500">PAD</span><span className={irisData.liveness_passed === true ? 'text-success' : irisData.liveness_passed === false ? 'text-danger' : 'text-slate-500'}>{irisData.liveness_passed === true ? 'Passed' : irisData.liveness_passed === false ? 'Failed' : 'N/A'}</span></div>
+                    {irisData.reason && <p className="text-[11px] text-slate-500 pt-1">{irisData.reason}</p>}
+                  </div>
+                )}
+                <p className="text-[11px] text-slate-600 mt-2">Iris is RGB-prototype (not NIR).</p>
+              </div>
+              <div className="rounded-lg border border-slate-700/50 bg-black/30 p-4">
+                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Liveness</h3>
+                <div className="space-y-1 text-xs">
+                  <div className="flex justify-between"><span className="text-slate-500">Status</span><span className="text-slate-300">{livenessModule?.status || 'N/A'}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Score</span><span className="text-slate-300 font-mono">{livenessModule?.score != null ? Number(livenessModule.score).toFixed(2) : 'N/A'}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Challenge</span><span className="text-slate-300">{c.challenge_type || livenessModule?.raw_output?.challenge_type || 'N/A'}</span></div>
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* Tamper Detection */}

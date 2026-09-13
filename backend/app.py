@@ -214,6 +214,7 @@ def collect_provenance(file_hashes: Optional[dict] = None, extra: Optional[dict]
             "physical_forgery": {"method": "layout+mrz_font+photo_frame+printscan_moire+qr+hologram_inventory"},
             "deepfake": {"method": "fft_frequency_artifact_heuristic"},
             "gemini": {"model": os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")},
+            "iris": {"name": "RGBProvider", "version": "1.0-rgb-prototype", "note": "RGB prototype, not NIR production-grade"},
             "risk_engine": {"version": "1.0", "rules": "Green<0.35<Yellow<0.65<Red"},
         },
         "thresholds": {
@@ -224,6 +225,10 @@ def collect_provenance(file_hashes: Optional[dict] = None, extra: Optional[dict]
             "physical_moderate": 0.4,
             "deepfake_high": 0.7,
             "liveness": 0.45,
+            "iris_match": 0.32,
+            "iris_low_conf_low": 0.28,
+            "iris_low_conf_high": 0.36,
+            "iris_calibration": "uncalibrated-prototype",
         },
         "dependencies": deps,
         "config": {
@@ -947,15 +952,66 @@ async def screen_document(
         [str(live_tmp)] if live_tmp else None
     )
 
-    # Iris capture (optional) — single eye image for verification
+    # Iris source — unified person capture: prefer explicit iris_image for
+    # backward compat (e.g. enrollment retest), otherwise derive the eye crop
+    # server-side from the SAME live burst that feeds face/liveness. No second
+    # camera is opened; iris_eye="auto" picks the best-quality eye.
     iris_tmp = None
-    iris_eye_val = (iris_eye or "left").strip().lower()
+    iris_eye_val = (iris_eye or "auto").strip().lower()
+    iris_derived = False
     if iris_image and iris_image.filename:
         iris_bytes = await iris_image.read()
         file_hashes["iris"] = hashlib.sha256(iris_bytes).hexdigest()
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix="screen_iris_") as tmp:
             tmp.write(iris_bytes)
             iris_tmp = Path(tmp.name)
+    elif burst:
+        # Derive eye crop from the best (middle) burst frame of the same capture.
+        try:
+            import cv2 as _cv2
+            from backend.biometric.iris.detector import detect_eyes as _detect_eyes
+            from backend.biometric.iris.quality import assess_iris_quality as _iris_quality
+            _candidates = [burst[len(burst) // 2]] + burst  # middle frame first
+            _best_crop = None
+            _best_eye = "left"
+            _best_score = -1.0
+            for _cand in _candidates:
+                try:
+                    _img = _cv2.imread(str(_cand))
+                    if _img is None:
+                        continue
+                    _det = _detect_eyes(_img)
+                    if _det.get("status") != "ok":
+                        continue
+                    for _ename in (["left", "right"] if iris_eye_val in ("auto", "") else [iris_eye_val if iris_eye_val in ("left", "right") else "left"]):
+                        _eye = _det.get(f"{_ename}_eye", _det.get(_ename))
+                        if not _eye or _eye.get("crop") is None:
+                            continue
+                        _q = _iris_quality(_eye["crop"])
+                        _score = float(_q.get("quality", 0.0)) if isinstance(_q, dict) else 0.0
+                        if _score > _best_score:
+                            _best_score = _score
+                            _best_crop = _eye["crop"]
+                            _best_eye = _ename
+                    if _best_crop is not None and _best_score >= 0.5:
+                        break
+                except Exception:
+                    continue
+            if _best_crop is not None:
+                _ok, _buf = _cv2.imencode(".png", _best_crop)
+                if _ok:
+                    _eye_bytes = bytes(_buf)
+                    file_hashes["iris"] = hashlib.sha256(_eye_bytes).hexdigest()
+                    file_hashes["iris_derived_from"] = hashlib.sha256(
+                        f"burst:{len(burst)}:{_best_eye}".encode()
+                    ).hexdigest()
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix="screen_iris_unified_") as tmp:
+                        tmp.write(_eye_bytes)
+                        iris_tmp = Path(tmp.name)
+                    iris_eye_val = _best_eye
+                    iris_derived = True
+        except Exception as _e:
+            print(f"[iris] unified eye-crop derivation failed: {type(_e).__name__}: {_e}")
 
     input_hash = _compute_input_hash(file_hashes)
 
@@ -972,7 +1028,7 @@ async def screen_document(
         _row = _existing.scalar_one_or_none()
         if _row is not None:
             if (_row.session_id or "") != (session_id or "") or _row.input_hash != input_hash:
-                for p in [doc_tmp, live_tmp, *live_frame_tmps]:
+                for p in [doc_tmp, live_tmp, *live_frame_tmps, iris_tmp]:
                     try:
                         if p:
                             p.unlink(missing_ok=True)
@@ -1001,7 +1057,7 @@ async def screen_document(
                         await _idem_session.rollback()
                     # Fall through to claim + process below.
                 else:
-                    for p in [doc_tmp, live_tmp, *live_frame_tmps]:
+                    for p in [doc_tmp, live_tmp, *live_frame_tmps, iris_tmp]:
                         try:
                             if p:
                                 p.unlink(missing_ok=True)
@@ -1023,7 +1079,7 @@ async def screen_document(
                     snapshot = await _load_case_result_payload(_row.case_id) or {"case_id": _row.case_id}
                 if isinstance(snapshot, dict):
                     snapshot = {**snapshot, "deduplicated": True, "idempotency_key": key}
-                for p in [doc_tmp, live_tmp, *live_frame_tmps]:
+                for p in [doc_tmp, live_tmp, *live_frame_tmps, iris_tmp]:
                     try:
                         if p:
                             p.unlink(missing_ok=True)
@@ -1073,7 +1129,7 @@ async def screen_document(
                     "idempotency_key": key,
                     "duplicate_of_key": _cand.idempotency_key,
                 }
-            for p in [doc_tmp, live_tmp, *live_frame_tmps]:
+            for p in [doc_tmp, live_tmp, *live_frame_tmps, iris_tmp]:
                 try:
                     if p:
                         p.unlink(missing_ok=True)
@@ -1103,7 +1159,7 @@ async def screen_document(
                 )
             )
             _winner = _race.scalar_one_or_none()
-            for p in [doc_tmp, live_tmp, *live_frame_tmps]:
+            for p in [doc_tmp, live_tmp, *live_frame_tmps, iris_tmp]:
                 try:
                     if p:
                         p.unlink(missing_ok=True)
@@ -1145,11 +1201,12 @@ async def screen_document(
             "device_info": device_info,
             "file_hashes": file_hashes,
         }
-        # Include iris if provided
+        # Include iris if provided (explicit upload or unified-burst-derived eye crop)
         _iris_path = str(iris_tmp) if 'iris_tmp' in locals() and iris_tmp else None
         _iris_eye = iris_eye_val if 'iris_eye_val' in locals() else "left"
+        _iris_source = "unified_burst_derived" if (iris_derived if 'iris_derived' in locals() else False) else ("separate_upload" if _iris_path else "none")
         try:
-            result = await _run_screening_pipeline(doc_tmp, live_tmp, officer_id, officer_unit, burst, audit_context, iris_path=_iris_path, iris_eye=_iris_eye)
+            result = await _run_screening_pipeline(doc_tmp, live_tmp, officer_id, officer_unit, burst, audit_context, iris_path=_iris_path, iris_eye=_iris_eye, iris_source=_iris_source)
         except TypeError:
             # Fallback for pipeline without iris support
             result = await _run_screening_pipeline(doc_tmp, live_tmp, officer_id, officer_unit, burst, audit_context)
@@ -1173,12 +1230,17 @@ async def screen_document(
             pass
         raise
     finally:
-        # Cleanup temp files
+        # Cleanup temp files (iris_tmp is derived-or-uploaded eye crop; never persisted raw)
         doc_tmp.unlink(missing_ok=True)
         if live_tmp:
             live_tmp.unlink(missing_ok=True)
         for p in live_frame_tmps:
             p.unlink(missing_ok=True)
+        try:
+            if 'iris_tmp' in locals() and iris_tmp:
+                iris_tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
 
     elapsed = (time.perf_counter() - start_time) * 1000
     result["total_latency_ms"] = round(elapsed, 1)
@@ -1258,6 +1320,7 @@ async def _run_screening_pipeline(
     audit_context: Optional[dict] = None,
     iris_path: Optional[str] = None,
     iris_eye: str = "left",
+    iris_source: str = "none",
 ) -> dict:
     """Execute the full screening pipeline with parallel local+cloud execution.
 
@@ -1798,27 +1861,31 @@ async def _run_screening_pipeline(
     full_name = (demographics or {}).get("full_name", "")
     watchlist_result = check_watchlist(name=full_name, id_number=doc_number)
 
-    # --- Iris verification (if eye image provided and citizen has template) ---
+    # --- Iris verification (unified person capture) ---
+    # iris_path is either an explicit iris_image upload (backward compat) or an
+    # eye crop derived server-side from the SAME live burst that feeds face +
+    # face-liveness (see screen_document). No second camera is opened.
     iris_result = None
-    if iris_path and citizen_id:
+    iris_eye_used = iris_eye if isinstance(iris_eye, str) and iris_eye else "left"
+    # iris_source is a pipeline kwarg set by screen_document:
+    # "unified_burst_derived" | "separate_upload" | "none"
+    if not isinstance(iris_source, str) or not iris_source:
+        iris_source = "none"
+    try:
+        from backend.biometric.iris.provider import get_provider as _get_iris_provider
+        _prov_iris_shared = _get_iris_provider("rgb")
+    except Exception:
+        _prov_iris_shared = None
+    if iris_path and citizen_id and _prov_iris_shared is not None:
         try:
-            from backend.biometric.iris.provider import get_provider
-            # Fetch latest template
+            from backend.models import IrisTemplate
             async with async_session() as _iris_sess:
-                from sqlalchemy import select as _sel
-                _res = await _iris_sess.execute(
-                    __import__("backend.models", fromlist=["IrisTemplate"]).IrisTemplate.__table__.select().where(
-                        __import__("backend.models", fromlist=["IrisTemplate"]).IrisTemplate.citizen_id == citizen_id
-                    ).order_by(__import__("backend.models", fromlist=["IrisTemplate"]).IrisTemplate.created_at.desc()).limit(1)
-                )
-                # Use ORM instead
-                from backend.models import IrisTemplate
                 _r2 = await _iris_sess.execute(select(IrisTemplate).where(IrisTemplate.citizen_id == citizen_id).order_by(IrisTemplate.created_at.desc()).limit(1))
                 tmpl = _r2.scalar_one_or_none()
                 if tmpl:
-                    prov_iris = get_provider("rgb")
+                    prov_iris = _prov_iris_shared
                     # Decrypt template
-                    import base64, hmac, hashlib
+                    import base64
                     try:
                         enc = tmpl.template
                         if ":" in enc:
@@ -1836,13 +1903,88 @@ async def _run_screening_pipeline(
                         ref_t, ref_m = None, None
                     if ref_t:
                         iris_result = prov_iris.verify(iris_path, ref_t, ref_m)
+                        # Attach quality + PAD from the SAME capture (never raw bytes)
+                        try:
+                            _q = prov_iris.quality(iris_path)
+                        except Exception:
+                            _q = {"quality": None, "usable": None}
+                        try:
+                            _pad_src = live_burst if (live_burst and len(live_burst) > 0) else [iris_path]
+                            _pad = prov_iris.liveness(_pad_src)
+                        except Exception:
+                            _pad = {"passed": None}
+                        if isinstance(iris_result, dict):
+                            iris_result = {
+                                **iris_result,
+                                "quality": _q,
+                                "liveness": _pad if isinstance(_pad, dict) else {"passed": None},
+                                "eye": iris_eye_used,
+                                "source": iris_source,
+                                "provider": getattr(prov_iris, "name", "RGBProvider"),
+                                "provider_version": getattr(prov_iris, "version", "1.0-rgb-prototype"),
+                            }
                     else:
-                        iris_result = {"match": None, "decision": "INCONCLUSIVE", "reason": "template decrypt failed"}
+                        iris_result = {"match": None, "decision": "INCONCLUSIVE", "reason": "template decrypt failed", "eye": iris_eye_used, "source": iris_source}
                 else:
-                    iris_result = {"match": None, "decision": "INCONCLUSIVE", "reason": "no template enrolled"}
+                    # Template missing: still assess quality/PAD of the unified eye crop
+                    # so the officer gets actionable feedback (not a silent N/A).
+                    try:
+                        _q = _prov_iris_shared.quality(iris_path)
+                    except Exception:
+                        _q = {"quality": None, "usable": None}
+                    try:
+                        _pad_src = live_burst if (live_burst and len(live_burst) > 0) else [iris_path]
+                        _pad = _prov_iris_shared.liveness(_pad_src)
+                    except Exception:
+                        _pad = {"passed": None}
+                    iris_result = {"match": None, "decision": "INCONCLUSIVE", "reason": "no template enrolled",
+                                   "quality": _q, "liveness": _pad if isinstance(_pad, dict) else {"passed": None},
+                                   "eye": iris_eye_used, "source": iris_source,
+                                   "provider": getattr(_prov_iris_shared, "name", "RGBProvider"),
+                                   "provider_version": getattr(_prov_iris_shared, "version", "1.0-rgb-prototype")}
         except Exception as e:
-            iris_result = {"match": None, "decision": "INCONCLUSIVE", "reason": str(e)[:80]}
+            iris_result = {"match": None, "decision": "INCONCLUSIVE", "reason": str(e)[:80], "eye": iris_eye_used, "source": iris_source}
+    elif iris_path and not citizen_id and _prov_iris_shared is not None:
+        # Eye crop exists but no registry match: quality/PAD only, no verification.
+        try:
+            _q = _prov_iris_shared.quality(iris_path)
+        except Exception:
+            _q = {"quality": None, "usable": None}
+        iris_result = {"match": None, "decision": "INCONCLUSIVE", "reason": "no registry record for iris verification",
+                       "quality": _q, "liveness": {"passed": None}, "eye": iris_eye_used, "source": iris_source,
+                       "provider": getattr(_prov_iris_shared, "name", "RGBProvider"),
+                       "provider_version": getattr(_prov_iris_shared, "version", "1.0-rgb-prototype")}
     # If no iris provided, keep None for risk engine
+    # Safe public payload (no template bytes ever leave the server)
+    iris_verification = None
+    if iris_result is not None:
+        try:
+            _q = iris_result.get("quality")
+            _qval = _q.get("quality") if isinstance(_q, dict) else _q
+            _qusable = _q.get("usable") if isinstance(_q, dict) else None
+            _qissues = _q.get("issues") if isinstance(_q, dict) else None
+            _pad = iris_result.get("liveness")
+            iris_verification = {
+                "captured": True,
+                "eye": iris_result.get("eye", iris_eye_used),
+                "source": iris_result.get("source", iris_source),
+                "match": iris_result.get("match"),
+                "distance": iris_result.get("distance"),
+                "threshold": iris_result.get("threshold", 0.32),
+                "low_confidence": iris_result.get("low_confidence"),
+                "decision": iris_result.get("decision"),
+                "quality": _qval,
+                "quality_usable": _qusable,
+                "quality_issues": _qissues,
+                "liveness_passed": (_pad or {}).get("passed") if isinstance(_pad, dict) else None,
+                "liveness_confidence": (_pad or {}).get("confidence") if isinstance(_pad, dict) else None,
+                "provider": iris_result.get("provider", "RGBProvider"),
+                "provider_version": iris_result.get("provider_version", "1.0-rgb-prototype"),
+                "reason": iris_result.get("reason"),
+            }
+        except Exception:
+            iris_verification = {"captured": True, "eye": iris_eye_used, "source": iris_source,
+                                 "match": None, "decision": "INCONCLUSIVE"}
 
     # ------------------------------------------------------------------
     # Step 4: Risk Engine (with liveness — audit P1 §3)
@@ -2025,6 +2167,17 @@ async def _run_screening_pipeline(
         "db_photo_late": bool(db_photo_late),
         "face_quality_gate": (face_quality_block or {}).get("gate"),
         "recapture_requested": recapture_requested,
+        "iris": {
+            "captured": bool((iris_verification or {}).get("captured")) if 'iris_verification' in locals() else False,
+            "eye": (iris_verification or {}).get("eye") if 'iris_verification' in locals() else None,
+            "source": (iris_verification or {}).get("source") if 'iris_verification' in locals() else None,
+            "match": (iris_verification or {}).get("match") if 'iris_verification' in locals() else None,
+            "distance": (iris_verification or {}).get("distance") if 'iris_verification' in locals() else None,
+            "quality": (iris_verification or {}).get("quality") if 'iris_verification' in locals() else None,
+            "decision": (iris_verification or {}).get("decision") if 'iris_verification' in locals() else None,
+            "provider": (iris_verification or {}).get("provider") if 'iris_verification' in locals() else None,
+            "provider_version": (iris_verification or {}).get("provider_version") if 'iris_verification' in locals() else None,
+        },
     }
     _file_hashes = {}
     try:
@@ -2111,6 +2264,24 @@ async def _run_screening_pipeline(
                 "checksum", 1.0 if checksum_result.get("valid") else 0.0,
                 "ok", checksum_result, None, False,
             ))
+        # Iris module — persisted so CaseReport/audit can render it without
+        # re-running biometrics. Score = Hamming distance (low = good);
+        # status inconclusive when no usable verification exists.
+        try:
+            _iris_mod = iris_verification if 'iris_verification' in locals() else None
+            if _iris_mod is not None:
+                _imatch = _iris_mod.get("match")
+                _idist = _iris_mod.get("distance")
+                _iqu = _iris_mod.get("quality_usable")
+                if _imatch is True:
+                    _istatus, _iscore = "ok", float(_idist) if isinstance(_idist, (int, float)) else 0.0
+                elif _imatch is False:
+                    _istatus, _iscore = "ok", float(_idist) if isinstance(_idist, (int, float)) else 1.0
+                else:
+                    _istatus, _iscore = "inconclusive", None
+                modules.append(("iris", _iscore, _istatus, dict(_iris_mod), None, False))
+        except Exception:
+            pass
 
         # Tag the persisted gemini payload with the demo flag so detail can label it
         try:
@@ -2145,9 +2316,16 @@ async def _run_screening_pipeline(
                 file_hashes_str = f" files:{json.dumps({k: v[:12] for k, v in fh.items()})}"
         except Exception:
             pass
+        try:
+            _iris_audit = ""
+            _iv = iris_verification if 'iris_verification' in locals() else None
+            if isinstance(_iv, dict) and _iv.get("captured"):
+                _iris_audit = f" iris:{_iv.get('decision') or _iv.get('match')} eye:{_iv.get('eye')} q:{_iv.get('quality')} prov:{_iv.get('provider')}"
+        except Exception:
+            _iris_audit = ""
         session.add(AuditLog(
             actor=actor,
-            action=f"screening_completed:verdict={risk.verdict} unit:{officer_unit}{file_hashes_str}",
+            action=f"screening_completed:verdict={risk.verdict} unit:{officer_unit}{_iris_audit}{file_hashes_str}",
             entity=f"case:{case_id}",
             officer_id=audit_ctx.get("officer_id") or officer_id,
             session_id=audit_ctx.get("session_id") or "",
@@ -2166,6 +2344,7 @@ async def _run_screening_pipeline(
         "checksum": checksum_result,
         "demographic_parity": demographic_result,
         "face_verification": face_match_data,
+        "iris_verification": iris_verification if 'iris_verification' in locals() else None,
         "face_quality": face_quality_block,
         "recapture_requested": recapture_requested,
         "recapture_target": recapture_target,
@@ -2317,6 +2496,23 @@ async def get_case(case_id: int, request: Request):
     except Exception:
         pass
 
+    # Iris verification payload for the Biometric Verification panel (safe fields only)
+    iris_verification_payload = None
+    try:
+        _iris_mod = next((m for m in modules if m.module_name == "iris"), None)
+        if _iris_mod is not None:
+            _raw = _iris_mod.raw_output
+            if isinstance(_raw, str):
+                try:
+                    import json as _j2
+                    _raw = _j2.loads(_raw)
+                except Exception:
+                    _raw = None
+            if isinstance(_raw, dict):
+                iris_verification_payload = _raw
+    except Exception:
+        iris_verification_payload = None
+
     return {
         "case": case.to_dict(),
         "citizen": citizen_data,
@@ -2326,6 +2522,7 @@ async def get_case(case_id: int, request: Request):
         "officer_actions": [a.to_dict() for a in actions],
         "is_demo": is_demo,
         "demo_label": "DEMO ONLY — simulated AI excluded from scoring" if is_demo else None,
+        "iris_verification": iris_verification_payload,
     }
 
 

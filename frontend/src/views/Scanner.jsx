@@ -219,12 +219,11 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
   );
 }
 
-import IrisCapture from '../components/IrisCapture';
+import PersonBiometricCapture from '../components/PersonBiometricCapture';
 
 export default function Scanner() {
   const [docFile, setDocFile] = useState(null);
-  const [faceFile, setFaceFile] = useState(null);
-  const [irisFile, setIrisFile] = useState(null);
+  const [personCapture, setPersonCapture] = useState(null);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState(null);
   const navigate = useNavigate();
@@ -244,7 +243,7 @@ export default function Scanner() {
   useEffect(() => {
     setIdempotencyKey(newIdempotencyKey());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [docFile, faceFile]);
+  }, [docFile, personCapture]);
 
   const handleScan = async () => {
     if (!docFile) {
@@ -260,22 +259,21 @@ export default function Scanner() {
     // Form-field fallback mirrors the Idempotency-Key header (for proxies
     // that strip custom headers on multipart uploads).
     formData.append('idempotency_key', idempotencyKey);
-    if (faceFile) {
-      if (Array.isArray(faceFile.burst) && faceFile.burst.length > 0) {
-        // Send the first frame as live_capture so 3-way face matching works,
-        // plus the full burst as live_frames for liveness blink detection.
-        const bestFrame = faceFile.burst[Math.floor(faceFile.burst.length / 2)] || faceFile.burst[0];
-        formData.append('live_capture', new File([bestFrame], 'live_capture.png', { type: 'image/png' }));
-        faceFile.burst.forEach((b, i) =>
-          formData.append('live_frames', new File([b], `live_frame_${i}.png`, { type: 'image/png' }))
-        );
-      } else {
-        formData.append('live_capture', faceFile);
+    if (personCapture) {
+      // ONE person capture → ONE frame sequence feeds face + liveness + iris.
+      // live_capture = primary (middle) frame for 3-way face matching;
+      // live_frames = full burst for liveness; backend derives the eye/iris
+      // crop server-side from the same burst (iris_eye=auto), so no second
+      // camera or separate iris upload is needed.
+      const burst = Array.isArray(personCapture.burst) ? personCapture.burst : [];
+      const primary = personCapture.primaryFrame || burst[Math.floor(burst.length / 2)] || burst[0];
+      if (primary) {
+        formData.append('live_capture', new File([primary], 'live_capture.png', { type: 'image/png' }));
       }
-      if (irisFile) {
-        formData.append('iris_image', irisFile);
-        formData.append('iris_eye', irisFile.eye || 'left');
-      }
+      burst.forEach((b, i) =>
+        formData.append('live_frames', new File([b], `live_frame_${i}.png`, { type: 'image/png' }))
+      );
+      formData.append('iris_eye', personCapture.eyeHint || 'auto');
     }
 
     try {
@@ -346,7 +344,7 @@ export default function Scanner() {
       <Breadcrumbs items={[{ label: 'Home', to: '/' }, { label: 'Kiosk Scanner' }]} />
       <header>
         <h1 className="text-2xl font-bold text-white">Kiosk Simulator</h1>
-        <p className="text-slate-400 text-sm mt-1">Use the webcams to capture the identity document and the traveler's live face.</p>
+        <p className="text-slate-400 text-sm mt-1">Capture the identity document, then capture the traveler once — one person capture feeds face, liveness and iris.</p>
       </header>
 
       {error && (
@@ -366,19 +364,12 @@ export default function Scanner() {
             onCapture={setDocFile}
             onClear={() => setDocFile(null)}
           />
-          <WebcamCapture
-            label="2. Live Face Capture (Recommended)"
-            hint="Position the traveler's face inside the frame — we capture a short blink burst"
+          <PersonBiometricCapture
+            file={personCapture}
+            onCapture={setPersonCapture}
+            onClear={() => setPersonCapture(null)}
             facing="user"
-            subject="face"
-            file={faceFile}
-            onCapture={setFaceFile}
-            onClear={() => setFaceFile(null)}
-            onAllowBurst
           />
-        </div>
-        <div className="mt-6">
-          <IrisCapture file={irisFile} onCapture={setIrisFile} onClear={() => setIrisFile(null)} />
         </div>
 
         <div className="flex justify-stretch border-t border-slate-700/50 pt-4 sm:justify-end">

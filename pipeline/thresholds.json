@@ -9,5 +9,9 @@
   "liveness": 0.45,
   "document_quality_blur": 50.0,
   "document_quality_dark": 40.0,
-  "calibration_note": "Thresholds tuned on synthetic samples: genuine_doc.png (tamper 0.08) vs tampered_doc.png (0.72), face pairs 0.93-0.95. Re-calibrate on held-out set for production."
+  "iris_match": 0.32,
+  "iris_low_conf_low": 0.28,
+  "iris_low_conf_high": 0.36,
+  "iris_calibration": "uncalibrated-prototype",
+  "calibration_note": "Thresholds tuned on synthetic samples: genuine_doc.png (tamper 0.08) vs tampered_doc.png (0.72), face pairs 0.93-0.95. Iris Hamming 0.32 band 0.28-0.36 is a prototype placeholder, NOT production-validated. Re-calibrate on held-out set for production."
 }
