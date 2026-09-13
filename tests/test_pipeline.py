@@ -515,6 +515,15 @@ class TestRiskEngine:
 class TestGeminiScanner:
     """Tests for the Gemini AI scanner (offline simulation mode)."""
 
+    @pytest.fixture(autouse=True)
+    def _force_offline_gemini(self, monkeypatch):
+        """Isolate from any real GEMINI_API_KEY in the developer's .env.
+
+        These tests assert offline-simulation behaviour, so the key must be
+        absent regardless of local config (the scanner reads env lazily).
+        """
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
     def test_scan_returns_structured_output(self):
         """Scanner should return complete structured JSON."""
         result = scan_document(str(GENUINE), str(FACE_A))
