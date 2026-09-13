@@ -89,4 +89,3 @@ Resolved (for reference):
 
 ### 6. Explicitly not tracked here (PRD.md §4 non-goals)
 Kubernetes/microservices/Kafka, real DB/watchlist integration, bias/fairness certification, penetration testing, DPDP sign-off, multi-checkpoint/HA. Do not open tasks for these against this tracker — they belong to the post-hackathon roadmap (source PDF §11).
-
