@@ -55,6 +55,24 @@ const StatusBadge = ({ status, score }) => {
   return <span className="text-xs px-2 py-0.5 bg-success/10 text-success rounded border border-success/30">OK</span>;
 };
 
+/** Violet badge marking mocked/simulated data — must never look like verified output */
+const MockedDataBadge = ({ label = 'MOCKED DATA' }) => (
+  <span className="rounded border border-violet-400/40 bg-violet-500/15 px-2 py-1 text-xs font-semibold tracking-wide text-violet-300">
+    {label}
+  </span>
+);
+
+/** Mask Aadhaar numbers to XXXX-XXXX-<last4> before render (PII hygiene) */
+const maskAadhaar = (fieldName, value) => {
+  if (value == null || value === '') return value;
+  const name = String(fieldName || '').toLowerCase();
+  const isAadhaar = name.includes('aadhaar') || name.includes('uid');
+  if (!isAadhaar) return value;
+  const digits = String(value).replace(/\D/g, '');
+  if (digits.length < 4) return value;
+  return `XXXX-XXXX-${digits.slice(-4)}`;
+};
+
 /** Authenticated evidence image — fetches a short-lived signed URL */
 const EvidenceImage = ({ evidenceUri, alt }) => {
   const [src, setSrc] = useState(null);
@@ -67,7 +85,8 @@ const EvidenceImage = ({ evidenceUri, alt }) => {
       try {
         const res = await api.get(`/evidence/token/${encodeURIComponent(filename)}`);
         if (!cancelled && res.data?.token) {
-          setSrc(`/api/evidence/view?token=${encodeURIComponent(res.data.token)}`);
+          const base = (api.defaults.baseURL || '').replace(/\/+$/, '');
+          setSrc(`${base}/evidence/view?token=${encodeURIComponent(res.data.token)}`);
         }
       } catch {
         if (!cancelled) setError(true);
@@ -228,6 +247,9 @@ export default function CaseReport() {
             <span className="inline-flex w-fit items-center gap-2 rounded border border-slate-700 bg-slate-800 px-2.5 py-1 text-sm font-normal text-slate-300">
               <FileText size={14} /> {c.document_type?.toUpperCase() || 'UNKNOWN'}
             </span>
+            {(data.is_demo || geminiModule?.is_mocked || watchlistModule?.is_mocked) && (
+              <MockedDataBadge />
+            )}
           </h1>
           <p className="text-slate-400 text-sm mt-1">{new Date(c.timestamp).toLocaleString()}</p>
         </div>
@@ -333,8 +355,8 @@ export default function CaseReport() {
                 {extracted_fields.map(f => (
                   <tr key={f.id} className="text-slate-300">
                     <td className="py-3 pr-4">{f.field_name}</td>
-                    <td className="py-3 pr-4 font-mono text-xs">{f.extracted_value || '-'}</td>
-                    <td className="py-3 pr-4 font-mono text-xs">{f.database_value || '-'}</td>
+                    <td className="py-3 pr-4 font-mono text-xs">{maskAadhaar(f.field_name, f.extracted_value) || '-'}</td>
+                    <td className="py-3 pr-4 font-mono text-xs">{maskAadhaar(f.field_name, f.database_value) || '-'}</td>
                     <td className="py-3 flex justify-center">
                       {f.match_status === 'match' ? (
                         <span className="bg-success/20 text-success p-1 rounded"><Check size={16} /></span>
@@ -732,6 +754,7 @@ export default function CaseReport() {
           <h2 className="text-lg font-semibold text-white">
             Watchlist Lookup
           </h2>
+          {watchlistModule?.is_mocked && <MockedDataBadge />}
           {!watchlistModule?.is_mocked && (watchlistModule?.raw_output?.is_hit ? (
             <span className="ml-2 bg-danger/20 text-danger px-2 py-1 rounded text-xs font-medium border border-danger/30">HIT</span>
           ) : (

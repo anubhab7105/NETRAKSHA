@@ -22,11 +22,25 @@ def encode_iris(normalized: np.ndarray, mask=None) -> Dict[str, Any]:
         lambd = 12.0
         gamma = 0.5
         kernel = cv2.getGaborKernel((ksize, ksize), sigma, theta, lambd, gamma, 0, ktype=cv2.CV_32F)
+        # Zero-DC kernel: the raw Gabor kernel carries a positive mean, which
+        # adds a constant offset to every response pixel and forces the sign
+        # bit to 1 everywhere (degenerate all-match codes). Removing the mean
+        # makes the response a true texture-phase signal varying around zero.
+        kernel = kernel - float(kernel.mean())
         filtered = cv2.filter2D(gray.astype(np.float32), cv2.CV_32F, kernel)
         # Binarize: positive vs negative
         template = (filtered > 0).astype(np.uint8) * 255
         # Downsample to 512 bits (64x8) for compactness
         small = cv2.resize(template, (64, 8), interpolation=cv2.INTER_NEAREST)
+        # Texture gate: a genuine iris has rich trabecular texture, so the
+        # code must contain a healthy mix of 0/255 bits. Smooth/synthetic
+        # eyes (or failed segmentations) collapse to near-constant codes
+        # that match EVERYONE at distance ~0 — a false-accept catastrophe.
+        # Refuse to mint such templates; report honestly instead.
+        frac_set = float((small == 255).mean())
+        if frac_set < 0.15 or frac_set > 0.85:
+            return {"template": None, "mask": None,
+                    "error": f"insufficient_texture (bit balance {frac_set:.2f})"}
         # Pack to bytes
         _, buf = cv2.imencode('.png', small)  # use PNG as container for prototype
         # For matching, keep as bytes

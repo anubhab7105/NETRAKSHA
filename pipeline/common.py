@@ -57,11 +57,28 @@ for _cand in (
         _SYSTEM_TESSDATA = pathlib.Path(_cand)
         break
 
+# Windows (UB-Mannheim installer, `winget install UB-Mannheim.TesseractOCR`):
+# tessdata ships beside the binary and the binary is often NOT on PATH, so
+# probe the well-known install locations directly.
+_SYSTEM_TESSBIN = None
+if _SYSTEM_TESSDATA is None:
+    _win_candidates = [shutil.which("tesseract")]
+    for _pf in (os.environ.get("ProgramFiles", r"C:\Program Files"),
+                os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")):
+        _win_candidates.append(str(pathlib.Path(_pf) / "Tesseract-OCR" / "tesseract.exe"))
+    for _b in _win_candidates:
+        if _b and pathlib.Path(_b).is_file():
+            _td = pathlib.Path(_b).parent / "tessdata"
+            if (_td / "eng.traineddata").is_file():
+                _SYSTEM_TESSBIN = pathlib.Path(_b)
+                _SYSTEM_TESSDATA = _td
+                break
+
 if (_TESS_DIR / "tesseract").exists() and (_TESS_DIR / "tessdata" / "eng.traineddata").exists():
     TESSERACT_BIN = _TESS_DIR / "tesseract"
     TESS_LIB_DIR = _TESS_DIR
     TESS_TESSDATA = _TESS_DIR / "tessdata"
-elif (_sys_tess := shutil.which("tesseract")) and _SYSTEM_TESSDATA:
+elif (_sys_tess := _SYSTEM_TESSBIN or shutil.which("tesseract")) and _SYSTEM_TESSDATA:
     TESSERACT_BIN = pathlib.Path(_sys_tess)
     TESS_LIB_DIR = TESSERACT_BIN.parent
     TESS_TESSDATA = _SYSTEM_TESSDATA

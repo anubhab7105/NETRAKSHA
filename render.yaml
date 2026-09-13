@@ -1,0 +1,40 @@
+# Render blueprint — Netraksha WITHOUT Docker (native Python runtime).
+# Single service: builds frontend/dist, serves it from FastAPI (same origin,
+# so no VITE_API_BASE_URL needed). Health: GET /api/health
+# NOTE: native Render has no system Tesseract — OCR/MRZ degrades to
+# inconclusive (verdict floor Yellow) unless you deploy where tesseract is
+# installed (VPS with apt, or Render Docker). All other modules run fully.
+services:
+  - type: web
+    name: netraksha-api
+    runtime: python
+    buildCommand: ./build.sh
+    startCommand: python -m uvicorn backend.app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: DATABASE_URL
+        sync: false # postgresql://... Supabase pooler URL (REQUIRED)
+      - key: JWT_SECRET
+        generateValue: true # >=32 chars; generate once, keep stable
+      - key: GEMINI_API_KEY
+        sync: false # AIza... (empty = DEMO ONLY Yellow floor)
+      - key: GEMINI_MODEL
+        value: gemini-3.6-flash
+      - key: BOOTSTRAP_ADMIN_USER
+        sync: false # only account created in production
+      - key: BOOTSTRAP_ADMIN_PASS
+        sync: false # must pass password policy (>=10 chars, 3/4 classes)
+      - key: BOOTSTRAP_ADMIN_UNIT
+        value: HQ
+      - key: REGISTRY_IMPORT_SECRET
+        generateValue: true # dedicated HMAC secret (do not reuse JWT_SECRET)
+      - key: CORS_ORIGINS
+        value: https://netraksha.xyz,https://www.netraksha.xyz
+      - key: SCREEN_EVIDENCE_DIR
+        value: /var/data/evidence # mount a Render disk at /var/data for persistence
+      - key: VITE_SITE_URL
+        value: https://netraksha.xyz

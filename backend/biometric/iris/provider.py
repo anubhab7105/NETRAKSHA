@@ -84,13 +84,16 @@ class RGBProvider(BiometricProvider):
             return {"template": None, "mask": None, "quality": q, "error": "normalization_failed"}
         # 4. encode
         enc = encode_iris(norm["normalized"], norm.get("mask"))
-        return {
+        out = {
             "template": enc.get("template"),
             "mask": enc.get("mask"),
             "quality": q,
             "segment": seg,
             "normalized": norm,
         }
+        if enc.get("error"):
+            out["error"] = enc["error"]
+        return out
 
     def verify(self, probe_image, reference_template: bytes, reference_mask: bytes) -> Dict[str, Any]:
         from .matcher import match_templates

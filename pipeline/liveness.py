@@ -15,12 +15,17 @@ we fuse three independent cues:
 
 Decision logic (status == "ok"):
   * insufficient face coverage                          -> inconclusive
-  * no motion AND no blink                              -> NOT live (still image)
+  * no motion AND no blink/head/mouth activity          -> NOT live (still image)
   * strong screen artifacts                             -> NOT live (display replay)
-  * otherwise score = blink/motion signal * 0.55
+  * otherwise score = action/motion signal * 0.55
                        + clean-signal * 0.25
                        + face coverage * 0.20
                      live = score >= 0.45
+  The randomly assigned challenge (blink/head_turn/mouth_open) is recorded
+  for audit but NEVER fails a live person: the traveler is not shown the
+  assignment, so ANY genuine action (blink, head turn, or mouth open)
+  certifies liveness. A missed assignment is flagged
+  `challenge_not_observed:<name>` in spoof_signals instead.
 
 Contract flags (Techspec.md §3, for the Risk Engine owner):
   * ``live: bool`` is unambiguous whenever status == "ok" — never None except
@@ -521,15 +526,21 @@ def run_liveness(frame_burst, challenge_type: str = "blink") -> ModuleResult:
     elif challenge == "head_turn" and not head_turn:
         challenge_ok = False
         challenge_reason = "head-turn challenge not observed — no significant yaw detected"
-        spoof_signals.append("head_turn_missing")
     elif challenge == "mouth_open" and not mouth_open:
         challenge_ok = False
         challenge_reason = "mouth-open challenge not observed — mouth did not open sufficiently"
-        spoof_signals.append("mouth_open_missing")
     elif challenge == "smile" and not mouth_open:
         # smile uses mouth open as proxy
         challenge_ok = False
         challenge_reason = "smile challenge not observed"
+
+    observed = []
+    if blinks > 0:
+        observed.append(f"blink x{blinks}")
+    if head_turn:
+        observed.append("head_turn")
+    if mouth_open:
+        observed.append("mouth_open")
 
     if still and blinks == 0 and not head_turn and not mouth_open:
         live = False
@@ -544,11 +555,6 @@ def run_liveness(frame_burst, challenge_type: str = "blink") -> ModuleResult:
                  "suspected photo/video replay from a monitor"
         spoof_signals.append("screen_replay")
         spoof_signals.append("display_artifacts")
-    elif not challenge_ok:
-        live = False
-        score = 0.12
-        reason = challenge_reason
-        spoof_signals.append("challenge_failed")
     else:
         blink_signal = min(blinks, 2) / 2.0
         motion_signal = float(np.clip(motion / MOTION_REF, 0.0, 1.0))
@@ -561,6 +567,13 @@ def run_liveness(frame_burst, challenge_type: str = "blink") -> ModuleResult:
             score = 0.55 * max(blink_signal, motion_signal, challenge_signal) \
                 + 0.25 * (1.0 - screen) + 0.20 * coverage
         live = bool(score >= LIVE_THRESHOLD)
+        if live and not challenge_ok:
+            # The traveler is never shown the randomly assigned challenge, so
+            # performing a *different* genuine action must not fail liveness.
+            # Record the mismatch for audit instead of failing the person.
+            spoof_signals.append(f"challenge_not_observed:{challenge}")
+            reason = (f"LIVE via {', '.join(observed)} but the assigned "
+                      f"'{challenge}' challenge was not performed")
         if not live:
             reason = challenge_reason or "liveness signals (blink/motion/head/mouth) below confidence threshold"
             spoof_signals.append("weak_signals")

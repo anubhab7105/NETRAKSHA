@@ -269,10 +269,9 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+# CORS — extend via CORS_ORIGINS (comma-separated) on the deploy host, e.g.
+# CORS_ORIGINS="https://app.example.com,https://api.example.com"
+_CORS_DEFAULTS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
     "http://[::1]:5173",
@@ -281,8 +280,12 @@ app.add_middleware(
     "http://[::1]:8000",
     "https://sih-weld-psi.vercel.app",
     "https://netraksha.xyz",
-    "https://www.netraksha.xyz"
-    ],
+    "https://www.netraksha.xyz",
+]
+_CORS_EXTRA = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_CORS_DEFAULTS + [o for o in _CORS_EXTRA if o not in _CORS_DEFAULTS],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -311,7 +314,10 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
     })
 
 # Evidence directory (no longer publicly mounted — served via authenticated endpoints below)
-_EVIDENCE_DIR = _PROJECT_ROOT / "samples" / "evidence"
+# Respects SCREEN_EVIDENCE_DIR (blank = unset) so deploys can point at a
+# persistent volume; mirrors pipeline/common.py EVIDENCE_DIR resolution.
+_EVIDENCE_ENV = os.environ.get("SCREEN_EVIDENCE_DIR", "").strip()
+_EVIDENCE_DIR = Path(_EVIDENCE_ENV) if _EVIDENCE_ENV else _PROJECT_ROOT / "samples" / "evidence"
 _EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Frontend build directory (served statically via the SPA fallback route)

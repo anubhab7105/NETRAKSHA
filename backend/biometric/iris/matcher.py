@@ -24,9 +24,31 @@ def hamming_distance(template_a: bytes, mask_a: bytes, template_b: bytes, mask_b
     except Exception:
         return 1.0
 
+def _is_degenerate(template: bytes) -> bool:
+    """True when a stored/probe code is near-constant (no iris texture).
+
+    Guards templates minted before the encoder texture gate existed:
+    matching them would false-accept at distance ~0.
+    """
+    try:
+        a = np.frombuffer(template, dtype=np.uint8)
+        if a.size == 0:
+            return True
+        frac = float((a == 255).mean())
+        return frac < 0.15 or frac > 0.85
+    except Exception:
+        return True
+
+
 def match_templates(probe_template: bytes, probe_mask: bytes, ref_template: bytes, ref_mask: bytes, threshold: float = 0.32) -> Dict[str, Any]:
     """Match probe against reference. Threshold <0.32 is initial prototype (uncalibrated)."""
     try:
+        if not probe_template or not ref_template:
+            return {"match": None, "distance": None, "decision": "INCONCLUSIVE",
+                    "error": "missing template"}
+        if _is_degenerate(probe_template) or _is_degenerate(ref_template):
+            return {"match": None, "distance": None, "decision": "INCONCLUSIVE",
+                    "error": "degenerate template (insufficient iris texture)"}
         dist = hamming_distance(probe_template, probe_mask, ref_template, ref_mask)
         # Low-confidence band 0.28-0.36
         low_conf = 0.28 <= dist <= 0.36

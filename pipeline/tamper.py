@@ -171,7 +171,7 @@ def _copy_move_detect(
 # ---------------------------------------------------------------------------
 
 def run_tamper(document_image, save_evidence: bool = True) -> ModuleResult:
-    """Run ELA + ORB tamper detection on a single document image.
+    """Run ELA + SHA1 exact-duplicate copy-move tamper detection on a single document image.
 
     Signature for the FastAPI route owner:
         run_tamper(document_image, save_evidence=True) -> ModuleResult

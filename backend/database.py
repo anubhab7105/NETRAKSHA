@@ -1,13 +1,17 @@
-"""Async database engine configuration — Supabase PostgreSQL ONLY.
+"""Async database engine configuration — Supabase PostgreSQL in production,
+local SQLite fallback for VS Code / dev runs.
 
-There is no local/SQLite fallback. The backend refuses to import without a
-usable ``DATABASE_URL`` so a misconfigured deploy fails loudly at startup
-instead of silently writing cases, users and audit rows to a throwaway
-local file that diverges from the production registry.
+Production (``APP_ENV=production``) is still Supabase-PostgreSQL-only and
+fails fast without a usable ``DATABASE_URL``. In non-production, a missing
+or ``sqlite`` ``DATABASE_URL`` falls back to a local file
+(``LOCAL_DB_PATH`` or ``./local_dev.db``) so ``uvicorn`` works out of the
+box without Supabase credentials.
 
 URL forms accepted:
-  * ``postgresql+asyncpg://...`` (preferred)
+  * ``postgresql+asyncpg://...`` (preferred, all envs)
   * ``postgresql://...`` (auto-rewritten to the above)
+  * ``sqlite+aiosqlite:///...`` / ``sqlite:///...`` (dev only)
+  * empty (dev only → local file fallback)
 """
 
 from __future__ import annotations
@@ -21,43 +25,65 @@ from sqlalchemy.ext.asyncio import (
 )
 
 # ---------------------------------------------------------------------------
-# Database URL resolution — Postgres required, fail fast
+# Database URL resolution — Postgres in prod, SQLite fallback in dev
 # ---------------------------------------------------------------------------
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
-if not DATABASE_URL:
-    raise RuntimeError(
-        "DATABASE_URL is not set. This backend is Supabase-PostgreSQL-only "
-        "(no local/SQLite fallback). Set DATABASE_URL to your Supabase "
-        "connection string, e.g. "
-        "postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres"
-    )
-if DATABASE_URL.startswith("sqlite"):
-    raise RuntimeError(
-        "SQLite DATABASE_URLs are not supported. This backend is "
-        "Supabase-PostgreSQL-only — point DATABASE_URL at Supabase."
-    )
-if DATABASE_URL.startswith("postgresql://"):
-    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
-if not DATABASE_URL.startswith("postgresql+asyncpg://"):
-    raise RuntimeError(
-        f"Unsupported DATABASE_URL scheme {DATABASE_URL.split('://', 1)[0]!r}. "
-        "Use postgresql://... or postgresql+asyncpg://... (Supabase)."
-    )
+_APP_ENV = os.environ.get("APP_ENV", os.environ.get("ENVIRONMENT", "development")).lower()
+_IS_PROD = _APP_ENV == "production"
+
+_RAW_URL = os.environ.get("DATABASE_URL", "").strip()
+
+IS_SQLITE = False
+
+if not _RAW_URL or _RAW_URL.startswith("sqlite"):
+    if _IS_PROD:
+        raise RuntimeError(
+            "DATABASE_URL is not set (or is SQLite) but APP_ENV=production. "
+            "Production is Supabase-PostgreSQL-only — set DATABASE_URL to your "
+            "Supabase connection string, e.g. "
+            "postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres"
+        )
+    # Dev fallback: explicit sqlite URL or local file when unset.
+    if _RAW_URL.startswith("sqlite://") and not _RAW_URL.startswith("sqlite+aiosqlite://"):
+        _RAW_URL = _RAW_URL.replace("sqlite://", "sqlite+aiosqlite://", 1)
+    if _RAW_URL.startswith("sqlite+aiosqlite://"):
+        DATABASE_URL = _RAW_URL
+    else:
+        _local_path = os.environ.get("LOCAL_DB_PATH", "./local_dev.db")
+        DATABASE_URL = f"sqlite+aiosqlite:///{_local_path}"
+        if not _RAW_URL:
+            print(f"[database] DATABASE_URL not set — using local dev DB {DATABASE_URL} (set DATABASE_URL for Supabase).")
+    IS_SQLITE = True
+else:
+    DATABASE_URL = _RAW_URL
+    if DATABASE_URL.startswith("postgresql://"):
+        DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if not DATABASE_URL.startswith("postgresql+asyncpg://"):
+        raise RuntimeError(
+            f"Unsupported DATABASE_URL scheme {DATABASE_URL.split('://', 1)[0]!r}. "
+            "Use postgresql://... or postgresql+asyncpg://... (Supabase), "
+            "or sqlite in non-production dev only."
+        )
 
 # ---------------------------------------------------------------------------
-# Engine & session factory (PostgreSQL / asyncpg)
+# Engine & session factory (PostgreSQL / asyncpg, or SQLite / aiosqlite)
 # ---------------------------------------------------------------------------
 
-_engine_kwargs = {
-    "echo": os.environ.get("DB_ECHO", "").lower() in ("1", "true"),
-    "pool_size": int(os.environ.get("DB_POOL_SIZE", "5")),
-    "max_overflow": int(os.environ.get("DB_MAX_OVERFLOW", "10")),
-    "pool_pre_ping": True,
-    "connect_args": {
-        "statement_cache_size": 0
-    },
-}
+if IS_SQLITE:
+    _engine_kwargs = {
+        "echo": os.environ.get("DB_ECHO", "").lower() in ("1", "true"),
+        "connect_args": {"check_same_thread": False},
+    }
+else:
+    _engine_kwargs = {
+        "echo": os.environ.get("DB_ECHO", "").lower() in ("1", "true"),
+        "pool_size": int(os.environ.get("DB_POOL_SIZE", "5")),
+        "max_overflow": int(os.environ.get("DB_MAX_OVERFLOW", "10")),
+        "pool_pre_ping": True,
+        "connect_args": {
+            "statement_cache_size": 0
+        },
+    }
 
 engine = create_async_engine(DATABASE_URL, **_engine_kwargs)
 
@@ -108,32 +134,52 @@ async def init_db() -> None:
         print(f"[init_db] auth-column migration warning: {e}")
 
 
+async def _sqlite_table_columns(conn, table_name: str) -> set:
+    """Return existing column names for a SQLite table via PRAGMA."""
+    from sqlalchemy import text as _text
+
+    try:
+        res = await conn.execute(_text(f'PRAGMA table_info("{table_name}")'))
+        return {row[1] for row in res.all()}
+    except Exception:
+        return set()
+
+
 async def ensure_model_columns() -> dict:
     """Add every ORM-mapped column missing from the live database.
 
     Generic drift repair: compares each model's columns against the actual
-    table (information_schema) and ALTERs in whatever is absent — e.g.
-    officers.unit on databases created before unit scoping shipped.
+    table (information_schema on Postgres, PRAGMA on SQLite) and ALTERs in
+    whatever is absent — e.g. officers.unit on databases created before
+    unit scoping shipped.
     Idempotent, race-safe (per-column try/except), runs on every startup.
     Returns {"table": [added, ...]}.
     """
     from .models import Base
 
-    from sqlalchemy.dialects import postgresql as _pg_dialect
-
-    _dialect = _pg_dialect.dialect()
-
     from sqlalchemy import text as _text
+
+    if IS_SQLITE:
+        from sqlalchemy.dialects import sqlite as _lite_dialect
+
+        _dialect = _lite_dialect.dialect()
+    else:
+        from sqlalchemy.dialects import postgresql as _pg_dialect
+
+        _dialect = _pg_dialect.dialect()
 
     added: dict[str, list[str]] = {}
     async with engine.begin() as conn:
         for table in Base.metadata.tables.values():
-            res = await conn.execute(
-                _text("SELECT column_name FROM information_schema.columns "
-                      "WHERE table_name = :t"),
-                {"t": table.name},
-            )
-            existing = {row[0] for row in res.all()}
+            if IS_SQLITE:
+                existing = await _sqlite_table_columns(conn, table.name)
+            else:
+                res = await conn.execute(
+                    _text("SELECT column_name FROM information_schema.columns "
+                          "WHERE table_name = :t"),
+                    {"t": table.name},
+                )
+                existing = {row[0] for row in res.all()}
             for col in table.columns:
                 if col.primary_key or col.name in existing:
                     continue
@@ -147,8 +193,14 @@ async def ensure_model_columns() -> dict:
                         default_sql = f" DEFAULT {col.server_default._compiler_dispatch(_dialect, None)}"
                 except Exception:
                     default_sql = ""
-                stmt = (f'ALTER TABLE {table.name} ADD COLUMN IF NOT EXISTS '
-                        f'"{col.name}" {ddl_type}{default_sql}')
+                if IS_SQLITE:
+                    # SQLite has no ADD COLUMN IF NOT EXISTS — we already
+                    # checked PRAGMA above, so plain ADD COLUMN suffices.
+                    stmt = (f'ALTER TABLE "{table.name}" ADD COLUMN '
+                            f'"{col.name}" {ddl_type}{default_sql}')
+                else:
+                    stmt = (f'ALTER TABLE {table.name} ADD COLUMN IF NOT EXISTS '
+                            f'"{col.name}" {ddl_type}{default_sql}')
                 try:
                     await conn.execute(_text(stmt))
                     added.setdefault(table.name, []).append(col.name)
@@ -197,11 +249,19 @@ async def ensure_registry_trust_columns() -> dict:
 
     added: list[str] = []
     async with engine.begin() as conn:
+        existing = await _sqlite_table_columns(conn, "citizens_registry") if IS_SQLITE else set()
         for name, ddl in _REGISTRY_TRUST_COLUMNS:
             try:
-                await conn.execute(_text(
-                    f"ALTER TABLE citizens_registry ADD COLUMN IF NOT EXISTS {name} {ddl}"
-                ))
+                if IS_SQLITE:
+                    if name in existing:
+                        continue
+                    await conn.execute(_text(
+                        f'ALTER TABLE citizens_registry ADD COLUMN "{name}" {ddl}'
+                    ))
+                else:
+                    await conn.execute(_text(
+                        f"ALTER TABLE citizens_registry ADD COLUMN IF NOT EXISTS {name} {ddl}"
+                    ))
                 added.append(name)
             except Exception:
                 pass
@@ -225,11 +285,19 @@ async def ensure_auth_columns() -> dict:
 
     added: list[str] = []
     async with engine.begin() as conn:
+        existing = await _sqlite_table_columns(conn, "officers") if IS_SQLITE else set()
         for name, ddl in _AUTH_COLUMNS:
             try:
-                await conn.execute(_text(
-                    f"ALTER TABLE officers ADD COLUMN IF NOT EXISTS {name} {ddl}"
-                ))
+                if IS_SQLITE:
+                    if name in existing:
+                        continue
+                    await conn.execute(_text(
+                        f'ALTER TABLE officers ADD COLUMN "{name}" {ddl}'
+                    ))
+                else:
+                    await conn.execute(_text(
+                        f"ALTER TABLE officers ADD COLUMN IF NOT EXISTS {name} {ddl}"
+                    ))
                 added.append(name)
             except Exception:
                 pass
@@ -259,8 +327,11 @@ async def ensure_sequences() -> dict:
     autoincrement INSERT dies with a duplicate-pkey IntegrityError and —
     in production — crash-loops the backend at seed time. pg_get_serial_-
     sequence() resolves the real sequence regardless of naming. Returns
-    {"table": next_id}.
+    {"table": next_id}. No-op on SQLite (native autoincrement).
     """
+    if IS_SQLITE:
+        return {}
+
     from sqlalchemy import text as _text
 
     from .models import Base
@@ -290,6 +361,12 @@ async def ensure_sequences() -> dict:
 
 def get_engine_info() -> dict:
     """Return diagnostic info about the current database engine."""
+    if IS_SQLITE:
+        return {
+            "url": DATABASE_URL,
+            "driver": "aiosqlite",
+            "backend": "sqlite",
+        }
     return {
         "url": DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else DATABASE_URL,
         "driver": "asyncpg",
