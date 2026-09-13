@@ -1300,12 +1300,14 @@ def _ocr_fields_to_demographics(ocr_raw):
     given = by_name.get("given_names", "")
     surname = by_name.get("surname", "")
     full_name = " ".join(x for x in (given, surname) if x).strip()
-    sex = by_name.get("sex", "")
+    # MRZ gives "M"/"F"; the Indian-ID OCR fallback may give "MALE"/"FEMALE".
+    sex = str(by_name.get("sex", "") or "").strip().upper()
+    gender = {"M": "Male", "F": "Female"}.get(sex[:1]) if sex else None
     return {
         "document_number": by_name.get("document_number", ""),
         "full_name": full_name or None,
         "date_of_birth": by_name.get("date_of_birth") or None,
-        "gender": {"M": "Male", "F": "Female"}.get(sex) if sex else None,
+        "gender": gender,
         "address": None,
         "father_or_spouse_name": None,
     }
@@ -1903,14 +1905,17 @@ async def _run_screening_pipeline(
                         ref_t, ref_m = None, None
                     if ref_t:
                         iris_result = prov_iris.verify(iris_path, ref_t, ref_m)
-                        # Attach quality + PAD from the SAME capture (never raw bytes)
+                        # Attach quality + PAD from the SAME capture (never raw bytes).
+                        # PAD needs a multi-frame eye burst; the unified flow has one
+                        # derived eye crop, so PAD is honestly inconclusive here
+                        # (face-burst liveness still guards presentation attacks).
+                        # A dedicated eye-burst input can enable full iris PAD later.
                         try:
                             _q = prov_iris.quality(iris_path)
                         except Exception:
                             _q = {"quality": None, "usable": None}
                         try:
-                            _pad_src = live_burst if (live_burst and len(live_burst) > 0) else [iris_path]
-                            _pad = prov_iris.liveness(_pad_src)
+                            _pad = prov_iris.liveness([iris_path])
                         except Exception:
                             _pad = {"passed": None}
                         if isinstance(iris_result, dict):
@@ -1928,13 +1933,13 @@ async def _run_screening_pipeline(
                 else:
                     # Template missing: still assess quality/PAD of the unified eye crop
                     # so the officer gets actionable feedback (not a silent N/A).
+                    # Single derived crop → iris PAD inconclusive (see note above).
                     try:
                         _q = _prov_iris_shared.quality(iris_path)
                     except Exception:
                         _q = {"quality": None, "usable": None}
                     try:
-                        _pad_src = live_burst if (live_burst and len(live_burst) > 0) else [iris_path]
-                        _pad = _prov_iris_shared.liveness(_pad_src)
+                        _pad = _prov_iris_shared.liveness([iris_path])
                     except Exception:
                         _pad = {"passed": None}
                     iris_result = {"match": None, "decision": "INCONCLUSIVE", "reason": "no template enrolled",

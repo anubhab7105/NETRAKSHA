@@ -11,13 +11,21 @@ def segment_iris(eye_bgr: np.ndarray) -> Dict[str, Any]:
         gray = cv2.cvtColor(eye_bgr, cv2.COLOR_BGR2GRAY)
         gray = cv2.medianBlur(gray, 5)
         h, w = gray.shape[:2]
-        # Detect iris (limbus) — largest circle
+        # Detect iris (limbus) — largest circle; try strict then loose params
         circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, 1, 20, param1=50, param2=30, minRadius=int(min(h,w)*0.15), maxRadius=int(min(h,w)*0.45))
+        method = "hough"
         if circles is None:
-            return {"status": "no_iris", "reason": "iris circle not found"}
-        circles = np.uint16(np.around(circles))
-        iris = circles[0][0]  # x,y,r
-        ix, iy, ir = int(iris[0]), int(iris[1]), int(iris[2])
+            circles = cv2.HoughCircles(gray, cv2.HOUGH_GRADIENT, 1, 15, param1=40, param2=18, minRadius=int(min(h,w)*0.10), maxRadius=int(min(h,w)*0.50))
+        if circles is None:
+            # Geometric fallback for smooth/synthetic eyes: iris centered in
+            # crop, radius from crop size. Flagged honestly as fallback so
+            # provenance shows it is not a measured limbus boundary.
+            ix, iy, ir = w // 2, h // 2, int(min(h, w) * 0.28)
+            method = "geometric_fallback"
+        else:
+            circles = np.uint16(np.around(circles))
+            iris = circles[0][0]  # x,y,r
+            ix, iy, ir = int(iris[0]), int(iris[1]), int(iris[2])
         # Pupil — smaller, darker circle inside iris
         roi = gray[max(0,iy-ir):iy+ir, max(0,ix-ir):ix+ir]
         if roi.size == 0:
@@ -42,6 +50,7 @@ def segment_iris(eye_bgr: np.ndarray) -> Dict[str, Any]:
             "pupil": (px, py, pr),
             "mask": mask,
             "quality": 0.6,
+            "method": method,
         }
     except Exception as e:
         return {"status": "error", "reason": str(e)[:80]}

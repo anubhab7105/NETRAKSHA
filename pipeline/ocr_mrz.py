@@ -1,7 +1,10 @@
 """Module 1 — OCR / MRZ extraction.
 
 Approach (Techspec.md §3):
-  * Tesseract (via pytesseract) for visible passport/visa/ID fields.
+  * Tesseract (via pytesseract) for visible passport/visa/ID fields, plus
+    best-effort Indian-ID patterns (Aadhaar 12-digit, PAN, Voter EPIC, DOB,
+    gender) so non-passport cards still yield trusted demographics when the
+    cloud AI is offline. Passport MRZ remains authoritative when present.
   * PassportEye for MRZ line decoding.
   * ICAO 9303 check-digit validation of the MRZ.
 
@@ -10,10 +13,11 @@ Contract:
     ``module_results`` table (Shema.md).
   * Visible fields that cannot be read are marked explicitly (value=None,
     readable=False) rather than guessed / silently fabricated.
-  * Tesseract relies on a vendored binary + tessdata so the module works without
-    a system-level install. If the OCR engine is unavailable the visible-field
-    portion degrades (still inconclusive-safe); MRZ/ICAO still runs via the
-    pure-Python PassportEye path when possible.
+  * Tesseract resolution order (see pipeline/common.py): vendored binary +
+    tessdata when present, otherwise a system-wide install. If no OCR engine
+    is available the visible-field portion degrades (still
+    inconclusive-safe); MRZ/ICAO still runs via the pure-Python PassportEye
+    path when possible.
 
 No image evidence is produced here — the extracted field table IS the evidence
 the UI displays (Techspec.md §3, Appflow.md §3.4).
@@ -39,14 +43,18 @@ from .common import (
 
 MODULE_NAME = "ocr"
 
-# Expected machine-readable fields on a passport-style document + MRZ slots.
+# Expected machine-readable fields on a passport-style document + MRZ slots,
+# plus the Indian-ID fallback slots (document_type/sex) used when the cloud
+# AI is offline and there is no MRZ to read (Aadhaar/PAN/Voter ID).
 VISIBLE_FIELDS = [
     "document_number",
+    "document_type",
     "surname",
     "given_names",
     "nationality",
     "date_of_birth",
     "date_of_expiry",
+    "sex",
 ]
 
 MRZ_FIELDS = [
@@ -101,7 +109,10 @@ def _ocr_frame_rgb(pil_rgb) -> str:
 
     return pytesseract.image_to_string(
         pil_rgb,
-        config="--psm 6 -c tessedit_char_whitelist='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789< >-'",
+        # NOTE: '/' '.' ':' are required for DOB (DD/MM/YYYY) and labelled
+        # fields; stripping them turns dates into bare digit runs the date
+        # regexes can no longer recognise.
+        config="--psm 6 -c tessedit_char_whitelist='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789< >-/.:'",
     )
 
 
@@ -120,6 +131,14 @@ def _parse_visible_fields(ocr_text: str) -> List[dict]:
     accidentally merge neighbouring fields. Fields that cannot be confidently
     located are returned explicitly as unreadable (value=None, readable=False)
     — never fabricated.
+
+    Indian-ID fallback: Aadhaar/PAN/Voter cards carry no MRZ and no
+    SURNAME/PASSPORT-NO labels, so when the passport patterns miss, a second
+    full-text pass looks for their bare number formats (PAN, EPIC, Aadhaar
+    12-digit with Verhoeff preferred), an unlabeled DD/MM/YYYY birthdate, a
+    MALE/FEMALE marker, and a NAME label. MRZ lines (containing '<') are
+    excluded from this pass so MRZ digit runs can never be mistaken for an
+    Indian document number.
     """
     patterns = {
         "surname": re.compile(r"\bSURNAME\b\s*[:\-]?\s*([A-Z]{2,})"),
@@ -129,7 +148,7 @@ def _parse_visible_fields(ocr_text: str) -> List[dict]:
         ),
         "nationality": re.compile(r"\bNATIONALITY\b\s*[:\-]?\s*([A-Z]{3})", re.I),
         "date_of_birth": re.compile(
-            r"\b(?:DATE\s+OF\s+BIRTH|DOB)\b\s*[:\-]?\s*"
+            r"\b(?:DATE\s+OF\s+BIRTH|DOB|BIRTH\s+DATE)\b\s*[:\-]?\s*"
             r"([0-9]{1,2}\s*[/\-\.]\s*[0-9]{1,2}\s*[/\-\.]\s*[0-9]{2,4})",
             re.I,
         ),
@@ -156,13 +175,58 @@ def _parse_visible_fields(ocr_text: str) -> List[dict]:
             if m and m.group(1):
                 found[name] = m.group(1)
 
+    # --- Indian-ID fallback pass (only when passport patterns missed) -------
+    # Non-MRZ text only: MRZ lines are full of digit runs and '<' fillers.
+    non_mrz_text = "\n".join(
+        line for line in ocr_text.splitlines() if "<" not in line
+    )
+    if "document_number" not in found:
+        _num, _type = _detect_indian_document_number(non_mrz_text)
+        if _num:
+            found["document_number"] = _num
+            found["document_type"] = _type
+    elif "document_type" not in found:
+        found["document_type"] = "passport"
+    if "sex" not in found:
+        _sex = _detect_indian_gender(non_mrz_text)
+        if _sex:
+            found["sex"] = _sex
+    if "given_names" not in found:
+        # Per-line so a "Father/Spouse/Guardian Name" line is never mistaken
+        # for the holder's own name.
+        for raw_line in non_mrz_text.splitlines():
+            line = _clean(raw_line)
+            if not line or re.search(
+                r"\b(FATHER|SPOUSE|GUARDIAN|S/O|W/O|C/O)\b", line, re.I
+            ):
+                continue
+            m = re.search(
+                r"\bNAME\b\s*[:\-]?\s*([A-Z]{2,}(?:\s+[A-Z]{2,}){0,3})",
+                line,
+                re.I,
+            )
+            if m and m.group(1):
+                found["given_names"] = m.group(1).strip()
+                break
+    if "date_of_birth" not in found:
+        # Unlabeled birthdate (Aadhaar style "12/04/1988"); requires a
+        # separator so MRZ-style bare digit runs never match.
+        m = re.search(
+            r"\b([0-9]{1,2}\s*[/\-\.]\s*[0-9]{1,2}\s*[/\-\.]\s*(?:19|20)[0-9]{2})\b",
+            _clean(non_mrz_text),
+        )
+        if m and m.group(1):
+            found["date_of_birth"] = re.sub(r"\s+", "", m.group(1))
+
     field_names = [
         "document_number",
+        "document_type",
         "surname",
         "given_names",
         "nationality",
         "date_of_birth",
         "date_of_expiry",
+        "sex",
     ]
     fields: List[dict] = []
     for name in field_names:
@@ -176,6 +240,59 @@ def _parse_visible_fields(ocr_text: str) -> List[dict]:
             }
         )
     return fields
+
+
+def _detect_indian_document_number(text: str):
+    """Return (number, document_type) for Indian IDs found in free OCR text.
+
+    Priority: PAN → Voter EPIC → Aadhaar (Verhoeff-valid 12-digit preferred,
+    any 12-digit otherwise). Returns (None, None) when nothing matches.
+    """
+    flat = _clean(text).upper()
+    if not flat:
+        return None, None
+    m = re.search(r"\b([A-Z]{5}[0-9]{4}[A-Z])\b", flat)
+    if m:
+        return m.group(1), "pan"
+    m = re.search(r"\b([A-Z]{3}[0-9]{7})\b", flat)
+    if m:
+        return m.group(1), "voter_id"
+    candidates = re.findall(r"\b(\d{4}\s?\d{4}\s?\d{4})\b", flat)
+    if candidates:
+        try:
+            from .checksums import validate_verhoeff
+        except Exception:  # noqa: BLE001 — validator unavailable, accept raw
+            validate_verhoeff = None
+        fallback = None
+        for cand in candidates:
+            digits = re.sub(r"\s+", "", cand)
+            if validate_verhoeff is None:
+                return digits, "aadhaar"
+            try:
+                if validate_verhoeff(digits):
+                    return digits, "aadhaar"
+            except Exception:  # noqa: BLE001 — keep scanning candidates
+                pass
+            fallback = fallback or digits
+        if fallback:
+            return fallback, "aadhaar"
+    return None, None
+
+
+def _detect_indian_gender(text: str):
+    """Return 'M'/'F' when an explicit gender marker is present, else None."""
+    flat = _clean(text).upper()
+    if re.search(r"\bFEMALE\b", flat):
+        return "F"
+    if re.search(r"\bMALE\b", flat):
+        return "M"
+    m = re.search(r"\bSEX\b\s*[:\-]?\s*([MF])\b", flat)
+    if m:
+        return m.group(1)
+    m = re.search(r"\bGENDER\b\s*[:\-]?\s*([MF])\b", flat)
+    if m:
+        return m.group(1)
+    return None
 
 
 # ---------------------------------------------------------------------------

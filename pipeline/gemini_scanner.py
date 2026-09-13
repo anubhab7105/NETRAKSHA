@@ -1,6 +1,7 @@
 """Gemini AI Multi-Task Scanner — single-call document analysis.
 
-Sends a single multi-image request to Google Gemini 1.5/2.0 Flash containing:
+Sends a single multi-image request to Google Gemini 3.6 Flash (see
+GEMINI_MODEL, default `gemini-3.6-flash`) containing:
   1. Uploaded Document Image
   2. Live Webcam Capture Still
   3. Database Reference Photo (optional)
@@ -13,6 +14,13 @@ Includes a resilient **offline simulation fallback engine** so the system
 executes smoothly even if an API key is not configured or during network
 timeouts. The fallback produces realistic demo output marked with
 `is_simulated: true`.
+
+Misconfiguration note: a non-Google key (valid Google keys start with
+`AIza`) or an unknown model name fails exactly like a network outage —
+`is_simulated=True` + `cloud_unavailable=True` — and the case is floored
+at Yellow. Check the `[gemini_scanner]` log line and `.env` (`GEMINI_API_KEY`,
+`GEMINI_MODEL=gemini-3.6-flash`) first when the UI shows
+"CLOUD UNAVAILABLE — Local Checks Only".
 """
 
 from __future__ import annotations
@@ -34,8 +42,23 @@ load_dotenv()
 # Gemini API integration
 # ---------------------------------------------------------------------------
 
+DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
+
+
+def _get_api_key() -> str:
+    """Read the API key lazily so `.env` changes apply without reimport."""
+    return os.environ.get("GEMINI_API_KEY", "")
+
+
+def _get_model() -> str:
+    """Read the model name lazily; fall back to the supported default."""
+    return os.environ.get("GEMINI_MODEL", "") or DEFAULT_GEMINI_MODEL
+
+
+# Kept for backwards compatibility (import-time snapshot); new code must use
+# the lazy getters above so key/model edits take effect without a reimport.
 _GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-_GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
+_GEMINI_MODEL = os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
 
 # The structured prompt for multi-task document analysis
 _SYSTEM_PROMPT = """You are an expert border security document forensics AI.
@@ -144,38 +167,65 @@ def scan_document(
     """
     start = time.perf_counter()
     has_live = bool(live_capture_path and _load_image_bytes(live_capture_path))
+    api_key = _get_api_key()
+    model = _get_model()
 
     # Attempt real Gemini call
-    if _GEMINI_API_KEY:
+    fallback_reason: Optional[str] = None
+    if api_key:
         try:
             result = _call_gemini(
                 document_image_path,
                 live_capture_path,
                 db_reference_path,
                 timeout,
+                api_key=api_key,
+                model=model,
             )
             elapsed = (time.perf_counter() - start) * 1000
             result["is_simulated"] = False
             result["latency_ms"] = round(elapsed, 1)
-            result["model_used"] = _GEMINI_MODEL
+            result["model_used"] = model
             return _normalize_no_live_face_match(result, has_live)
         except Exception as exc:
-            # Network/cloud failure → controlled fallback, not a halt
-            err_name = type(exc).__name__
-            is_network = any(s in err_name.lower() or s in str(exc).lower() for s in ["timeout", "connection", "network", "unavailable", "dns", "socket", "503", "502", "504"])
-            print(f"[gemini_scanner] Gemini API call failed ({'network' if is_network else 'other'}): {err_name}: {exc} — falling back to local checks, final verdict will be Yellow/Manual Review")
+            # Cloud failure → controlled fallback, not a halt. Distinguish
+            # auth/config errors (wrong key, unknown model) from transient
+            # network outages so the operator knows what to fix.
+            err_text = f"{type(exc).__name__}: {exc}".lower()
+            is_auth = any(s in err_text for s in [
+                "api_key", "api key", "invalid key", "unauthenticated",
+                "permission_denied", "permission denied", "401", "403",
+                "not found", "404", "is not found", "unsupported",
+                "does not exist", "unknown model", "publisher model",
+            ])
+            is_network = any(s in err_text for s in [
+                "timeout", "connection", "network", "unavailable",
+                "dns", "socket", "503", "502", "504", "deadline",
+            ])
+            kind = "auth/config" if is_auth else ("network" if is_network else "other")
+            fallback_reason = "auth_or_config_error" if is_auth else "network_or_api_failure"
+            key_hint = ""
+            if is_auth:
+                key_hint = (
+                    " Check .env: GEMINI_API_KEY must be a valid Google key "
+                    "(starts with 'AIza'), GEMINI_MODEL must be a supported "
+                    f"model (default '{DEFAULT_GEMINI_MODEL}')."
+                )
+            print(f"[gemini_scanner] Gemini API call failed ({kind}): {type(exc).__name__}: {exc} — falling back to local checks, final verdict will be Yellow/Manual Review.{key_hint}")
             # Fall through to simulation with cloud_unavailable flag
 
     # Offline simulation fallback — controlled, not a halt
     result = _simulate_scan(document_image_path, live_capture_path, db_reference_path)
     elapsed = (time.perf_counter() - start) * 1000
     result["is_simulated"] = True
-    # Distinguish demo (no/placeholder key) vs network failure (real key but call failed)
-    _has_real_key = bool(_GEMINI_API_KEY and _GEMINI_API_KEY.strip() not in ("", "your_gemini_api_key_here", "your_gemini_api_key_here\n") and len(_GEMINI_API_KEY.strip()) > 20)
-    result["cloud_unavailable"] = bool(_has_real_key)  # True only if real key existed but call failed
+    # Distinguish demo (no/placeholder key) vs cloud failure (key present but call failed)
+    _has_real_key = bool(api_key and api_key.strip() not in ("", "your_gemini_api_key_here", "your_gemini_api_key_here\n") and len(api_key.strip()) > 20)
+    result["cloud_unavailable"] = bool(_has_real_key and fallback_reason is not None)
+    if not _has_real_key:
+        result["cloud_unavailable"] = False
     result["latency_ms"] = round(elapsed, 1)
     result["model_used"] = "offline_simulation"
-    result["cloud_fallback_reason"] = "network_or_api_failure" if _has_real_key else "no_api_key"
+    result["cloud_fallback_reason"] = (fallback_reason or "network_or_api_failure") if _has_real_key else "no_api_key"
     return _normalize_no_live_face_match(result, has_live)
 
 
@@ -184,13 +234,17 @@ def _call_gemini(
     live_capture_path: str | Path,
     db_reference_path: Optional[str | Path],
     timeout: float,
+    api_key: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> dict:
     """Make a real Gemini API call with multi-image input."""
     from google import genai
     from google.genai import types
     from google.genai.errors import ClientError
 
-    client = genai.Client(api_key=_GEMINI_API_KEY)
+    api_key = api_key if api_key is not None else _get_api_key()
+    model = model if model is not None else _get_model()
+    client = genai.Client(api_key=api_key)
 
     # Build content parts
     parts = [_SYSTEM_PROMPT]
@@ -230,7 +284,7 @@ def _call_gemini(
             parts.append("Image 3 (database reference): Not available")
 
     response = client.models.generate_content(
-        model=_GEMINI_MODEL,
+        model=model,
         contents=parts,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",

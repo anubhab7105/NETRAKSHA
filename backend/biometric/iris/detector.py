@@ -33,10 +33,12 @@ def detect_eyes(bgr: np.ndarray) -> Dict[str, Any]:
         # Eye landmarks: left 33, right 263, use bbox around eye
         left_x = int(lm[33].x * w); left_y = int(lm[33].y * h)
         right_x = int(lm[263].x * w); right_y = int(lm[263].y * h)
-        # Estimate eye crops 80x80 around each eye
+        # Eye crops 160x120 around each eye (min dim 120 clears the
+        # quality gate's 80px floor; same landmarks/API, more iris pixels
+        # for Hough segmentation and Gabor encoding).
         def crop_eye(cx, cy):
-            x0, y0 = max(0, cx-40), max(0, cy-30)
-            x1, y1 = min(w, cx+40), min(h, cy+30)
+            x0, y0 = max(0, cx-80), max(0, cy-60)
+            x1, y1 = min(w, cx+80), min(h, cy+60)
             return bgr[y0:y1, x0:x1], (x0, y0, x1, y1)
         left_crop, left_box = crop_eye(left_x, left_y)
         right_crop, right_box = crop_eye(right_x, right_y)

@@ -173,6 +173,20 @@ export default function CaseReport() {
 
   const geminiData = geminiModule?.raw_output || {};
   const faceMatch = geminiData.three_way_face_match || {};
+  // The cloud AI payload also carries the evidence-backed local InsightFace
+  // pairs (pair_sources "local"/"local_late"). When the cloud was offline the
+  // module is mocked, but those local pairs are still real biometrics and must
+  // be displayed — not hidden behind the "AI unavailable" notice.
+  const pairSources = faceMatch.pair_sources || {};
+  const hasLocalFacePair = Object.values(pairSources).some(
+    (s) => typeof s === 'string' && s.startsWith('local')
+  );
+  const hasRealFaceVerdict =
+    faceMatch.similarity_score != null ||
+    faceMatch.live_vs_doc_match != null ||
+    faceMatch.doc_vs_db_match != null ||
+    faceMatch.live_vs_db_match != null ||
+    hasLocalFacePair;
   const physicalData = physicalModule?.raw_output || {};
   const physicalChecks = physicalData.checks || {};
   // Iris verification: prefer top-level response field, fall back to persisted module
@@ -347,9 +361,12 @@ export default function CaseReport() {
               <Scan className="text-accent" size={20} />
               <h2 className="text-lg font-semibold text-white">3-Way Face Match</h2>
               {geminiModule && !geminiModule.is_mocked && <StatusBadge status={geminiModule.status} />}
+              {geminiModule?.is_mocked && hasRealFaceVerdict && (
+                <span className="text-xs px-2 py-0.5 bg-success/10 text-success rounded border border-success/30">Local biometric</span>
+              )}
             </div>
-            
-            {!geminiModule || geminiModule.status === 'inconclusive' || geminiModule.is_mocked ? (
+
+            {!hasRealFaceVerdict ? (
               <div className="bg-warning/5 border border-warning/20 p-4 rounded-lg text-sm text-warning">
                 <AlertTriangle size={16} className="inline mr-2" />
                 {geminiModule?.is_mocked
@@ -358,6 +375,11 @@ export default function CaseReport() {
               </div>
             ) : (
               <>
+                {geminiModule?.is_mocked && (
+                  <div className="mb-4 bg-primary/5 border border-primary/20 p-3 rounded-lg text-xs text-slate-300">
+                    Cloud AI was offline — the pairs below are the evidence-backed local biometric verification (InsightFace), not cloud results.
+                  </div>
+                )}
                 <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div className="flex items-center justify-between rounded-lg border border-slate-700/50 bg-black/30 p-4">
                     <span className="text-sm text-slate-400">Live vs Doc</span>

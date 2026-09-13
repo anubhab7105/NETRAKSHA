@@ -13,6 +13,8 @@ from __future__ import annotations
 import abc
 from typing import Dict, Any, Optional
 
+import numpy as np
+
 class BiometricProvider(abc.ABC):
     """Abstract iris provider."""
 
@@ -63,16 +65,21 @@ class RGBProvider(BiometricProvider):
         from .segmenter import segment_iris
         from .normalizer import normalize_iris
         from .encoder import encode_iris
-        # 1. quality gate
+        # 1. quality gate (accepts path or ndarray)
         q = assess_iris_quality(eye_image)
         if not q.get("usable"):
             return {"template": None, "mask": None, "quality": q, "error": "poor_quality"}
-        # 2. segment
-        seg = segment_iris(eye_image)
+        # 2. segment (needs ndarray — load once)
+        try:
+            from pipeline.common import load_image as _load
+            _img = _load(eye_image) if not isinstance(eye_image, np.ndarray) else eye_image
+        except Exception as e:
+            return {"template": None, "mask": None, "quality": q, "error": f"unreadable: {e}"[:80]}
+        seg = segment_iris(_img)
         if seg.get("status") != "ok":
             return {"template": None, "mask": None, "quality": q, "error": seg.get("reason", "segmentation_failed")}
-        # 3. normalize
-        norm = normalize_iris(eye_image, seg["pupil"], seg["iris"], seg.get("mask"))
+        # 3. normalize (use the loaded ndarray)
+        norm = normalize_iris(_img, seg["pupil"], seg["iris"], seg.get("mask"))
         if norm.get("status") != "ok":
             return {"template": None, "mask": None, "quality": q, "error": "normalization_failed"}
         # 4. encode
