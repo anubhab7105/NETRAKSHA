@@ -10,7 +10,13 @@ pip install -r requirements.txt
 # download attempt). Never fail the build: Render has no system Tesseract and
 # the model zoo can be unreachable — the backend prewarms loudly at startup
 # and degrades gracefully instead. `|| true` keeps `set -e` from aborting.
-bash scripts/setup_vendor.sh || true
+# When DISABLE_LOCAL_FACE_ENGINE=true (e.g. Render free tier), skip entirely
+# to save build time and avoid downloading models that will never be loaded.
+if [ "${DISABLE_LOCAL_FACE_ENGINE:-}" = "true" ]; then
+  echo "[build] DISABLE_LOCAL_FACE_ENGINE=true — skipping model provisioning (face engine disabled)"
+else
+  bash scripts/setup_vendor.sh || true
+fi
 
 if [ -f frontend/package-lock.json ]; then
   npm --prefix frontend ci

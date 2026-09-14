@@ -7,6 +7,9 @@
 # NOTE: native Render has no system Tesseract — OCR/MRZ degrades to
 # inconclusive (verdict floor Yellow) unless you deploy where tesseract is
 # installed (VPS with apt, or Render Docker). All other modules run fully.
+# NOTE: Free tier has 512MB RAM — DISABLE_LOCAL_FACE_ENGINE=true skips the
+# ~300MB InsightFace model to stay within limits. Face match falls back to
+# Gemini AI. Persistent disk is paid-only, so evidence is ephemeral.
 services:
   - type: web
     name: netraksha-api
@@ -15,12 +18,6 @@ services:
     buildCommand: bash build.sh
     startCommand: python -m uvicorn backend.app:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
-    # Persistent evidence dir — without this, SCREEN_EVIDENCE_DIR files are
-    # wiped on every restart/redeploy (ephemeral filesystem).
-    disk:
-      name: netraksha-data
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: APP_ENV
         value: production
@@ -50,7 +47,7 @@ services:
         # https://netraksha.xyz,https://www.netraksha.xyz,https://<app>.vercel.app
         value: https://netraksha.xyz,https://www.netraksha.xyz
       - key: SCREEN_EVIDENCE_DIR
-        value: /var/data/evidence # persisted by the disk above
+        value: /tmp/evidence # ephemeral on free tier (no persistent disk)
       - key: VITE_SITE_URL
         value: https://netraksha.xyz
       # Supabase free-tier pooler is small — keep the asyncpg pool narrow so
@@ -61,3 +58,7 @@ services:
         value: 5
       - key: DB_ECHO
         value: false
+      # Free tier: skip the ~300MB InsightFace buffalo_l model to stay within
+      # 512MB RAM. Face match degrades to Gemini fallback; registry legs N/A.
+      - key: DISABLE_LOCAL_FACE_ENGINE
+        value: "true"

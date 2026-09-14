@@ -383,18 +383,24 @@ async def startup():
     # Background prewarm of the local InsightFace engine (non-blocking):
     # a first-use ~300MB buffalo_l download happens here — loudly — instead
     # of timing out somebody's first screening with silent N/A face legs.
-    try:
-        async def _bg_face_prewarm():
-            try:
-                from pipeline.face_match import prewarm_local_engine
-                ok = await asyncio.get_event_loop().run_in_executor(None, prewarm_local_engine)
-                print(f"[startup] Local face engine prewarm: "
-                      f"{'READY' if ok else 'UNAVAILABLE — registry face legs will be N/A until models are provisioned'}")
-            except Exception as e:
-                print(f"[startup] Face prewarm warning: {type(e).__name__}: {e}")
-        asyncio.create_task(_bg_face_prewarm())
-    except Exception as e:
-        print(f"[startup] Face prewarm scheduling warning: {e}")
+    # Allow explicit opt-out of the heavyweight InsightFace engine
+    # (e.g. Render free tier: 512MB RAM, buffalo_l needs ~300MB).
+    if os.environ.get("DISABLE_LOCAL_FACE_ENGINE", "").lower() in ("1", "true", "yes"):
+        print("[startup] Local face engine DISABLED (DISABLE_LOCAL_FACE_ENGINE=true). "
+              "Face match will use Gemini fallback; registry legs will be N/A.")
+    else:
+        try:
+            async def _bg_face_prewarm():
+                try:
+                    from pipeline.face_match import prewarm_local_engine
+                    ok = await asyncio.get_event_loop().run_in_executor(None, prewarm_local_engine)
+                    print(f"[startup] Local face engine prewarm: "
+                          f"{'READY' if ok else 'UNAVAILABLE — registry face legs will be N/A until models are provisioned'}")
+                except Exception as e:
+                    print(f"[startup] Face prewarm warning: {type(e).__name__}: {e}")
+            asyncio.create_task(_bg_face_prewarm())
+        except Exception as e:
+            print(f"[startup] Face prewarm scheduling warning: {e}")
 
 
 # ---------------------------------------------------------------------------
