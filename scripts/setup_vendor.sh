@@ -54,4 +54,30 @@ else
   echo "     Windows:       winget install UB-Mannheim.TesseractOCR"
 fi
 
+# --- 3. InsightFace buffalo_l (local 3-way face legs) -----------------------
+# The pack (~300MB) is gitignored on purpose — provision it here at
+# build/deploy time so the first screening never pays a cold download (or
+# fails every registry leg when the model zoo is unreachable). Reuses the
+# same on-disk layout the pipeline expects (<root>/models/buffalo_l/).
+BUFFALO_DIR="$MODEL_DIR/models/buffalo_l"
+if [[ -f "$BUFFALO_DIR/w600k_r50.onnx" && -f "$BUFFALO_DIR/det_10g.onnx" ]]; then
+  echo "[ok] buffalo_l pack present ($BUFFALO_DIR)"
+else
+  echo "[..] buffalo_l pack missing — downloading via InsightFace (~300MB, one time)…"
+  mkdir -p "$BUFFALO_DIR"
+  if python3 -c "import insightface, onnxruntime" 2>/dev/null; then
+    if python3 -c "
+from pipeline.face_match import prewarm_local_engine
+import sys
+sys.exit(0 if prewarm_local_engine() else 1)
+"; then
+      echo "[ok] buffalo_l provisioned"
+    else
+      echo "[!!] buffalo_l download failed — the backend will prewarm (and loudly log) at startup instead" >&2
+    fi
+  else
+    echo "[!!] insightface/onnxruntime not installed — install requirements first, then re-run" >&2
+  fi
+fi
+
 echo "==> Done. Pipeline will run with full OCR + liveness only when both are present."

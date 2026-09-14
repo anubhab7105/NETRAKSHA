@@ -380,6 +380,22 @@ async def startup():
     except Exception as e:
         print(f"[startup] Orphan check warning: {e}")
 
+    # Background prewarm of the local InsightFace engine (non-blocking):
+    # a first-use ~300MB buffalo_l download happens here — loudly — instead
+    # of timing out somebody's first screening with silent N/A face legs.
+    try:
+        async def _bg_face_prewarm():
+            try:
+                from pipeline.face_match import prewarm_local_engine
+                ok = await asyncio.get_event_loop().run_in_executor(None, prewarm_local_engine)
+                print(f"[startup] Local face engine prewarm: "
+                      f"{'READY' if ok else 'UNAVAILABLE — registry face legs will be N/A until models are provisioned'}")
+            except Exception as e:
+                print(f"[startup] Face prewarm warning: {type(e).__name__}: {e}")
+        asyncio.create_task(_bg_face_prewarm())
+    except Exception as e:
+        print(f"[startup] Face prewarm scheduling warning: {e}")
+
 
 # ---------------------------------------------------------------------------
 # Request / Response models
@@ -1319,6 +1335,24 @@ def _ocr_fields_to_demographics(ocr_raw):
     }
 
 
+def _needs_late_gemini_face(is_simulated, live_str, db_photo_path, face_match_data) -> bool:
+    """Whether a late 3-image Gemini call is warranted for the registry legs.
+
+    Narrow gate: real (non-simulated) cloud, a resolved registry photo, and
+    at least one registry leg still missing — i.e. the record arrived after
+    the parallel phase (late hit) or the local engine is down/missed a leg.
+    Simulated mode never re-calls: demo verdicts stay Yellow and no quota
+    burns. Pure function (unit-tested).
+    """
+    if is_simulated or not db_photo_path:
+        return False
+    try:
+        return (face_match_data.get("doc_vs_db_match") is None
+                or face_match_data.get("live_vs_db_match") is None)
+    except Exception:
+        return False
+
+
 async def _run_screening_pipeline(
     doc_path: Path,
     live_path: Optional[Path],
@@ -1395,6 +1429,9 @@ async def _run_screening_pipeline(
     db_record = None
     citizen_id = None
     db_photo_path = None
+    # Specific reason when the registry legs cannot run (surfaced in the
+    # report as `db_pairs_unavailable_reason` instead of a generic label).
+    _db_photo_unavailable_reason = None
     hint_key: tuple = (None, None)
 
     ocr_result = await loop.run_in_executor(None, run_ocr_mrz, str(doc_path))
@@ -1429,9 +1466,17 @@ async def _run_screening_pipeline(
             except Exception:
                 db_record = None
             if _hint_citizen.photo_uri:
-                _candidate = _PROJECT_ROOT / _hint_citizen.photo_uri
-                if _candidate.exists():
-                    db_photo_path = str(_candidate)
+                # Resolver handles local paths AND remote (Supabase signed)
+                # URLs via a disk cache; sync call goes to the thread pool.
+                try:
+                    _resolved, _photo_reason = await loop.run_in_executor(
+                        None, _resolve_db_photo, _hint_citizen.photo_uri, citizen_id)
+                except Exception:
+                    _resolved, _photo_reason = None, "registry_photo_download_failed"
+                if _resolved:
+                    db_photo_path = _resolved
+                elif _photo_reason:
+                    _db_photo_unavailable_reason = _photo_reason
 
     # ------------------------------------------------------------------
     # Step 2: Parallel execution — local CV + Gemini AI + local 3-way
@@ -1506,6 +1551,10 @@ async def _run_screening_pipeline(
         try:
             return run_three_way_match(str(doc_path), live_str, db_photo_path, save_evidence=False)
         except Exception as exc:  # noqa: BLE001 — never fail screening on biometrics
+            import traceback
+            print(f"[three-way] local engine exception ({type(exc).__name__}: {exc}); "
+                  f"registry legs need the engine or the late-Gemini fallback")
+            traceback.print_exc()
             return {
                 "pairs": {}, "completeness": "unavailable",
                 "db_pairs_unavailable_reason": f"comparison_failed: {type(exc).__name__}",
@@ -1526,6 +1575,15 @@ async def _run_screening_pipeline(
     tamper_result, physical_result, deepfake_result, liveness_result, gemini_result, local_three_way = _gather_results[:6]
     security_result = _gather_results[_security_idx] if _security_idx is not None else None
     local_face_result = None  # legacy single-pair slot: superseded by local_three_way
+
+    # Local-engine failure signal: run_three_way_match always returns all
+    # three pair slots, so EMPTY pairs means the engine itself blew up
+    # (missing buffalo_l pack, broken onnxruntime, ...). Capture it for
+    # honest reporting instead of silent N/A legs.
+    tw_engine_error = None
+    if isinstance(local_three_way, dict) and not (local_three_way.get("pairs") or {}):
+        tw_engine_error = local_three_way.get("db_pairs_unavailable_reason") or "comparison_failed"
+        print(f"[three-way] local engine produced no pairs ({tw_engine_error})")
 
     # --- Post-process Gemini results ---
     gemini_demographics = gemini_result.get("demographics", {})
@@ -1800,10 +1858,16 @@ async def _run_screening_pipeline(
             # the registry legs now so the comparison is still complete.
             # (Gemini didn't see this photo; pair_sources records that.)
             if not db_photo_path and citizen.photo_uri:
-                candidate = _PROJECT_ROOT / citizen.photo_uri
-                if candidate.exists():
-                    db_photo_path = str(candidate)
+                try:
+                    _late_resolved, _late_reason = await loop.run_in_executor(
+                        None, _resolve_db_photo, citizen.photo_uri, citizen_id)
+                except Exception:
+                    _late_resolved, _late_reason = None, "registry_photo_download_failed"
+                if _late_resolved:
+                    db_photo_path = _late_resolved
                     db_photo_late = True
+                elif _late_reason:
+                    _db_photo_unavailable_reason = _late_reason
                     try:
                         from pipeline.face_match import run_three_way_match as _late_three_way
                         _late = await loop.run_in_executor(
@@ -1824,6 +1888,33 @@ async def _run_screening_pipeline(
                     except Exception as e:
                         print(f"[three-way] late DB-pair exception {e}")
 
+    # Late-Gemini fallback: the registry record arrived after the parallel
+    # phase (or the local engine is down) but the cloud is real and a
+    # reference photo is now resolved — give Gemini the 3-image comparison
+    # it never got, so the registry legs are measured instead of N/A.
+    # The live↔doc leg stays with the primary scan; only missing registry
+    # legs are filled, sourced as "gemini_late" (cloud evidence, so the
+    # risk engine's local-evidence Red rule still ignores them).
+    if _needs_late_gemini_face(is_simulated, live_str, db_photo_path, face_match_data):
+        print("[three-way] attempting late Gemini 3-image fallback for registry legs")
+        try:
+            _late_gem = await loop.run_in_executor(
+                None, scan_document, str(doc_path), live_str, db_photo_path)
+            if isinstance(_late_gem, dict) and not _late_gem.get("is_simulated"):
+                _lg = _late_gem.get("three_way_face_match") or {}
+                for _key, _mkey, _skey in (
+                    ("doc_vs_db", "doc_vs_db_match", "doc_vs_db_similarity"),
+                    ("live_vs_db", "live_vs_db_match", "live_vs_db_similarity"),
+                ):
+                    if face_match_data.get(_mkey) is None and _lg.get(_mkey) is not None:
+                        face_match_data[_mkey] = _lg[_mkey]
+                        if _lg.get(_skey) is not None:
+                            face_match_data[_skey] = _lg[_skey]
+                        pair_sources[_key] = "gemini_late"
+                gemini_result["three_way_face_match"] = face_match_data
+        except Exception as e:
+            print(f"[three-way] late Gemini fallback exception {type(e).__name__}")
+
     # --- Three-way completeness: honest partial/complete reporting ---
     # Every advertised pair must be traceable to evidence (local), a real
     # cloud verdict (gemini), or an explicit unavailable reason — never a
@@ -1835,14 +1926,21 @@ async def _run_screening_pipeline(
         if live_str is None:
             _expected = 1  # only doc_vs_db can exist without a live still
             _db_reason = None if face_match_data.get("doc_vs_db_match") is not None else (
-                "no_registry_match" if citizen_id is None else "no_registry_photo")
+                "no_registry_match" if citizen_id is None
+                else (_db_photo_unavailable_reason or "no_registry_photo"))
         else:
             _expected = 3 if citizen_id is not None and db_photo_path else (1 if citizen_id is None else 2)
             _db_reason = None
             if citizen_id is None:
                 _db_reason = "no_registry_match"
             elif not db_photo_path:
-                _db_reason = "no_registry_photo"
+                _db_reason = _db_photo_unavailable_reason or "no_registry_photo"
+            elif (face_match_data.get("doc_vs_db_match") is None
+                    and face_match_data.get("live_vs_db_match") is None
+                    and tw_engine_error):
+                # Photo was available but the local engine produced nothing
+                # (and late-Gemini was ineligible or also silent).
+                _db_reason = "local_face_engine_unavailable"
         face_match_data["pair_sources"] = dict(pair_sources)
         face_match_data["comparison_completeness"] = (
             "complete" if _computed >= _expected and _expected == 3
@@ -2921,6 +3019,103 @@ def _citizen_identity_clause(doc_type: str, norm_number: str):
         func.lower(CitizenRegistry.document_type) == norm_type,
         db_number == norm_num,
     )
+
+
+# Registry reference photos: server-local paths AND remote URLs.
+_REGISTRY_PHOTO_MAX_BYTES = 5_000_000
+_REGISTRY_PHOTO_TIMEOUT_S = 8.0
+
+
+def _registry_photo_cache_dir() -> Path:
+    """Disk cache for downloaded registry photos (keyed by URL hash).
+
+    Remote reference photos (e.g. Supabase Storage signed URLs) are fetched
+    once per URL and reused across screenings. Bounded: one stable filename
+    per (citizen, URL), rewritten atomically on change.
+    """
+    import tempfile
+
+    d = Path(tempfile.gettempdir()) / "netraksha_registry_photos"
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    return d
+
+
+def _looks_like_image(data: bytes) -> bool:
+    """Magic-byte check for PNG / JPEG / BMP / WEBP (never trust extensions)."""
+    if not data:
+        return False
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return True
+    if data.startswith(b"\xff\xd8\xff"):
+        return True
+    if data.startswith(b"BM"):
+        return True
+    return data.startswith(b"RIFF") and len(data) >= 12 and data[8:12] == b"WEBP"
+
+
+def _resolve_db_photo(photo_uri, citizen_id=None):
+    """Resolve a citizen `photo_uri` to a local file path for face comparison.
+
+    Handles server-local paths (`samples/faces/x.png`, absolute paths) AND
+    `http(s)` URLs (Supabase Storage signed URLs): remote photos are
+    downloaded once into a disk cache and reused. Runs synchronously —
+    callers must use `run_in_executor` so the event loop never blocks.
+
+    Returns `(path, reason)`; never raises. `path` is None when unusable:
+      * `no_registry_photo` — no URI enrolled on the citizen row
+      * `registry_photo_missing_on_server` — local path does not exist
+      * `registry_photo_download_failed` — URL fetch failed / non-image /
+        oversize (failures degrade to partial comparison, never halt)
+    """
+    uri = photo_uri.strip() if isinstance(photo_uri, str) else ""
+    if not uri:
+        return None, "no_registry_photo"
+    lowered = uri.lower()
+    if not (lowered.startswith("http://") or lowered.startswith("https://")):
+        p = Path(uri)
+        if not p.is_absolute():
+            p = _PROJECT_ROOT / p
+        if p.is_file():
+            return str(p), None
+        return None, "registry_photo_missing_on_server"
+    try:
+        key = hashlib.sha256(f"{citizen_id}:{uri}".encode()).hexdigest()[:24]
+        stem = uri.split("?", 1)[0].rsplit(".", 1)
+        ext = (stem[1] if len(stem) == 2 else "").lower()[:5]
+        if ext not in ("jpg", "jpeg", "png", "webp", "bmp"):
+            ext = "jpg"
+        cache_dir = _registry_photo_cache_dir()
+        cached = cache_dir / f"citizen_{citizen_id}_{key}.{ext}"
+        if cached.is_file() and cached.stat().st_size > 0:
+            return str(cached), None
+        import urllib.request
+
+        req = urllib.request.Request(uri, headers={"User-Agent": "NetrakshaScreening/1.0"})
+        with urllib.request.urlopen(req, timeout=_REGISTRY_PHOTO_TIMEOUT_S) as resp:
+            ctype = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if ctype and ctype != "application/octet-stream" and not ctype.startswith("image/"):
+                print(f"[registry_photo] citizen {citizen_id}: unexpected Content-Type {ctype!r} — skipping")
+                return None, "registry_photo_download_failed"
+            data = resp.read(_REGISTRY_PHOTO_MAX_BYTES + 1)
+        if not data or len(data) > _REGISTRY_PHOTO_MAX_BYTES or not _looks_like_image(data):
+            print(f"[registry_photo] citizen {citizen_id}: download rejected (empty/oversize/non-image) — skipping")
+            return None, "registry_photo_download_failed"
+        tmp = cache_dir / f".tmp_{key}.{ext}"
+        try:
+            tmp.write_bytes(data)
+            os.replace(tmp, cached)
+        finally:
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+        return str(cached), None
+    except Exception as exc:  # noqa: BLE001 — degraded, never fatal
+        print(f"[registry_photo] citizen {citizen_id}: download failed ({type(exc).__name__}) — partial comparison")
+        return None, "registry_photo_download_failed"
 
 
 async def _find_citizen_by_number(doc_type: str, doc_number: str):
@@ -4323,10 +4518,17 @@ async def get_evidence_file(filename: str, request: Request):
 async def health():
     """System health check."""
     from backend.database import get_engine_info
+    try:
+        from pipeline.face_match import local_engine_status
+        face_engine = local_engine_status()
+    except Exception as e:
+        face_engine = {"initialised": False, "models_present": None,
+                       "provider": None, "last_error": f"{type(e).__name__}"}
     return {
         "status": "healthy",
         "version": "0.1.0",
         "database": get_engine_info(),
+        "face_engine": face_engine,
     }
 
 @app.get("/evidence/{path:path}")

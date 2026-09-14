@@ -206,6 +206,14 @@ export default function CaseReport() {
     faceMatch.doc_vs_db_match != null ||
     faceMatch.live_vs_db_match != null ||
     hasLocalFacePair;
+  // Registry-leg failure reasons, in officer-actionable words.
+  const dbPairsReasonText = (reason) => ({
+    no_registry_match: 'no matching record in the citizens registry',
+    no_registry_photo: 'no reference photo on the matched record',
+    registry_photo_missing_on_server: 'reference photo file missing on the server — restore it or re-enroll the photo',
+    registry_photo_download_failed: 'reference photo could not be fetched from storage — check server egress, then rescan',
+    local_face_engine_unavailable: 'local face engine unavailable on the server — registry legs need the InsightFace model (ops: check startup logs)',
+  }[reason] || (reason ? String(reason).replace(/_/g, ' ') : ''));
   const physicalData = physicalModule?.raw_output || {};
   const physicalChecks = physicalData.checks || {};
   // Iris verification: prefer top-level response field, fall back to persisted module
@@ -441,7 +449,7 @@ export default function CaseReport() {
                     {faceMatch.comparison_completeness === 'complete' ? (
                       <span className="text-success">complete — doc↔live, doc↔registry and live↔registry all measured</span>
                     ) : faceMatch.comparison_completeness === 'partial' ? (
-                      <span className="text-warning">partial{faceMatch.db_pairs_unavailable_reason ? ` — registry legs unavailable: ${faceMatch.db_pairs_unavailable_reason.replace(/_/g, ' ')}` : ''}{faceMatch.db_photo_late ? ' (registry record identified after the AI scan; registry legs measured locally)' : ''}</span>
+                      <span className="text-warning">partial{faceMatch.db_pairs_unavailable_reason ? ` — registry legs unavailable: ${dbPairsReasonText(faceMatch.db_pairs_unavailable_reason)}` : ''}{faceMatch.db_photo_late ? ' (registry record identified after the AI scan; registry legs measured locally)' : ''}</span>
                     ) : (
                       <span className="text-slate-500">unavailable</span>
                     )}

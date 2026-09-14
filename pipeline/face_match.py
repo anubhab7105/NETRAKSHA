@@ -164,6 +164,71 @@ def _get_face_analysis():
         return _face_analysis
 
 
+# Files the local engine needs (allowed_modules = detection + recognition).
+# Checked WITHOUT initialising anything, so status probes never trigger a
+# ~300MB model download inside a request path.
+_REQUIRED_BUFFALO_FILES = ("det_10g.onnx", "w600k_r50.onnx")
+
+_last_engine_error: Optional[str] = None
+
+
+def _buffalo_pack_dir():
+    """Directory the buffalo_l pack must live in (<root>/models/buffalo_l)."""
+    import pathlib
+
+    return pathlib.Path(str(INSIGHTFACE_MODEL_ROOT)) / "models" / "buffalo_l"
+
+
+def buffalo_models_present() -> bool:
+    """True when the vendored/downloaded buffalo_l pack is on disk."""
+    try:
+        pack = _buffalo_pack_dir()
+        return all((pack / name).is_file() for name in _REQUIRED_BUFFALO_FILES)
+    except Exception:
+        return False
+
+
+def local_engine_status() -> dict:
+    """Cheap, never-downloading status probe for ops (`/health`).
+
+    Reports whether the shared InsightFace app is initialised, whether the
+    model files are present (missing pack = first use will attempt a large
+    download), which provider bound, and the last prewarm/init error.
+    """
+    return {
+        "initialised": _face_analysis is not None,
+        "models_present": buffalo_models_present(),
+        "provider": _provider_used,
+        "last_error": _last_engine_error,
+    }
+
+
+def prewarm_local_engine() -> bool:
+    """Initialise the shared InsightFace app now (startup background task).
+
+    Warms the engine (including the first-use model download, when egress
+    allows) BEFORE the first screening, so scans never pay cold-start
+    minutes or fail every local pair. Logs loudly either way and never
+    raises — returns True when ready.
+    """
+    global _last_engine_error
+    try:
+        _get_face_analysis()
+        _last_engine_error = None
+        single_log(f"local face engine READY (provider={_provider_used})")
+        return True
+    except Exception as exc:  # noqa: BLE001 — degraded, reported not raised
+        _last_engine_error = f"{type(exc).__name__}: {str(exc)[:160]}"
+        single_log(
+            "local face engine UNAVAILABLE "
+            f"({_last_engine_error}) — models_present={buffalo_models_present()}. "
+            "Registry face legs (doc↔db, live↔db) will be N/A until the "
+            "buffalo_l pack is provisioned (scripts/setup_vendor.sh) or the "
+            "runtime can reach the model zoo."
+        )
+        return False
+
+
 def _detect_faces(app, image_bgr: np.ndarray):
     """Detect the largest face; return (face, normalized_embedding) or (None,None)."""
     faces = app.get(image_bgr)

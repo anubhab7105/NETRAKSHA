@@ -21,7 +21,9 @@
 - Naive datetimes only: `_utcnow_naive()` for DB writes. Aware `datetime.now(timezone.utc)` 500s on Postgres via asyncpg.
 - Startup self-heals (`ensure_model_columns/auth/registry_trust/sequences`); don't write migrations. Postgres explicit-ID legacy DBs re-anchor via `setval(max(id)+1)`.
 - Evidence: `SCREEN_EVIDENCE_DIR` or `samples/evidence/` (blank=unset; gitignored). No public mount — `GET /evidence/*` is 404; use signed `/api/evidence/token|view|{filename}` (`expires_in` 30–3600s).
+- Registry photos (`citizens_registry.photo_uri`): local paths AND `http(s)` Supabase signed URLs — `_resolve_db_photo()` downloads remote ones once into `$TMPDIR/netraksha_registry_photos` (8s timeout, 5MB cap, magic-byte check) and feeds them to Gemini Image 3 + local 3-way. Failures degrade to `partial` with specific `db_pairs_unavailable_reason` (`no_registry_photo|registry_photo_missing_on_server|registry_photo_download_failed`), never halt.
 - CPU-only (no GPU); InsightFace uses `CPUExecutionProvider`. Sub-2.5s end-to-end is aspirational (sequential OCR + 3× local face + Gemini).
+- Local face engine (InsightFace `buffalo_l`, ~300MB, gitignored): prewarmed in a background task at startup (loud `[startup]` log), status in `/health.face_engine` (`local_engine_status()` never downloads), provision via `scripts/setup_vendor.sh`. Dead engine → registry legs N/A with `local_face_engine_unavailable`, or a narrow late-Gemini 3-image fallback (`_needs_late_gemini_face`, real-cloud only, sourced `gemini_late`, never Red-forcing).
 
 ## Pipeline contracts (Rules.md / Techspec §5 — non-negotiable)
 - `ModuleResult(module_name, score, status, raw_output, evidence_uri)` via `ok_result` (clipped 0–1) / `inconclusive_result` (`score=None` + `reason[:200]`). `status` only `ok|inconclusive`. Never raise — degrade (evidence-write failures swallowed; physical isolates per-check).
