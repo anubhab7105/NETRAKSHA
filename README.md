@@ -50,6 +50,7 @@ This system provides an **AI-assisted forensic screening tool** that evaluates t
 │  • Address / ID parity       │                              │  MediaPipe FaceLandmarker    │
 └──────────────┬───────────────┘                              │  • EAR + motion + moiré      │
                │                                              │  • blink/head_turn/mouth     │
+               │                                              │  • IRIS Scan                 │
 ┌──────────────▼───────────────┐                              └──────────────┬───────────────┘
 │  3. Tamper + Physical Checks │                                             │
 │  • ELA + exact-duplicate     │                              ┌──────────────▼───────────────┐
