@@ -1,6 +1,9 @@
 # Render blueprint — Netraksha WITHOUT Docker (native Python runtime).
-# Single service: builds frontend/dist, serves it from FastAPI (same origin,
-# so no VITE_API_BASE_URL needed). Health: GET /api/health
+# Backend + frontend in ONE service: build.sh emits frontend/dist, FastAPI
+# serves it same-origin (so no VITE_API_BASE_URL needed on Render).
+# Split-frontend alternative: deploy frontend/ to Vercel (Root Directory =
+# frontend/) with VITE_API_BASE_URL=https://<this-service>.onrender.com/api,
+# then append that Vercel URL to CORS_ORIGINS below. Health: GET /api/health
 # NOTE: native Render has no system Tesseract — OCR/MRZ degrades to
 # inconclusive (verdict floor Yellow) unless you deploy where tesseract is
 # installed (VPS with apt, or Render Docker). All other modules run fully.
@@ -8,16 +11,26 @@ services:
   - type: web
     name: netraksha-api
     runtime: python
-    buildCommand: ./build.sh
+    # `bash` prefix: robust when the checkout loses the +x bit (Windows git).
+    buildCommand: bash build.sh
     startCommand: python -m uvicorn backend.app:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
+    # Persistent evidence dir — without this, SCREEN_EVIDENCE_DIR files are
+    # wiped on every restart/redeploy (ephemeral filesystem).
+    disk:
+      name: netraksha-data
+      mountPath: /var/data
+      sizeGB: 1
     envVars:
       - key: APP_ENV
         value: production
       - key: PYTHON_VERSION
         value: 3.11.0
+      # Vite 8 requires Node 20+; pin so Render never builds with Node 18.
+      - key: NODE_VERSION
+        value: 22.17.0
       - key: DATABASE_URL
-        sync: false # postgresql://... Supabase pooler URL (REQUIRED)
+        sync: false # Supabase Transaction pooler URL, port 6543 (REQUIRED), e.g. postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres
       - key: JWT_SECRET
         generateValue: true # >=32 chars; generate once, keep stable
       - key: GEMINI_API_KEY
@@ -33,8 +46,18 @@ services:
       - key: REGISTRY_IMPORT_SECRET
         generateValue: true # dedicated HMAC secret (do not reuse JWT_SECRET)
       - key: CORS_ORIGINS
+        # Append your Vercel URL here when using split deploy, e.g.
+        # https://netraksha.xyz,https://www.netraksha.xyz,https://<app>.vercel.app
         value: https://netraksha.xyz,https://www.netraksha.xyz
       - key: SCREEN_EVIDENCE_DIR
-        value: /var/data/evidence # mount a Render disk at /var/data for persistence
+        value: /var/data/evidence # persisted by the disk above
       - key: VITE_SITE_URL
         value: https://netraksha.xyz
+      # Supabase free-tier pooler is small — keep the asyncpg pool narrow so
+      # one Render instance cannot exhaust it (defaults 5/10 are for prod DBs).
+      - key: DB_POOL_SIZE
+        value: 2
+      - key: DB_MAX_OVERFLOW
+        value: 5
+      - key: DB_ECHO
+        value: false
