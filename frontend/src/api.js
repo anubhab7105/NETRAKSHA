@@ -21,6 +21,16 @@ function resolveBaseURL() {
   if (envBase) {
     return envBase.endsWith('/api') ? envBase : `${envBase}/api`;
   }
+
+  // Production split-deploy convention: the app is served from
+  // netraksha.xyz (or www) while the API lives on the api subdomain.
+  // Without this, an unset VITE_API_BASE_URL silently falls back to
+  // same-origin /api (the frontend-only host) and every screening fails
+  // with a network error. VITE_API_BASE_URL always wins when set.
+  const host = window.location.hostname.toLowerCase();
+  if (host === 'netraksha.xyz' || host === 'www.netraksha.xyz') {
+    return 'https://api.netraksha.xyz/api';
+  }
   return '/api';
 }
 

@@ -327,7 +327,7 @@ export default function Scanner() {
         detail
           ? `Screening failed (HTTP ${err.response.status}): ${detail}`
           : err.request && !err.response
-            ? 'Screening failed: could not reach the backend. Is uvicorn running on :8000?'
+            ? `Screening failed: could not reach the backend at ${api.defaults.baseURL || '/api'}. Check VITE_API_BASE_URL and backend CORS, then retry.`
             : 'Screening failed. Please ensure the backend is running and try again.'
       );
       setScanning(false);
