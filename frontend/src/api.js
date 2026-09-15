@@ -18,7 +18,9 @@ function resolveBaseURL() {
   }
 
   // Deployed (e.g. Vercel): use the configured absolute backend URL.
-  if (envBase) {
+  // Guard: if envBase doesn't start with http, it's a relative path which
+  // would silently resolve against the frontend origin — treat as unset.
+  if (envBase && (envBase.startsWith('http://') || envBase.startsWith('https://'))) {
     return envBase.endsWith('/api') ? envBase : `${envBase}/api`;
   }
 
