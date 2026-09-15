@@ -62,4 +62,7 @@ RUN mkdir -p /tmp/evidence samples/faces/uploads 2>/dev/null || mkdir -p /tmp/ev
 EXPOSE 8080
 
 # Railway health check: HTTP GET /api/health
-CMD ["sh", "-c", "python -m uvicorn backend.app:app --host 0.0.0.0 --port ${PORT:-8080}"]
+# Exec+sh wrapper: Railway sometimes runs the start command without a shell,
+# which would pass '${PORT:-8080}' literally to uvicorn (crash-loop 502).
+# `sh -c` forces shell expansion of $PORT.
+CMD ["sh", "-c", "exec python -m uvicorn backend.app:app --host 0.0.0.0 --port ${PORT:-8080}"]
