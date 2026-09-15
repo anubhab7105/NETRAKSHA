@@ -342,7 +342,10 @@ async def startup():
         # with the stock .env; keep it as a soft warning so local Supabase/SQLite
         # dev works out-of-the-box.
 
-    await init_db()
+    # NOTE: no standalone init_db() here — seed_all() opens with init_db()
+    # (tables + drift repair). A separate call doubles the slow
+    # information_schema/ALTER pass and trips Render's "No open ports
+    # detected" warning on cold starts.
     _reg_problem = secret_error(_REGISTRY_IMPORT_SECRET, name="REGISTRY_IMPORT_SECRET")
     if _reg_problem and is_production():
         raise RuntimeError(f"[startup] {_reg_problem} Generate one (python -c "
