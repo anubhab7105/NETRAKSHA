@@ -296,7 +296,7 @@ export default function Scanner() {
     try {
       const res = await api.post('/screen', formData, {
         headers: {
-          'Content-Type': 'multipart/form-data',
+          // Don't set Content-Type — let axios/browser add the multipart boundary.
           'Idempotency-Key': idempotencyKey,
         }
       });
