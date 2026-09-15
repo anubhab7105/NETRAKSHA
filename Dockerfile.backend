@@ -1,0 +1,65 @@
+# Netraksha — Railway backend-only image (API only, no SPA).
+#
+# FastAPI (backend/app.py) serves /api/*; without frontend/dist the SPA
+# fallback returns 404 "Frontend not built" (backend/app.py:4932) — expected.
+# Deploy the UI separately (Vercel, Root Directory = frontend/) with:
+#   VITE_API_BASE_URL=https://<this-service>.up.railway.app/api
+# and set CORS_ORIGINS on Railway to that Vercel origin.
+#
+# Build:
+#   docker build -f Dockerfile.backend -t netraksha-backend .
+# Run locally:
+#   docker run -p 8000:8080 --env-file .env -e APP_ENV=development netraksha-backend
+# Railway sets $PORT automatically (defaults to 8080); health probe: GET /api/health.
+
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    # Railway injects $PORT (8080). /tmp is the only writable dir on some
+    # hosts, so evidence defaults there (ephemeral without a volume).
+    PORT=8080 \
+    SCREEN_EVIDENCE_DIR=/tmp/evidence
+
+# System deps: tesseract-ocr (OCR/MRZ — without it OCR degrades to inconclusive
+# + Yellow floor), libgl/libglib/libgomp for opencv/mediapipe/onnxruntime.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    libgl1 \
+    libglib2.0-0 \
+    libgomp1 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Python deps first for layer caching.
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+# App source. backend/app.py inserts the project root into sys.path and reads
+# pipeline/thresholds.json, so keep this layout. No frontend/ copy — API only.
+COPY backend/ ./backend/
+COPY pipeline/ ./pipeline/
+COPY scripts/ ./scripts/
+
+# Runtime models: checks committed face_landmarker.task, provisions buffalo_l
+# (~300MB) unless disabled. Never fail the build — the backend prewarms loudly
+# at startup and degrades gracefully instead (same as build.sh).
+ARG DISABLE_LOCAL_FACE_ENGINE=false
+ENV DISABLE_LOCAL_FACE_ENGINE=${DISABLE_LOCAL_FACE_ENGINE}
+RUN if [ "${DISABLE_LOCAL_FACE_ENGINE}" = "true" ]; then \
+      echo "[docker] DISABLE_LOCAL_FACE_ENGINE=true — skipping model provisioning"; \
+    else \
+      bash scripts/setup_vendor.sh || true; \
+    fi
+
+# Writable dirs (some hosts are read-only except /tmp).
+RUN mkdir -p /tmp/evidence samples/faces/uploads 2>/dev/null || mkdir -p /tmp/evidence samples/faces/uploads
+
+EXPOSE 8080
+
+# Railway health check: HTTP GET /api/health
+CMD ["sh", "-c", "python -m uvicorn backend.app:app --host 0.0.0.0 --port ${PORT:-8080}"]
