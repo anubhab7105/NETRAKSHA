@@ -1,12 +1,14 @@
 # Railway config-as-code — overrides any dashboard Custom Start Command.
-# Must run through a shell so $PORT is expanded; bare exec receives literal '${PORT:-...}'.
+# Previous shell form `sh -c 'exec python -m uvicorn ... --port ${PORT:-8000}'` also
+# fixes the literal '${PORT:-8000}' crash, but Python launcher is bulletproof
+# even when the platform runs start in exec form without a shell.
 
 [build]
 builder = "dockerfile"
 dockerfilePath = "Dockerfile.backend"
 
 [deploy]
-startCommand = "sh -c 'exec python -m uvicorn backend.app:app --host 0.0.0.0 --port ${PORT:-8000}'"
+startCommand = "python start.py"
 healthcheckPath = "/api/health"
 healthcheckTimeout = 300
 restartPolicyType = "on_failure"

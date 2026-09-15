@@ -86,6 +86,6 @@ RUN mkdir -p /tmp/evidence samples/faces/uploads $TMPDIR/netraksha_registry_phot
 EXPOSE 8080
 
 # Cloud Run health check: HTTP GET /api/health
-# sh -c forces shell expansion of $PORT — without it a dashboard/exec-form
-# start command receives the literal string '${PORT:-8080}' and uvicorn crashes.
-CMD ["sh", "-c", "exec python -m uvicorn backend.app:app --host 0.0.0.0 --port ${PORT:-8080}"]
+# Use Python launcher so $PORT is read via os.environ — works even in exec form.
+COPY start.py ./start.py
+CMD ["python", "start.py"]
