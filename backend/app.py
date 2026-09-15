@@ -288,9 +288,19 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_CORS_DEFAULTS + [o for o in _CORS_EXTRA if o not in _CORS_DEFAULTS],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "Origin",
+        "X-Requested-With",
+        "Idempotency-Key",
+        "X-Idempotency-Key",
+        "X-Request-ID",
+        "If-Match",
+    ],
+    expose_headers=["Content-Type", "X-Request-ID"],
 )
 
 

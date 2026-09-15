@@ -28,7 +28,7 @@ function resolveBaseURL() {
   // same-origin /api (the frontend-only host) and every screening fails
   // with a network error. VITE_API_BASE_URL always wins when set.
   const host = window.location.hostname.toLowerCase();
-  if (host === 'netraksha.xyz' || host === 'www.netraksha.xyz') {
+  if (host === 'netraksha.xyz' || host === 'www.netraksha.xyz' || host === 'sih-weld-psi.vercel.app') {
     return 'https://api.netraksha.xyz/api';
   }
   return '/api';
