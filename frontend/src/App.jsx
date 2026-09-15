@@ -67,7 +67,7 @@ const ProtectedRoute = ({ children }) => {
         <GovTopBar />
         <div className="flex min-h-0 flex-1 flex-col md:flex-row md:overflow-hidden">
           <Sidebar />
-          <main className="min-w-0 flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+          <main className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-4 sm:p-6 lg:p-8">
             <div className="mx-auto max-w-[1280px]">
               {children}
             </div>

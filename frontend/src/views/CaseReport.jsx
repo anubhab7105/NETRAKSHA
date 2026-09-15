@@ -49,7 +49,8 @@ const VerdictCard = ({ verdict, riskScore, anomalyCount, similarity }) => {
           </h2>
           <p className="mt-1 text-sm text-[#667085]">{meta.desc}</p>
         </div>
-        <dl className="grid shrink-0 grid-cols-3 gap-3 sm:grid-cols-1 sm:min-w-[190px] lg:grid-cols-3 lg:min-w-[320px]">
+        {/* Stacked on phones (3-up would squeeze and overflow), 3-up from 480px, stacked again on sm where the sidebar narrows the content. */}
+        <dl className="grid w-full shrink-0 grid-cols-1 gap-2 min-[480px]:grid-cols-3 sm:grid-cols-1 sm:min-w-[190px] lg:grid-cols-3 lg:min-w-[320px]">
           <div className="rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] px-3 py-2 text-center">
             <dt className="text-[11px] font-semibold uppercase tracking-wide text-[#667085]">Risk Score</dt>
             <dd className="text-lg font-bold text-[#172033]">{riskScore != null ? `${Math.round(Number(riskScore))} / 100` : '—'}</dd>
@@ -391,7 +392,8 @@ export default function CaseReport() {
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
 
-        {/* Demographic Parity Panel */}
+        {/* Left column — Demographic Parity + Biometric Verification + Tamper Detection */}
+        <div className="min-w-0 space-y-5">
         <div className="gov-card-padded">
           <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-[#D9DEE7] pb-3">
             <UserRound className="text-[#123B66]" size={18} aria-hidden="true" />
@@ -408,43 +410,115 @@ export default function CaseReport() {
             </div>
           )}
 
-          <div className="gov-table-scroll -mx-1">
-            <table className="gov-table min-w-[520px]">
-              <thead>
-                <tr>
-                  <th scope="col">Field</th>
-                  <th scope="col">Extracted</th>
-                  <th scope="col">Database</th>
-                  <th scope="col" className="!text-center">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {extracted_fields.map(f => (
-                  <tr key={f.id}>
-                    <td className="font-medium">{f.field_name}</td>
-                    <td className="font-mono text-xs">{maskAadhaar(f.field_name, f.extracted_value) || '-'}</td>
-                    <td className="font-mono text-xs">{maskAadhaar(f.field_name, f.database_value) || '-'}</td>
-                    <td className="!text-center">
-                      {f.match_status === 'match' ? (
-                        <span className="gov-badge gov-badge-green"><Check size={13} aria-hidden="true" /> Match</span>
-                      ) : f.match_status === 'mismatch' ? (
-                        <span className="gov-badge gov-badge-red"><X size={13} aria-hidden="true" /> Mismatch</span>
-                      ) : (
-                        <span className="gov-badge gov-badge-grey">N/A</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {extracted_fields.length === 0 && (
-                  <tr><td colSpan={4} className="!py-6 text-center text-sm text-[#667085]">No demographic data extracted.</td></tr>
-                )}
-              </tbody>
-            </table>
+          {/* Compact wrapping field list — no min-width, no side-scroll.
+              Long values wrap onto multiple lines instead of scrolling. */}
+          <div className="divide-y divide-[#EAEDEF]">
+            {extracted_fields.map(f => (
+              <div key={f.id} className="flex items-start justify-between gap-3 py-2.5 first:pt-0 last:pb-0">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[13px] font-semibold break-words text-[#172033]">{f.field_name}</p>
+                  <p className="mt-1 text-xs break-words text-[#667085]">
+                    <span className="font-semibold text-[#98A2B3]">Doc: </span>
+                    <span className="font-mono">{maskAadhaar(f.field_name, f.extracted_value) || '–'}</span>
+                  </p>
+                  <p className="mt-0.5 text-xs break-words text-[#667085]">
+                    <span className="font-semibold text-[#98A2B3]">DB: </span>
+                    <span className="font-mono">{maskAadhaar(f.field_name, f.database_value) || '–'}</span>
+                  </p>
+                </div>
+                <span className="shrink-0">
+                  {f.match_status === 'match' ? (
+                    <span className="gov-badge gov-badge-green"><Check size={13} aria-hidden="true" /> Match</span>
+                  ) : f.match_status === 'mismatch' ? (
+                    <span className="gov-badge gov-badge-red"><X size={13} aria-hidden="true" /> Mismatch</span>
+                  ) : (
+                    <span className="gov-badge gov-badge-grey">N/A</span>
+                  )}
+                </span>
+              </div>
+            ))}
+            {extracted_fields.length === 0 && (
+              <p className="py-6 text-center text-sm text-[#667085]">No demographic data extracted.</p>
+            )}
           </div>
         </div>
 
-        {/* AI Forensic Panel — 3-Way Face Match */}
-        <div className="space-y-5">
+        {/* Biometric Verification — one person capture: face + iris + liveness */}
+        <div className="gov-card-padded">
+          <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-[#D9DEE7] pb-3">
+            <Eye className="text-[#1769AA]" size={18} aria-hidden="true" />
+            <h2 className="gov-card-title">Biometric Verification</h2>
+            <span className={`gov-badge ml-auto ${biometricOverall === 'PASS' ? 'gov-badge-green' : biometricOverall === 'FAIL' ? 'gov-badge-red' : 'gov-badge-amber'}`}>
+              {biometricOverall}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="min-w-0 rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] p-3">
+              <h3 className="mb-2 text-xs font-bold uppercase tracking-[0.06em] text-[#667085]">Face</h3>
+              <div className="space-y-1 text-xs">
+                <div className="flex justify-between gap-2"><span className="shrink-0 text-[#667085]">Captured</span><span className="text-right font-medium break-words text-[#172033]">{faceMatch.similarity_score != null || faceMatch.live_vs_doc_match != null ? 'Yes' : 'No'}</span></div>
+                <div className="flex justify-between gap-2"><span className="shrink-0 text-[#667085]">Match</span><span className={faceMatch.live_vs_doc_match === true ? 'font-semibold text-[#16803C]' : faceMatch.live_vs_doc_match === false ? 'font-semibold text-[#C62828]' : 'text-[#98A2B3]'}>{faceMatch.live_vs_doc_match === true ? 'Match' : faceMatch.live_vs_doc_match === false ? 'Mismatch' : 'N/A'}</span></div>
+                <div className="flex justify-between gap-2"><span className="shrink-0 text-[#667085]">Similarity</span><span className="font-mono text-[#172033]">{faceMatch.similarity_score != null ? `${(faceMatch.similarity_score * 100).toFixed(1)}%` : 'N/A'}</span></div>
+                <div className="flex justify-between gap-2"><span className="shrink-0 text-[#667085]">Quality</span><span className="text-right break-words text-[#172033]">{faceMatch.face_quality?.gate || 'N/A'}</span></div>
+                <div className="flex justify-between gap-2"><span className="shrink-0 text-[#667085]">Liveness</span><span className={faceLive === true ? 'font-semibold text-[#16803C]' : faceLive === false ? 'font-semibold text-[#C62828]' : 'text-[#98A2B3]'}>{faceLive === true ? 'Passed' : faceLive === false ? 'Failed' : 'N/A'}</span></div>
+              </div>
+            </div>
+            <div className="min-w-0 rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] p-3">
+              <h3 className="mb-2 text-xs font-bold uppercase tracking-[0.06em] text-[#667085]">Iris</h3>
+              {!irisData?.captured ? (
+                <p className="text-xs break-words text-[#667085]">Not captured — single person capture includes iris when eyes are visible.</p>
+              ) : (
+                <div className="space-y-1 text-xs">
+                  <div className="flex justify-between gap-2"><span className="shrink-0 text-[#667085]">Captured</span><span className="text-right break-words text-[#172033]">Yes{irisData.source === 'unified_burst_derived' ? ' (same capture)' : ''}</span></div>
+                  <div className="flex justify-between gap-2"><span className="shrink-0 text-[#667085]">Eye</span><span className="text-[#172033]">{irisData.eye || 'N/A'}</span></div>
+                  <div className="flex justify-between gap-2"><span className="shrink-0 text-[#667085]">Match</span><span className={irisData.match === true ? 'font-semibold text-[#16803C]' : irisData.match === false ? 'font-semibold text-[#C62828]' : 'text-[#98A2B3]'}>{irisData.match === true ? 'Match' : irisData.match === false ? 'Mismatch' : 'N/A'}</span></div>
+                  <div className="flex justify-between gap-2"><span className="shrink-0 text-[#667085]">Distance</span><span className="font-mono text-[#172033]">{irisData.distance != null ? Number(irisData.distance).toFixed(3) : 'N/A'}</span></div>
+                  <div className="flex justify-between gap-2"><span className="shrink-0 text-[#667085]">Quality</span><span className="text-right break-words text-[#172033]">{irisData.quality != null ? Number(irisData.quality).toFixed(2) : 'N/A'}{irisData.quality_usable === false ? ' (low)' : ''}</span></div>
+                  <div className="flex justify-between gap-2"><span className="shrink-0 text-[#667085]">PAD</span><span className={irisData.liveness_passed === true ? 'font-semibold text-[#16803C]' : irisData.liveness_passed === false ? 'font-semibold text-[#C62828]' : 'text-[#98A2B3]'}>{irisData.liveness_passed === true ? 'Passed' : irisData.liveness_passed === false ? 'Failed' : 'N/A'}</span></div>
+                  {irisData.reason && <p className="pt-1 text-[11px] break-words text-[#667085]">{irisData.reason}</p>}
+                </div>
+              )}
+              <p className="mt-2 text-[11px] text-[#98A2B3]">Iris is RGB-prototype (not NIR).</p>
+            </div>
+            <div className="min-w-0 rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] p-3">
+              <h3 className="mb-2 text-xs font-bold uppercase tracking-[0.06em] text-[#667085]">Liveness</h3>
+              <div className="space-y-1 text-xs">
+                <div className="flex justify-between gap-2"><span className="shrink-0 text-[#667085]">Status</span><span className="text-right break-words text-[#172033]">{livenessModule?.status || 'N/A'}</span></div>
+                <div className="flex justify-between gap-2"><span className="shrink-0 text-[#667085]">Score</span><span className="font-mono text-[#172033]">{livenessModule?.score != null ? Number(livenessModule.score).toFixed(2) : 'N/A'}</span></div>
+                <div className="flex justify-between gap-2"><span className="shrink-0 text-[#667085]">Challenge</span><span className="text-right break-words text-[#172033]">{c.challenge_type || livenessModule?.raw_output?.challenge_type || 'N/A'}</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Tamper Detection */}
+        <div className="gov-card-padded">
+          <div className="mb-3 flex flex-col gap-2 border-b border-[#D9DEE7] pb-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-2">
+              <Activity className="text-[#B7791F]" size={18} aria-hidden="true" />
+              <h2 className="gov-card-title">Tamper Detection</h2>
+            </div>
+            {tamperModule && <StatusBadgeLocal status={tamperModule.status} score={tamperModule.score} />}
+          </div>
+          {tamperModule?.evidence_uri ? (
+            <div className="overflow-hidden rounded-lg border border-[#D9DEE7]">
+              <EvidenceImage
+                evidenceUri={tamperModule.evidence_uri}
+                alt="Error Level Analysis heatmap overlay highlighting suspected tampered regions of the submitted identity document"
+              />
+              <p className="border-t border-[#D9DEE7] bg-[#F7F8FA] px-3 py-1.5 text-xs font-medium text-[#667085]">ELA Heatmap Overlay</p>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-[#D9DEE7] bg-[#F7F8FA] p-8 text-[#98A2B3]">
+              <ImageIcon size={30} className="mb-2 opacity-60" aria-hidden="true" />
+              <p className="text-center text-sm">{tamperModule?.status === 'inconclusive' ? 'Tamper analysis was inconclusive.' : 'No visual evidence generated.'}</p>
+            </div>
+          )}
+        </div>
+        </div>
+
+        {/* Right column — 3-Way Face Match + Physical Forgery */}
+        <div className="min-w-0 space-y-5">
           <div className="gov-card-padded">
             <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-[#D9DEE7] pb-3">
               <ScanLine className="text-[#1769AA]" size={18} aria-hidden="true" />
@@ -523,79 +597,6 @@ export default function CaseReport() {
             )}
           </div>
 
-          {/* Biometric Verification — one person capture: face + iris + liveness */}
-          <div className="gov-card-padded">
-            <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-[#D9DEE7] pb-3">
-              <Eye className="text-[#1769AA]" size={18} aria-hidden="true" />
-              <h2 className="gov-card-title">Biometric Verification</h2>
-              <span className={`gov-badge ml-auto ${biometricOverall === 'PASS' ? 'gov-badge-green' : biometricOverall === 'FAIL' ? 'gov-badge-red' : 'gov-badge-amber'}`}>
-                {biometricOverall}
-              </span>
-            </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <div className="rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] p-3">
-                <h3 className="mb-2 text-xs font-bold uppercase tracking-[0.06em] text-[#667085]">Face</h3>
-                <div className="space-y-1 text-xs">
-                  <div className="flex justify-between"><span className="text-[#667085]">Captured</span><span className="font-medium text-[#172033]">{faceMatch.similarity_score != null || faceMatch.live_vs_doc_match != null ? 'Yes' : 'No'}</span></div>
-                  <div className="flex justify-between"><span className="text-[#667085]">Match</span><span className={faceMatch.live_vs_doc_match === true ? 'font-semibold text-[#16803C]' : faceMatch.live_vs_doc_match === false ? 'font-semibold text-[#C62828]' : 'text-[#98A2B3]'}>{faceMatch.live_vs_doc_match === true ? 'Match' : faceMatch.live_vs_doc_match === false ? 'Mismatch' : 'N/A'}</span></div>
-                  <div className="flex justify-between"><span className="text-[#667085]">Similarity</span><span className="font-mono text-[#172033]">{faceMatch.similarity_score != null ? `${(faceMatch.similarity_score * 100).toFixed(1)}%` : 'N/A'}</span></div>
-                  <div className="flex justify-between"><span className="text-[#667085]">Quality</span><span className="text-[#172033]">{faceMatch.face_quality?.gate || 'N/A'}</span></div>
-                  <div className="flex justify-between"><span className="text-[#667085]">Liveness</span><span className={faceLive === true ? 'font-semibold text-[#16803C]' : faceLive === false ? 'font-semibold text-[#C62828]' : 'text-[#98A2B3]'}>{faceLive === true ? 'Passed' : faceLive === false ? 'Failed' : 'N/A'}</span></div>
-                </div>
-              </div>
-              <div className="rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] p-3">
-                <h3 className="mb-2 text-xs font-bold uppercase tracking-[0.06em] text-[#667085]">Iris</h3>
-                {!irisData?.captured ? (
-                  <p className="text-xs text-[#667085]">Not captured — single person capture includes iris when eyes are visible.</p>
-                ) : (
-                  <div className="space-y-1 text-xs">
-                    <div className="flex justify-between"><span className="text-[#667085]">Captured</span><span className="text-[#172033]">Yes{irisData.source === 'unified_burst_derived' ? ' (same capture)' : ''}</span></div>
-                    <div className="flex justify-between"><span className="text-[#667085]">Eye</span><span className="text-[#172033]">{irisData.eye || 'N/A'}</span></div>
-                    <div className="flex justify-between"><span className="text-[#667085]">Match</span><span className={irisData.match === true ? 'font-semibold text-[#16803C]' : irisData.match === false ? 'font-semibold text-[#C62828]' : 'text-[#98A2B3]'}>{irisData.match === true ? 'Match' : irisData.match === false ? 'Mismatch' : 'N/A'}</span></div>
-                    <div className="flex justify-between"><span className="text-[#667085]">Distance</span><span className="font-mono text-[#172033]">{irisData.distance != null ? Number(irisData.distance).toFixed(3) : 'N/A'}</span></div>
-                    <div className="flex justify-between"><span className="text-[#667085]">Quality</span><span className="text-[#172033]">{irisData.quality != null ? Number(irisData.quality).toFixed(2) : 'N/A'}{irisData.quality_usable === false ? ' (low)' : ''}</span></div>
-                    <div className="flex justify-between"><span className="text-[#667085]">PAD</span><span className={irisData.liveness_passed === true ? 'font-semibold text-[#16803C]' : irisData.liveness_passed === false ? 'font-semibold text-[#C62828]' : 'text-[#98A2B3]'}>{irisData.liveness_passed === true ? 'Passed' : irisData.liveness_passed === false ? 'Failed' : 'N/A'}</span></div>
-                    {irisData.reason && <p className="pt-1 text-[11px] text-[#667085]">{irisData.reason}</p>}
-                  </div>
-                )}
-                <p className="mt-2 text-[11px] text-[#98A2B3]">Iris is RGB-prototype (not NIR).</p>
-              </div>
-              <div className="rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] p-3">
-                <h3 className="mb-2 text-xs font-bold uppercase tracking-[0.06em] text-[#667085]">Liveness</h3>
-                <div className="space-y-1 text-xs">
-                  <div className="flex justify-between"><span className="text-[#667085]">Status</span><span className="text-[#172033]">{livenessModule?.status || 'N/A'}</span></div>
-                  <div className="flex justify-between"><span className="text-[#667085]">Score</span><span className="font-mono text-[#172033]">{livenessModule?.score != null ? Number(livenessModule.score).toFixed(2) : 'N/A'}</span></div>
-                  <div className="flex justify-between"><span className="text-[#667085]">Challenge</span><span className="text-[#172033]">{c.challenge_type || livenessModule?.raw_output?.challenge_type || 'N/A'}</span></div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Tamper Detection */}
-          <div className="gov-card-padded">
-            <div className="mb-3 flex flex-col gap-2 border-b border-[#D9DEE7] pb-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex items-center gap-2">
-                <Activity className="text-[#B7791F]" size={18} aria-hidden="true" />
-                <h2 className="gov-card-title">Tamper Detection</h2>
-              </div>
-              {tamperModule && <StatusBadgeLocal status={tamperModule.status} score={tamperModule.score} />}
-            </div>
-            {tamperModule?.evidence_uri ? (
-              <div className="overflow-hidden rounded-lg border border-[#D9DEE7]">
-                <EvidenceImage
-                  evidenceUri={tamperModule.evidence_uri}
-                  alt="Error Level Analysis heatmap overlay highlighting suspected tampered regions of the submitted identity document"
-                />
-                <p className="border-t border-[#D9DEE7] bg-[#F7F8FA] px-3 py-1.5 text-xs font-medium text-[#667085]">ELA Heatmap Overlay</p>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-[#D9DEE7] bg-[#F7F8FA] p-8 text-[#98A2B3]">
-                <ImageIcon size={30} className="mb-2 opacity-60" aria-hidden="true" />
-                <p className="text-sm">{tamperModule?.status === 'inconclusive' ? 'Tamper analysis was inconclusive.' : 'No visual evidence generated.'}</p>
-              </div>
-            )}
-          </div>
-
           {/* Physical Forgery — layout/font/photo-frame/print-scan/QR/security print */}
           <div className="gov-card-padded">
             <div className="mb-3 flex flex-col gap-2 border-b border-[#D9DEE7] pb-3 sm:flex-row sm:items-center sm:justify-between">
@@ -650,7 +651,7 @@ export default function CaseReport() {
                       <div className="mt-2 space-y-2">
                         {codes.map((cd, i) => (
                           <div key={i} className="rounded border border-[#D9DEE7] bg-white p-2">
-                            <div className="flex items-center justify-between gap-2">
+                            <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
                               <span className="text-xs text-[#667085]">{cd.format}</span>
                               <span className={`text-[11px] font-semibold ${cd.cross_check === 'consistent_with_document_number' ? 'text-[#16803C]' : cd.cross_check === 'payload_differs_from_document_number' ? 'text-[#C62828]' : 'text-[#98A2B3]'}`}>
                                 {cd.cross_check === 'consistent_with_document_number' ? '✓ matches document number'

@@ -51,6 +51,27 @@
     outline-offset: 2px;
     border-radius: 4px;
   }
+  /* Page-level horizontal overflow guard (mobile): `clip` prevents any
+     stray wide child from making the whole site sideways-scrollable, and
+     unlike `hidden` it does not break `position: sticky` descendants. */
+  html,
+  body {
+    max-width: 100%;
+    overflow-x: hidden;
+    overflow-x: clip;
+  }
+  #root {
+    min-width: 0;
+    overflow-x: clip;
+  }
+  img,
+  video,
+  canvas {
+    max-width: 100%;
+  }
+  pre {
+    max-width: 100%;
+  }
   ::selection {
     background: rgb(23 105 170 / 0.18);
   }
