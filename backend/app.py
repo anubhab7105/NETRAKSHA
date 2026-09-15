@@ -1569,7 +1569,7 @@ async def _run_screening_pipeline(
 
     def _three_way_job():
         try:
-            return run_three_way_match(str(doc_path), live_str, db_photo_path, save_evidence=False)
+            return _run_local_three_way(str(doc_path), live_str, db_photo_path, save_evidence=False)
         except Exception as exc:  # noqa: BLE001 — never fail screening on biometrics
             import traceback
             print(f"[three-way] local engine exception ({type(exc).__name__}: {exc}); "
