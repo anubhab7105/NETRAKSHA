@@ -1,11 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, Lock, Loader2, KeyRound, Smartphone } from 'lucide-react';
+import { ShieldCheck, Lock, Loader2, KeyRound, Smartphone, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import api, { apiErrorMessage } from '../api';
 import SEO from '../components/SEO';
-
-const inputCls = "w-full bg-black/20 border border-slate-700/50 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all";
-const btnCls = "w-full bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 text-white font-medium py-2.5 rounded-lg transition-all shadow-lg shadow-primary/25 flex items-center justify-center gap-2 disabled:opacity-70";
 
 export default function SecuritySetup() {
   const navigate = useNavigate();
@@ -95,112 +92,116 @@ export default function SecuritySetup() {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-8">
+    <div className="flex min-h-screen items-center justify-center bg-[#F7F8FA] px-4 py-10">
       <SEO title="Security Setup" description="Rotate your password and enroll supervisor multi-factor authentication." path="/change-password" noindex />
-      <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full bg-primary/20 blur-[120px] pointer-events-none"></div>
-
-      <div className="glass-panel relative z-10 w-full max-w-md animate-fade-in-up p-6 sm:p-8 space-y-8">
-        <div className="flex flex-col items-center">
-          <div className="w-14 h-14 bg-gradient-to-br from-primary to-accent rounded-2xl flex items-center justify-center shadow-lg shadow-primary/20 mb-3">
-            <Shield size={28} className="text-white" />
+      <div className="w-full max-w-[560px]">
+        <div className="mb-4 flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#123B66] text-white" aria-hidden="true">
+            <ShieldCheck size={22} />
           </div>
-          <h1 className="text-xl font-bold text-white">Security Setup</h1>
-          <p className="text-slate-400 text-sm mt-1 text-center">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#667085]">Government of India · NETRAKSHA</p>
+            <h1 className="text-xl font-bold text-[#172033]">Security Setup</h1>
+          </div>
+        </div>
+
+        <div className="gov-card-padded space-y-6">
+          <p className="text-sm text-[#667085]">
             {needsPassword && 'Your password must be rotated before continuing.'}
             {needsPassword && needsMfa && ' '}
             {needsMfa && 'Supervisor accounts require authenticator MFA.'}
             {!needsPassword && !needsMfa && 'Manage your sign-in security below.'}
           </p>
-        </div>
 
-        {(needsPassword || !needsMfa) && (
-          <form onSubmit={handlePassword} className="space-y-4">
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-200 uppercase tracking-wider">
-              <KeyRound size={16} /> Change password
-            </h2>
-            {pwErr && <div className="p-3 bg-danger/10 border border-danger/50 text-danger rounded-lg text-sm text-center">{pwErr}</div>}
-            {pwMsg && <div className="p-3 bg-success/10 border border-success/50 text-success rounded-lg text-sm text-center">{pwMsg}</div>}
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1" htmlFor="cp-current">Current password</label>
-              <input id="cp-current" type="password" autoComplete="current-password" value={currentPw} onChange={(e) => setCurrentPw(e.target.value)} className={inputCls} required />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1" htmlFor="cp-new">New password</label>
-              <input id="cp-new" type="password" autoComplete="new-password" value={newPw} onChange={(e) => setNewPw(e.target.value)} className={inputCls} required />
-              <p className="text-xs text-slate-500 mt-1">Min 10 chars, from 3+ of: lowercase, UPPERCASE, digits, symbols. No common words.</p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-300 mb-1" htmlFor="cp-confirm">Confirm new password</label>
-              <input id="cp-confirm" type="password" autoComplete="new-password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} className={inputCls} required />
-            </div>
-            <button type="submit" disabled={pwLoading} className={btnCls}>
-              {pwLoading ? <Loader2 size={20} className="animate-spin" /> : <Lock size={18} />}
-              Change password
-            </button>
-          </form>
-        )}
+          {(needsPassword || !needsMfa) && (
+            <form onSubmit={handlePassword} className="space-y-4 border-t border-[#D9DEE7] pt-5">
+              <h2 className="flex items-center gap-2 text-[13px] font-bold uppercase tracking-[0.06em] text-[#123B66]">
+                <KeyRound size={16} aria-hidden="true" /> Change password
+              </h2>
+              {pwErr && <div className="gov-notice gov-notice-red" role="alert"><AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />{pwErr}</div>}
+              {pwMsg && <div className="gov-notice gov-notice-green" role="status"><CheckCircle2 size={16} className="mt-0.5 shrink-0" aria-hidden="true" />{pwMsg}</div>}
+              <div>
+                <label className="gov-label" htmlFor="cp-current">Current password</label>
+                <input id="cp-current" type="password" autoComplete="current-password" value={currentPw} onChange={(e) => setCurrentPw(e.target.value)} className="gov-input" required />
+              </div>
+              <div>
+                <label className="gov-label" htmlFor="cp-new">New password</label>
+                <input id="cp-new" type="password" autoComplete="new-password" value={newPw} onChange={(e) => setNewPw(e.target.value)} className="gov-input" required />
+                <p className="gov-help">Min 10 chars, from 3+ of: lowercase, UPPERCASE, digits, symbols. No common words.</p>
+              </div>
+              <div>
+                <label className="gov-label" htmlFor="cp-confirm">Confirm new password</label>
+                <input id="cp-confirm" type="password" autoComplete="new-password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} className="gov-input" required />
+              </div>
+              <button type="submit" disabled={pwLoading} className="gov-btn gov-btn-primary w-full">
+                {pwLoading ? <Loader2 size={18} className="animate-spin" aria-hidden="true" /> : <Lock size={17} aria-hidden="true" />}
+                Change password
+              </button>
+            </form>
+          )}
 
-        {role === 'supervisor' && (
-          <div className="space-y-4">
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-200 uppercase tracking-wider">
-              <Smartphone size={16} /> Supervisor MFA
-            </h2>
-            {mfaErr && <div className="p-3 bg-danger/10 border border-danger/50 text-danger rounded-lg text-sm text-center">{mfaErr}</div>}
-            {mfaMsg && <div className="p-3 bg-success/10 border border-success/50 text-success rounded-lg text-sm text-center">{mfaMsg}</div>}
-            {!mfaKey ? (
-              <>
-                <p className="text-sm text-slate-400">
-                  Enroll a TOTP authenticator (Google/Microsoft Authenticator, 1Password…). You will receive a manual key to enter.
-                </p>
-                <button onClick={startMfa} disabled={mfaLoading} className={btnCls}>
-                  {mfaLoading ? <Loader2 size={20} className="animate-spin" /> : 'Start MFA enrollment'}
-                </button>
-              </>
-            ) : (
-              <form onSubmit={confirmMfa} className="space-y-4">
-                <div className="rounded-lg border border-slate-700/50 bg-black/30 p-4">
-                  {mfaQr && (
-                    <div className="mb-3 flex flex-col items-center">
-                      <img src={mfaQr} alt="MFA enrollment QR code — scan with your authenticator app"
-                        className="h-44 w-44 rounded-lg border border-slate-700 bg-white p-2" />
-                      <p className="text-xs text-slate-400 mt-2 text-center">
-                        Scan this with your authenticator app — no typing needed.
+          {role === 'supervisor' && (
+            <div className="space-y-4 border-t border-[#D9DEE7] pt-5">
+              <h2 className="flex items-center gap-2 text-[13px] font-bold uppercase tracking-[0.06em] text-[#123B66]">
+                <Smartphone size={16} aria-hidden="true" /> Supervisor MFA
+              </h2>
+              {mfaErr && <div className="gov-notice gov-notice-red" role="alert"><AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />{mfaErr}</div>}
+              {mfaMsg && <div className="gov-notice gov-notice-green" role="status"><CheckCircle2 size={16} className="mt-0.5 shrink-0" aria-hidden="true" />{mfaMsg}</div>}
+              {!mfaKey ? (
+                <>
+                  <p className="text-sm text-[#667085]">
+                    Enroll a TOTP authenticator (Google/Microsoft Authenticator, 1Password…). You will receive a manual key to enter.
+                  </p>
+                  <button onClick={startMfa} disabled={mfaLoading} className="gov-btn gov-btn-primary w-full">
+                    {mfaLoading ? <Loader2 size={18} className="animate-spin" aria-hidden="true" /> : 'Start MFA enrollment'}
+                  </button>
+                </>
+              ) : (
+                <form onSubmit={confirmMfa} className="space-y-4">
+                  <div className="rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] p-4">
+                    {mfaQr && (
+                      <div className="mb-3 flex flex-col items-center">
+                        <img src={mfaQr} alt="MFA enrollment QR code — scan with your authenticator app"
+                          className="h-44 w-44 rounded-lg border border-[#D9DEE7] bg-white p-2" />
+                        <p className="gov-help mt-2 text-center">
+                          Scan this with your authenticator app — no typing needed.
+                        </p>
+                      </div>
+                    )}
+                    <p className="text-xs font-semibold text-[#667085]">Manual key (only if you can't scan):</p>
+                    <p className="break-all font-mono text-sm text-[#172033] select-all">{mfaKey}</p>
+                    <p className="mt-2 break-all font-mono text-[11px] text-[#98A2B3] select-all">{mfaUri}</p>
+                    {mfaServerTime && (
+                      <p className="mt-2 text-[11px] text-[#667085]">
+                        Server time: {mfaServerTime.replace('T', ' ')}. If your phone's clock differs by more than a minute, turn on automatic date &amp; time — codes won't match otherwise.
                       </p>
-                    </div>
-                  )}
-                  <p className="text-xs text-slate-400 mb-1">Manual key (only if you can't scan):</p>
-                  <p className="font-mono text-sm text-white break-all select-all">{mfaKey}</p>
-                  <p className="font-mono text-[11px] text-slate-500 break-all select-all mt-2">{mfaUri}</p>
-                  {mfaServerTime && (
-                    <p className="text-[11px] text-slate-500 mt-2">
-                      Server time: {mfaServerTime.replace('T', ' ')}. If your phone's clock differs by more than a minute, turn on automatic date &amp; time — codes won't match otherwise.
-                    </p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-1" htmlFor="mfa-code">6-digit code from the app</label>
-                  <input id="mfa-code" type="text" inputMode="numeric" autoComplete="one-time-code" value={mfaCode}
-                    onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                    className={`${inputCls} tracking-[0.5em] text-center`} placeholder="••••••" required />
-                </div>
-                <button type="submit" disabled={mfaLoading} className={btnCls}>
-                  {mfaLoading ? <Loader2 size={20} className="animate-spin" /> : 'Confirm & enable MFA'}
-                </button>
-                <button type="button" onClick={() => { setMfaCode(''); setMfaErr(''); startMfa(); }}
-                  disabled={mfaLoading}
-                  className="w-full text-xs text-slate-400 hover:text-white transition-colors disabled:opacity-60">
-                  Codes never match? Discard this QR and get a fresh one — then scan only the new code.
-                </button>
-              </form>
-            )}
-          </div>
-        )}
+                    )}
+                  </div>
+                  <div>
+                    <label className="gov-label" htmlFor="mfa-code">6-digit code from the app</label>
+                    <input id="mfa-code" type="text" inputMode="numeric" autoComplete="one-time-code" value={mfaCode}
+                      onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      className="gov-input text-center tracking-[0.5em]" placeholder="••••••" required />
+                  </div>
+                  <button type="submit" disabled={mfaLoading} className="gov-btn gov-btn-primary w-full">
+                    {mfaLoading ? <Loader2 size={18} className="animate-spin" aria-hidden="true" /> : 'Confirm & enable MFA'}
+                  </button>
+                  <button type="button" onClick={() => { setMfaCode(''); setMfaErr(''); startMfa(); }}
+                    disabled={mfaLoading}
+                    className="gov-btn gov-btn-ghost w-full !justify-center disabled:opacity-60">
+                    Codes never match? Discard this QR and get a fresh one — then scan only the new code.
+                  </button>
+                </form>
+              )}
+            </div>
+          )}
 
-        {!needsPassword && !needsMfa && (
-          <button onClick={() => navigate('/')} className="w-full text-sm text-slate-400 hover:text-white transition-colors">
-            ← Back to dashboard
-          </button>
-        )}
+          {!needsPassword && !needsMfa && (
+            <button onClick={() => navigate('/')} className="gov-btn gov-btn-ghost w-full !justify-center">
+              ← Back to dashboard
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

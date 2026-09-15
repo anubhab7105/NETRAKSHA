@@ -1,6 +1,6 @@
 import React, { Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { Loader2 } from 'lucide-react';
+import { Loader2, ShieldCheck } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 
 // Route-level code splitting: each view ships as its own chunk and is only
@@ -15,9 +15,46 @@ const NotFound = lazy(() => import('./views/NotFound'));
 
 function RouteLoader() {
   return (
-    <div className="flex min-h-[40vh] items-center justify-center text-slate-400" role="status" aria-label="Loading page">
+    <div className="flex min-h-[40vh] items-center justify-center text-[#667085]" role="status" aria-label="Loading page">
       <Loader2 className="animate-spin" size={28} />
     </div>
+  );
+}
+
+function GovTopBar() {
+  const role = localStorage.getItem('role') || 'officer';
+  const username = localStorage.getItem('username') || 'Officer';
+  return (
+    <header className="sticky top-0 z-30 border-b border-[#D9DEE7] bg-white/95 backdrop-blur">
+      {/* Restrained tricolour rule — the only saffron/green accent in the shell */}
+      <div className="flex h-1" aria-hidden="true">
+        <div className="flex-1 bg-[#F59E0B]" />
+        <div className="flex-1 bg-[#E8EDF3]" />
+        <div className="flex-1 bg-[#16803C]" />
+      </div>
+      <div className="mx-auto flex h-14 max-w-[1280px] items-center gap-3 px-4 sm:px-6">
+        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#123B66] text-white" aria-hidden="true">
+          <ShieldCheck size={20} />
+        </div>
+        <div className="min-w-0 leading-tight">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#667085]">
+            Government of India · Ministry of Home Affairs
+          </p>
+          <p className="truncate text-[15px] font-bold text-[#123B66]">
+            NETRAKSHA <span className="font-medium text-[#667085]">— AI-Based Identity Verification</span>
+          </p>
+        </div>
+        <div className="ml-auto hidden items-center gap-3 sm:flex">
+          <span className="gov-badge gov-badge-blue">{role.toUpperCase()}</span>
+          <span className="max-w-[160px] truncate text-sm font-medium text-[#172033]" title={username}>
+            {username}
+          </span>
+          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#123B66] text-xs font-bold text-white" aria-hidden="true">
+            {String(username).slice(0, 1).toUpperCase()}
+          </span>
+        </div>
+      </div>
+    </header>
   );
 }
 
@@ -25,17 +62,23 @@ const ProtectedRoute = ({ children }) => {
   const token = localStorage.getItem('token');
   if (!token) return <Navigate to="/login" replace />;
   return (
-    <div className="flex min-h-screen w-full flex-col bg-background md:h-screen md:flex-row md:overflow-hidden">
-      <Sidebar />
-      <main className="relative flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 min-w-0">
-        {/* Background ambient light effects */}
-        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-primary/10 blur-[120px] pointer-events-none"></div>
-        <div className="absolute bottom-[-10%] right-[-10%] w-[30%] h-[30%] rounded-full bg-accent/10 blur-[100px] pointer-events-none"></div>
-
-        <div className="relative z-10 max-w-7xl mx-auto">
-          {children}
+    <div className="flex min-h-screen w-full flex-col bg-[#F7F8FA] md:h-screen md:flex-row md:overflow-hidden">
+      <div className="flex min-w-0 flex-1 flex-col md:overflow-hidden">
+        <GovTopBar />
+        <div className="flex min-h-0 flex-1 flex-col md:flex-row md:overflow-hidden">
+          <Sidebar />
+          <main className="min-w-0 flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+            <div className="mx-auto max-w-[1280px]">
+              {children}
+            </div>
+            <footer className="mx-auto mt-8 max-w-[1280px] border-t border-[#D9DEE7] pt-4 pb-2">
+              <p className="text-xs text-[#98A2B3]">
+                NETRAKSHA · Sashastra Seema Bal verification workstation · Official use only — all actions are logged to the immutable audit trail.
+              </p>
+            </footer>
+          </main>
         </div>
-      </main>
+      </div>
     </div>
   );
 };

@@ -1,24 +1,18 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { RefreshCw, Search, ShieldAlert, CheckCircle, AlertTriangle, FileText, ChevronRight } from 'lucide-react';
+import {
+  RefreshCw, Search, ShieldCheck, CheckCircle2, AlertTriangle,
+  FileText, ChevronRight, ClipboardList, ScanLine, BellRing,
+} from 'lucide-react';
 import api from '../api';
 import SEO from '../components/SEO';
+import { PageHeader, KpiCard, VerdictBadge } from '../components/ui';
 
-const VerdictBadge = ({ verdict }) => {
-  const styles = {
-    Green: 'bg-success/10 text-success border-success/30',
-    Yellow: 'bg-warning/10 text-warning border-warning/30',
-    Red: 'bg-danger/10 text-danger border-danger/30',
-  };
-  const icons = {
-    Green: <CheckCircle size={14} />,
-    Yellow: <AlertTriangle size={14} />,
-    Red: <ShieldAlert size={14} />
-  };
+const StatusText = ({ status }) => {
+  const pending = status !== 'decided';
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${styles[verdict] || 'bg-slate-800 text-slate-300 border-slate-700'}`}>
-      {icons[verdict]}
-      {verdict}
+    <span className={`text-xs font-semibold uppercase tracking-[0.05em] ${pending ? 'text-[#1769AA]' : 'text-[#98A2B3]'}`}>
+      {String(status || '').replace('_', ' ')}
     </span>
   );
 };
@@ -55,60 +49,113 @@ export default function Dashboard() {
     });
   }, [cases, query]);
 
+  const stats = useMemo(() => {
+    const total = cases.length;
+    const verified = cases.filter((c) => c.verdict === 'Green').length;
+    const review = cases.filter((c) => c.verdict === 'Yellow').length;
+    const flagged = cases.filter((c) => c.verdict === 'Red').length;
+    const pending = cases.filter((c) => c.status !== 'decided').length;
+    return { total, verified, review, flagged, pending };
+  }, [cases]);
+
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="animate-fade-in space-y-6">
       <SEO
         title="Case Dashboard"
         description="Monitor and adjudicate identity screening cases: composite Green/Yellow/Red risk verdicts, review status and per-case forensic reports."
         path="/"
       />
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-white">Case Dashboard</h1>
-          <p className="text-slate-400 text-sm mt-1">Monitor and adjudicate recent screenings.</p>
-        </div>
-        <button onClick={fetchCases} aria-label="Refresh case list" className="inline-flex w-full items-center justify-center rounded-lg border border-slate-700 bg-surface p-2 text-slate-300 transition-colors hover:bg-slate-700/50 sm:w-auto">
-          <RefreshCw size={20} className={loading ? "animate-spin" : ""} />
-        </button>
-      </header>
+      <PageHeader
+        title="Operations Overview"
+        subtitle="Monitor verifications, triage the case queue and adjudicate screenings."
+        actions={
+          <>
+            <Link to="/scan" className="gov-btn gov-btn-secondary">
+              <ScanLine size={16} aria-hidden="true" /> New Verification
+            </Link>
+            <button onClick={fetchCases} aria-label="Refresh case list" className="gov-icon-btn" title="Refresh case list">
+              <RefreshCw size={18} className={loading ? 'animate-spin' : ''} aria-hidden="true" />
+            </button>
+          </>
+        }
+      />
 
-      <div className="glass-panel overflow-hidden">
-        <div className="flex gap-4 border-b border-slate-700/50 p-4">
-          <div className="relative w-full sm:max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+      {/* KPI cards */}
+      <section aria-label="Verification summary" className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <KpiCard
+          label="Total Verifications"
+          value={loading ? '—' : stats.total}
+          sub={`${stats.pending} awaiting decision`}
+          accent="#123B66"
+          icon={<ClipboardList size={20} aria-hidden="true" />}
+        />
+        <KpiCard
+          label="Verified"
+          value={loading ? '—' : stats.verified}
+          sub="Low-risk outcomes"
+          accent="#16803C"
+          icon={<CheckCircle2 size={20} aria-hidden="true" />}
+        />
+        <KpiCard
+          label="Manual Review"
+          value={loading ? '—' : stats.review}
+          sub="Officer review required"
+          accent="#B7791F"
+          icon={<AlertTriangle size={20} aria-hidden="true" />}
+        />
+        <KpiCard
+          label="Flagged"
+          value={loading ? '—' : stats.flagged}
+          sub="High-risk · escalate"
+          accent="#C62828"
+          icon={<ShieldCheck size={20} aria-hidden="true" />}
+        />
+      </section>
+
+      {/* Case queue */}
+      <section aria-label="Case queue" className="gov-table-wrap">
+        <div className="flex flex-col gap-3 border-b border-[#D9DEE7] p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="gov-card-title">Case Queue</h2>
+            <p className="gov-meta mt-0.5">
+              {filteredCases.length} of {cases.length} cases · select a row to open the full report
+            </p>
+          </div>
+          <div className="relative w-full sm:max-w-[320px]">
+            <Search className="absolute top-1/2 left-3 -translate-y-1/2 text-[#98A2B3]" size={17} aria-hidden="true" />
             <input
               type="search"
               aria-label="Search cases"
-              placeholder="Search by case ID or document type..."
+              placeholder="Search by case ID or document type…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              className="w-full bg-black/20 border border-slate-700 rounded-lg pl-10 pr-4 py-2 text-sm text-white focus:outline-none focus:border-primary transition-colors"
+              className="gov-input gov-input-with-icon"
             />
           </div>
         </div>
-        
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] border-collapse text-left">
+
+        <div className="gov-table-scroll">
+          <table className="gov-table min-w-[760px]">
             <thead>
-              <tr className="bg-black/20 text-slate-400 text-xs uppercase tracking-wider">
-                <th className="px-6 py-4 font-medium">Case ID</th>
-                <th className="px-6 py-4 font-medium">Timestamp</th>
-                <th className="px-6 py-4 font-medium">Document Type</th>
-                <th className="px-6 py-4 font-medium">Verdict</th>
-                <th className="px-6 py-4 font-medium">Status</th>
-                <th className="px-6 py-4 font-medium text-right">Action</th>
+              <tr>
+                <th scope="col">Case ID</th>
+                <th scope="col">Applicant / Timestamp</th>
+                <th scope="col">Document</th>
+                <th scope="col">Verdict</th>
+                <th scope="col">Status</th>
+                <th scope="col"><span className="sr-only">Open case</span></th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-700/50">
+            <tbody>
               {loading && cases.length === 0 ? (
                 <tr>
-                  <td colSpan="6" className="px-6 py-12 text-center text-slate-500">Loading cases...</td>
+                  <td colSpan="6" className="!py-12 text-center text-[#667085]">Loading cases…</td>
                 </tr>
               ) : filteredCases.length === 0 ? (
                 <tr>
-                  <td colSpan="6" className="px-6 py-12 text-center text-slate-500">
+                  <td colSpan="6" className="!py-12 text-center text-[#667085]">
                     {cases.length === 0 ? (
-                      <>No cases yet. <Link to="/scan" className="text-primary hover:underline">Start a screening</Link> from the kiosk scanner.</>
+                      <>No cases yet. <Link to="/scan" className="font-semibold text-[#1769AA] hover:underline">Start a screening</Link> from New Verification.</>
                     ) : (
                       'No cases match your search.'
                     )}
@@ -116,27 +163,35 @@ export default function Dashboard() {
                 </tr>
               ) : (
                 filteredCases.map((c) => (
-                  <tr key={c.id} className="hover:bg-white/5 transition-colors group cursor-pointer" onClick={() => navigate(`/case/${c.id}`)}>
-                    <td className="px-6 py-4 text-sm font-medium text-slate-300">#{c.id.toString().padStart(4, '0')}</td>
-                    <td className="px-6 py-4 text-sm text-slate-400">{new Date(c.timestamp).toLocaleString()}</td>
-                    <td className="px-6 py-4">
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-slate-800 text-slate-300 text-xs border border-slate-700">
-                        <FileText size={12} />
+                  <tr
+                    key={c.id}
+                    className="group cursor-pointer"
+                    onClick={() => navigate(`/case/${c.id}`)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') navigate(`/case/${c.id}`); }}
+                    tabIndex={0}
+                    aria-label={`Open case ${c.id.toString().padStart(4, '0')}`}
+                  >
+                    <td className="font-semibold text-[#123B66]">#{c.id.toString().padStart(4, '0')}</td>
+                    <td>
+                      <span className="block text-sm text-[#172033]">{new Date(c.timestamp).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
+                      <span className="block text-xs text-[#98A2B3]">{new Date(c.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}</span>
+                    </td>
+                    <td>
+                      <span className="gov-badge gov-badge-grey">
+                        <FileText size={12} aria-hidden="true" />
                         {c.document_type ? c.document_type.toUpperCase() : 'UNKNOWN'}
                       </span>
                     </td>
-                    <td className="px-6 py-4">
+                    <td>
                       <VerdictBadge verdict={c.verdict} />
                     </td>
-                    <td className="px-6 py-4">
-                      <span className={`text-xs font-medium uppercase tracking-wider ${c.status === 'decided' ? 'text-slate-500' : 'text-primary'}`}>
-                        {c.status.replace('_', ' ')}
-                      </span>
+                    <td>
+                      <StatusText status={c.status} />
                     </td>
-                    <td className="px-6 py-4 text-right">
-                      <button aria-label={`Open case #${c.id.toString().padStart(4, '0')}`} className="text-slate-400 group-hover:text-white transition-colors">
-                        <ChevronRight size={20} />
-                      </button>
+                    <td className="text-right">
+                      <span className="inline-flex items-center gap-1 text-[13px] font-semibold text-[#98A2B3] group-hover:text-[#123B66]">
+                        Open <ChevronRight size={16} aria-hidden="true" />
+                      </span>
                     </td>
                   </tr>
                 ))
@@ -144,7 +199,14 @@ export default function Dashboard() {
             </tbody>
           </table>
         </div>
-      </div>
+
+        <div className="flex items-center gap-2 border-t border-[#D9DEE7] bg-[#F7F8FA] px-4 py-2.5">
+          <BellRing size={14} className="text-[#98A2B3]" aria-hidden="true" />
+          <p className="text-xs text-[#667085]">
+            High-risk verdicts stay at the top of the review priority. All decisions require a written justification.
+          </p>
+        </div>
+      </section>
     </div>
   );
 }

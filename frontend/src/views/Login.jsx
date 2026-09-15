@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Shield, Lock, User, Loader2 } from 'lucide-react';
+import { ShieldCheck, Lock, UserRound, Loader2, AlertTriangle } from 'lucide-react';
 import api, { apiErrorMessage } from '../api';
 import SEO from '../components/SEO';
 
@@ -65,107 +65,140 @@ export default function Login() {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-8">
+    <div className="flex min-h-screen bg-[#F7F8FA]">
       <SEO
         title="Officer Login"
         description="Secure sign-in for authorized Sashastra Seema Bal officers to the Netraksha identity document screening portal."
         path="/login"
       />
-      {/* Background blobs */}
-      <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full bg-primary/20 blur-[120px] pointer-events-none"></div>
-      <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] rounded-full bg-accent/20 blur-[120px] pointer-events-none"></div>
-      
-      <div className="glass-panel relative z-10 w-full max-w-md animate-fade-in-up p-6 sm:p-8">
-        <div className="flex flex-col items-center mb-8">
-          <div className="w-16 h-16 bg-gradient-to-br from-primary to-accent rounded-2xl flex items-center justify-center shadow-lg shadow-primary/20 mb-4">
-            <Shield size={32} className="text-white" />
+      {/* Left — official identity panel (desktop) */}
+      <div className="hidden w-[44%] shrink-0 flex-col justify-between bg-[#123B66] p-10 text-white lg:flex">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-white/70">
+            Government of India · Ministry of Home Affairs
+          </p>
+          <div className="mt-6 flex items-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/10" aria-hidden="true">
+              <ShieldCheck size={28} />
+            </div>
+            <div>
+              <p className="text-2xl font-bold tracking-tight">NETRAKSHA</p>
+              <p className="text-sm text-white/75">AI-Based Identity Verification</p>
+            </div>
           </div>
-<h1 className="text-2xl font-bold text-white">Netraksha</h1>
-           <p className="text-slate-400 text-sm mt-1">See. Verify. Secure.</p>
+          <div className="mt-8 h-px w-16 bg-[#F59E0B]" aria-hidden="true" />
+          <ul className="mt-8 space-y-4 text-sm text-white/85">
+            <li className="flex gap-3"><span aria-hidden="true">—</span> Document authenticity, MRZ and registry verification in one workstation.</li>
+            <li className="flex gap-3"><span aria-hidden="true">—</span> Face comparison, liveness and fraud detection with explainable verdicts.</li>
+            <li className="flex gap-3"><span aria-hidden="true">—</span> Every check and officer decision written to an immutable audit trail.</li>
+          </ul>
         </div>
+        <p className="text-xs text-white/60">
+          Official use only · Sashastra Seema Bal · Unauthorised access is prohibited and logged.
+        </p>
+      </div>
 
-        {error && (
-          <div className="mb-4 p-3 bg-danger/10 border border-danger/50 text-danger rounded-lg text-sm text-center">
-            {error}
-          </div>
-        )}
-
-        <form onSubmit={mfaToken ? handleMfa : handleLogin} className="space-y-4">
-          {!mfaToken ? (
-          <>
-          <div>
-            <label htmlFor="login-username" className="block text-sm font-medium text-slate-300 mb-1">Username</label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
-                <User size={18} />
-              </div>
-              <input
-                id="login-username"
-                type="text"
-                autoComplete="username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className="w-full bg-black/20 border border-slate-700/50 rounded-lg pl-10 pr-4 py-2.5 text-white focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all"
-                required
-              />
+      {/* Right — sign-in form */}
+      <div className="flex min-w-0 flex-1 items-center justify-center px-4 py-10">
+        <div className="w-full max-w-[420px]">
+          <div className="mb-6 flex items-center gap-3 lg:hidden">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#123B66] text-white" aria-hidden="true">
+              <ShieldCheck size={22} />
+            </div>
+            <div className="leading-tight">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#667085]">Government of India</p>
+              <p className="text-lg font-bold text-[#123B66]">NETRAKSHA</p>
             </div>
           </div>
 
-          <div>
-            <label htmlFor="login-password" className="block text-sm font-medium text-slate-300 mb-1">Password</label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
-                <Lock size={18} />
-              </div>
-              <input
-                id="login-password"
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full bg-black/20 border border-slate-700/50 rounded-lg pl-10 pr-4 py-2.5 text-white focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all"
-                required
-              />
-            </div>
-          </div>
-          </>
-          ) : (
-          <div>
-            <p className="text-sm text-slate-300 mb-3 text-center">
-              Supervisor sign-in needs a second step — enter the 6-digit code from your authenticator app.
-            </p>
-            <label htmlFor="login-mfa" className="block text-sm font-medium text-slate-300 mb-1">Authenticator code</label>
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
-                <Lock size={18} />
-              </div>
-              <input
-                id="login-mfa"
-                type="text"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                value={mfaCode}
-                onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                className="w-full bg-black/20 border border-slate-700/50 rounded-lg pl-10 pr-4 py-2.5 text-white tracking-[0.5em] text-center focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all"
-                placeholder="••••••"
-                required
-              />
-            </div>
-            <button type="button" onClick={() => { setMfaToken(''); setMfaCode(''); setError(''); }}
-              className="mt-3 w-full text-xs text-slate-400 hover:text-white transition-colors">
-              ← Back to username / password
-            </button>
-          </div>
-          )}
+          <div className="gov-card-padded">
+            <h1 className="text-xl font-bold text-[#172033]">Officer Sign In</h1>
+            <p className="gov-subtitle">Authorised personnel only. Sessions and attempts are audited.</p>
 
-          <button 
-            type="submit" 
-            disabled={loading}
-            className="w-full bg-gradient-to-r from-primary to-accent hover:from-primary/90 hover:to-accent/90 text-white font-medium py-2.5 rounded-lg transition-all shadow-lg shadow-primary/25 flex items-center justify-center gap-2 mt-6 disabled:opacity-70"
-          >
-            {loading ? <Loader2 size={20} className="animate-spin" /> : (mfaToken ? 'Verify Code' : 'Sign In')}
-          </button>
-        </form>
+            {error && (
+              <div className="gov-notice gov-notice-red mt-4" role="alert">
+                <AlertTriangle size={18} className="shrink-0" aria-hidden="true" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            <form onSubmit={mfaToken ? handleMfa : handleLogin} className="mt-5 space-y-4">
+              {!mfaToken ? (
+                <>
+                  <div>
+                    <label htmlFor="login-username" className="gov-label">Username</label>
+                    <div className="relative">
+                      <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-[#98A2B3]" aria-hidden="true">
+                        <UserRound size={17} />
+                      </span>
+                      <input
+                        id="login-username"
+                        type="text"
+                        autoComplete="username"
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        className="gov-input gov-input-with-icon"
+                        required
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label htmlFor="login-password" className="gov-label">Password</label>
+                    <div className="relative">
+                      <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-[#98A2B3]" aria-hidden="true">
+                        <Lock size={17} />
+                      </span>
+                      <input
+                        id="login-password"
+                        type="password"
+                        autoComplete="current-password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className="gov-input gov-input-with-icon"
+                        required
+                      />
+                    </div>
+                    <p className="gov-help">Use your issued workstation credentials. Contact your supervisor if locked out.</p>
+                  </div>
+                </>
+              ) : (
+                <div>
+                  <p className="mb-3 text-sm text-[#172033]">
+                    Supervisor sign-in needs a second step — enter the 6-digit code from your authenticator app.
+                  </p>
+                  <label htmlFor="login-mfa" className="gov-label">Authenticator code</label>
+                  <div className="relative">
+                    <span className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-[#98A2B3]" aria-hidden="true">
+                      <Lock size={17} />
+                    </span>
+                    <input
+                      id="login-mfa"
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      value={mfaCode}
+                      onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      className="gov-input gov-input-with-icon text-center tracking-[0.5em]"
+                      placeholder="••••••"
+                      required
+                    />
+                  </div>
+                  <button type="button" onClick={() => { setMfaToken(''); setMfaCode(''); setError(''); }}
+                    className="gov-btn gov-btn-ghost mt-2 w-full !justify-center">
+                    ← Back to username / password
+                  </button>
+                </div>
+              )}
+
+              <button type="submit" disabled={loading} className="gov-btn gov-btn-primary w-full">
+                {loading ? <Loader2 size={18} className="animate-spin" aria-hidden="true" /> : (mfaToken ? 'Verify Code' : 'Sign In Securely')}
+              </button>
+            </form>
+          </div>
+          <p className="mt-4 text-center text-xs text-[#98A2B3]">
+            Protected workstation · All sign-in events are recorded for audit.
+          </p>
+        </div>
       </div>
     </div>
   );
