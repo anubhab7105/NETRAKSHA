@@ -1,0 +1,13 @@
+# Railway config-as-code — overrides any dashboard Custom Start Command.
+# Must run through a shell so $PORT is expanded; bare exec receives literal '${PORT:-...}'.
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile.backend"
+
+[deploy]
+startCommand = "sh -c 'exec python -m uvicorn backend.app:app --host 0.0.0.0 --port ${PORT:-8000}'"
+healthcheckPath = "/api/health"
+healthcheckTimeout = 300
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3

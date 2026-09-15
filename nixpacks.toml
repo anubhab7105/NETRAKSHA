@@ -1,0 +1,6 @@
+# Railway Nixpacks — ensure start runs through a shell so $PORT expands.
+# Without sh -c the dashboard's exec-form command receives literal '${PORT:-8000}'
+# and uvicorn crashes with "Invalid value for '--port': '${PORT:-8000}'".
+
+[start]
+cmd = "sh -c 'exec python -m uvicorn backend.app:app --host 0.0.0.0 --port ${PORT:-8000}'"
