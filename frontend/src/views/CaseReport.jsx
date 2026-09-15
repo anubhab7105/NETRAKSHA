@@ -820,11 +820,16 @@ export default function CaseReport() {
         )}
       </section>
 
-      {/* Officer Action — state machine: pending_review -> escalated -> decided; deny requires supervisor */}
+      {/* Officer Action — state machine: pending_review -> escalated -> decided.
+          Deny is supervisor-only (explicit allowlist): officers and auditors —
+          and any unknown role — are never rendered a Deny affordance. The API
+          additionally rejects officer deny with 403 (defense in depth). */}
       {(() => {
         const myRole = (localStorage.getItem('role') || 'officer').toLowerCase();
         const isAuditor = myRole === 'auditor';
         const isOfficer = myRole === 'officer';
+        const canDeny = myRole === 'supervisor';
+        const canDecideEscalated = myRole === 'supervisor';
         if (c.status === 'decided') {
           return (
             <div className="gov-card-padded mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -846,8 +851,8 @@ export default function CaseReport() {
               <p className="mb-4 text-sm text-[#667085]">This case was escalated for supervisor review. Only a supervisor can clear or deny it.</p>
               {isAuditor ? (
                 <p className="text-sm text-[#667085]">Auditor role is read-only.</p>
-              ) : isOfficer ? (
-                <p className="text-sm text-[#667085]">Your role cannot decide escalated cases.</p>
+              ) : !canDecideEscalated ? (
+                <p className="text-sm text-[#667085]">Your role cannot decide escalated cases — only a supervisor can clear or deny.</p>
               ) : (
                 <div className="space-y-4">
                   <label htmlFor="adjudication-reason" className="gov-label">
@@ -875,14 +880,17 @@ export default function CaseReport() {
               <textarea id="adjudication-reason" value={reason} onChange={(e) => setReason(e.target.value)} className="gov-textarea" placeholder="Record the grounds for this decision…" />
               {actionError && (<div role="alert" className="gov-notice gov-notice-red">{actionError}</div>)}
               <div className="flex flex-col gap-3 sm:flex-row sm:gap-3">
-                <button onClick={() => handleAction('clear')} disabled={actionLoading} className="gov-btn gov-btn-primary flex-1"><CheckCircle2 size={17} aria-hidden="true" /> Clear Traveler</button>
-                {isOfficer ? (
-                  <button disabled className="gov-btn flex-1 cursor-not-allowed border border-[#D9DEE7] bg-[#F1F4F9] text-[#98A2B3]" title="Deny requires supervisor approval — use Escalate"><X size={17} aria-hidden="true" /> Deny (Supervisor Only)</button>
-                ) : (
-                  <button onClick={() => handleAction('deny')} disabled={actionLoading || isAuditor} className="gov-btn gov-btn-danger flex-1 disabled:opacity-50"><X size={17} aria-hidden="true" /> Deny Entry</button>
+                <button onClick={() => handleAction('clear')} disabled={actionLoading || isAuditor} className="gov-btn gov-btn-primary flex-1 disabled:opacity-50"><CheckCircle2 size={17} aria-hidden="true" /> Clear Traveler</button>
+                {canDeny && (
+                  <button onClick={() => handleAction('deny')} disabled={actionLoading} className="gov-btn gov-btn-danger flex-1 disabled:opacity-50"><X size={17} aria-hidden="true" /> Deny Entry</button>
                 )}
                 <button onClick={() => handleAction('escalate')} disabled={actionLoading || isAuditor} className="gov-btn gov-btn-secondary flex-1 !border-[#B7791F] !text-[#7A5410] hover:!bg-[#FBF3E2] disabled:opacity-50"><ShieldCheck size={17} aria-hidden="true" /> Escalate to Supervisor</button>
               </div>
+              {isOfficer && (
+                <p className="rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] px-3 py-2 text-xs text-[#667085]">
+                  Officers cannot deny entry — if this traveler should be refused, escalate the case and a supervisor will decide.
+                </p>
+              )}
               {isAuditor && <p className="text-xs text-[#667085]">Auditor is read-only.</p>}
             </div>
           </div>
