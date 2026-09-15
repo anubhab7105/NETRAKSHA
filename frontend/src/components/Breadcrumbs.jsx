@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { ChevronRight, Home } from 'lucide-react';
+import { ChevronRight, House } from 'lucide-react';
 import { SITE_URL } from '../config/site';
 
 /**
@@ -34,21 +34,21 @@ export default function Breadcrumbs({ items }) {
   }, [items]);
 
   return (
-    <nav aria-label="Breadcrumb" className="mb-4">
-      <ol className="flex flex-wrap items-center gap-1.5 text-sm text-slate-400">
+    <nav aria-label="Breadcrumb">
+      <ol className="flex flex-wrap items-center gap-1.5 text-[13px] text-[#667085]">
         {items.map((item, i) => {
           const isLast = i === items.length - 1;
           return (
             <li key={`${item.label}-${i}`} className="flex items-center gap-1.5">
-              {i > 0 && <ChevronRight size={14} className="text-slate-600" aria-hidden="true" />}
+              {i > 0 && <ChevronRight size={14} className="text-[#98A2B3]" aria-hidden="true" />}
               {isLast || !item.to ? (
-                <span aria-current={isLast ? 'page' : undefined} className={isLast ? 'font-medium text-slate-200' : undefined}>
-                  {i === 0 && <Home size={14} className="mr-1 inline-block -translate-y-px" aria-hidden="true" />}
+                <span aria-current={isLast ? 'page' : undefined} className={isLast ? 'font-semibold text-[#123B66]' : undefined}>
+                  {i === 0 && <House size={14} className="mr-1 inline-block -translate-y-px" aria-hidden="true" />}
                   {item.label}
                 </span>
               ) : (
-                <Link to={item.to} className="rounded hover:text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-primary transition-colors">
-                  {i === 0 && <Home size={14} className="mr-1 inline-block -translate-y-px" aria-hidden="true" />}
+                <Link to={item.to} className="rounded hover:text-[#123B66] hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1769AA]">
+                  {i === 0 && <House size={14} className="mr-1 inline-block -translate-y-px" aria-hidden="true" />}
                   {item.label}
                 </Link>
               )}

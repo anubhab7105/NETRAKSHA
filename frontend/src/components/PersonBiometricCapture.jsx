@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Camera, Loader2, RefreshCw, X, Video } from 'lucide-react';
+import { Camera, Loader2, RefreshCw, X, Video, CheckCircle2 } from 'lucide-react';
 
 const STATUS_MESSAGES = {
   idle: 'Position face inside the frame',
@@ -56,7 +56,6 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
   const [status, setStatus] = useState('idle');
   const [burstStep, setBurstStep] = useState(0);
   const [error, setError] = useState(null);
-  const urlRef = useRef(null);
   const previewUrl = React.useMemo(() => (file?.primaryPreviewUrl ? file.primaryPreviewUrl : null), [file]);
 
   useEffect(() => {
@@ -168,23 +167,28 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
   if (file) {
     const count = Array.isArray(file.burst) ? file.burst.length : 0;
     return (
-      <div className="flex-1 min-w-0">
-        <label className="block text-sm font-medium text-slate-300 mb-2">2. Traveler Biometric Capture (Required)</label>
-        <div className="flex min-h-[260px] flex-col rounded-xl border-2 border-dashed p-4 text-center sm:min-h-[280px] sm:p-5 border-success/50 bg-success/5">
-          <div className="flex flex-col items-center justify-center flex-1">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <p className="mb-2 flex items-center gap-2 text-sm font-semibold text-[#172033]">
+          <span className="gov-step-dot gov-step-done" aria-hidden="true">✓</span>
+          Traveler Biometric Capture
+        </p>
+        <div className="flex min-h-[260px] flex-col rounded-lg border-2 border-dashed border-[#16803C] bg-[#EAF6EE]/40 p-4 text-center sm:min-h-[280px] sm:p-5">
+          <div className="flex flex-1 flex-col items-center justify-center">
             {previewUrl && (
-              <img src={previewUrl} alt="Captured traveler preview" className="mb-3 max-h-[180px] max-w-full rounded-lg border border-slate-700/50 object-contain" />
+              <img src={previewUrl} alt="Captured traveler preview" className="mb-3 max-h-[180px] max-w-full rounded-lg border border-[#D9DEE7] bg-white object-contain" />
             )}
-            <p className="text-sm font-medium text-slate-200">Person captured — {count} frames</p>
-            <p className="text-xs text-slate-500 mt-1">One capture feeds face + liveness + iris analysis</p>
-            <div className="mt-2 flex flex-col gap-1 text-xs text-success">
+            <p className="flex items-center gap-1.5 text-sm font-semibold text-[#16803C]">
+              <CheckCircle2 size={15} aria-hidden="true" /> Person captured — {count} frames
+            </p>
+            <p className="mt-1 text-xs text-[#667085]">One capture feeds face + liveness + iris analysis</p>
+            <div className="mt-2 flex flex-col gap-1 text-xs font-medium text-[#16803C]">
               <span>✓ Face frames recorded</span>
               <span>✓ Action burst recorded (liveness)</span>
               <span>✓ Eye frames recorded (iris)</span>
             </div>
-            <div className="mt-4 flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
-              <button onClick={() => { stopStream(); onClear(); }} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-400 hover:bg-slate-700 hover:text-white">
-                <X size={14} /> Retry Person Capture
+            <div className="mt-4 flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+              <button onClick={() => { stopStream(); onClear(); }} className="gov-btn gov-btn-secondary !min-h-[36px] !px-3 !py-2 !text-[13px]">
+                <RefreshCw size={14} aria-hidden="true" /> Retry Person Capture
               </button>
             </div>
           </div>
@@ -194,83 +198,86 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
   }
 
   return (
-    <div className="flex-1 min-w-0">
-      <label className="block text-sm font-medium text-slate-300 mb-2">2. Traveler Biometric Capture (Required)</label>
-      <div className="flex min-h-[260px] flex-col rounded-xl border-2 border-dashed p-4 text-center sm:min-h-[280px] sm:p-5 border-slate-700 hover:border-primary/50">
+    <div className="flex min-w-0 flex-1 flex-col">
+      <p className="mb-2 flex items-center gap-2 text-sm font-semibold text-[#172033]">
+        <span className="gov-step-dot gov-step-current" aria-hidden="true">2</span>
+        Traveler Biometric Capture
+      </p>
+      <div className="flex min-h-[260px] flex-col rounded-lg border-2 border-dashed border-[#BEC6D5] bg-white p-4 text-center transition-colors hover:border-[#1769AA] sm:min-h-[280px] sm:p-5">
         {!previewing ? (
-          <button onClick={startCamera} disabled={starting} className="flex-1 flex flex-col items-center justify-center group cursor-pointer disabled:opacity-60">
-            {starting ? <Loader2 size={32} className="animate-spin text-slate-400 mb-3" /> : (
-              <div className="bg-slate-800 p-3 rounded-full text-slate-400 group-hover:text-primary group-hover:bg-primary/10 mb-3">
-                <Video size={32} />
+          <button onClick={startCamera} disabled={starting} className="group flex flex-1 cursor-pointer flex-col items-center justify-center disabled:opacity-60">
+            {starting ? <Loader2 size={30} className="mb-3 animate-spin text-[#98A2B3]" aria-hidden="true" /> : (
+              <div className="mb-3 rounded-full border border-[#D9DEE7] bg-[#F1F4F9] p-3 text-[#667085] group-hover:border-[#1769AA] group-hover:text-[#1769AA]" aria-hidden="true">
+                <Video size={28} />
               </div>
             )}
-            <p className="text-sm text-slate-300 font-medium group-hover:text-white">{starting ? 'Opening webcam...' : 'Click to open camera'}</p>
-            <p className="text-xs text-slate-500 mt-1">One capture — face + eyes. Front camera preferred.</p>
-            {error && <p className="text-xs text-danger mt-2">{error}</p>}
+            <p className="text-sm font-semibold text-[#172033]">{starting ? 'Opening webcam…' : 'Click to open camera'}</p>
+            <p className="mt-1 text-xs text-[#667085]">One capture — face + eyes. Front camera preferred.</p>
+            {error && <p className="mt-2 text-xs font-medium text-[#C62828]" role="alert">{error}</p>}
           </button>
         ) : (
           <>
             <div className="relative">
-              <video ref={videoRef} autoPlay playsInline muted onLoadedMetadata={() => setVideoReady(true)} className="h-[180px] w-full rounded-lg border border-slate-700/50 bg-black object-contain sm:h-[220px] md:h-[180px]" />
+              <video ref={videoRef} autoPlay playsInline muted onLoadedMetadata={() => setVideoReady(true)} className="h-[180px] w-full rounded-lg border border-[#D9DEE7] bg-[#172033] object-contain sm:h-[220px] md:h-[180px]" />
               {/* Face + eye guide overlay */}
-              <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                <div className="w-40 h-52 border-2 border-primary/60 rounded-2xl" />
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center" aria-hidden="true">
+                <div className="h-52 w-40 rounded-2xl border-2 border-[#1769AA]/70" />
                 <div className="absolute top-[38%] flex gap-6">
-                  <div className="w-10 h-6 border border-white/40 rounded-full" />
-                  <div className="w-10 h-6 border border-white/40 rounded-full" />
+                  <div className="h-6 w-10 rounded-full border border-white/60" />
+                  <div className="h-6 w-10 rounded-full border border-white/60" />
                 </div>
               </div>
               {bursting && (
-                <div className="absolute inset-0 rounded-lg bg-black/70 flex flex-col items-center justify-center px-4">
+                <div className="absolute inset-0 flex flex-col items-center justify-center rounded-lg bg-[#172033]/80 px-4">
                   {(() => {
                     if (status === 'checkingLiveness') return (
                       <>
-                        <p className="text-white font-bold text-lg">Checking liveness…</p>
-                        <p className="text-slate-300 text-xs mt-1">Analyzing your actions</p>
+                        <p className="text-lg font-bold text-white">Checking liveness…</p>
+                        <p className="mt-1 text-xs text-white/75">Analyzing your actions</p>
                       </>
                     );
                     if (status === 'processingIris') return (
                       <>
-                        <p className="text-white font-bold text-lg">Processing iris…</p>
-                        <p className="text-slate-300 text-xs mt-1">Locating eyes in the capture</p>
+                        <p className="text-lg font-bold text-white">Processing iris…</p>
+                        <p className="mt-1 text-xs text-white/75">Locating eyes in the capture</p>
                       </>
                     );
                     const prompt = BURST_PROMPTS.find((p) => burstStep <= p.until) || BURST_PROMPTS[0];
                     return (
                       <>
-                        <p className="text-white font-bold text-lg animate-pulse text-center">{prompt.title}</p>
-                        <p className="text-slate-300 text-xs mt-1">{prompt.sub}</p>
-                        <div className="mt-3 h-1.5 w-3/4 overflow-hidden rounded-full bg-white/20">
-                          <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${Math.min(100, (burstStep / 14) * 100)}%` }} />
+                        <p className="animate-pulse text-center text-lg font-bold text-white">{prompt.title}</p>
+                        <p className="mt-1 text-xs text-white/75">{prompt.sub}</p>
+                        <div className="mt-3 h-1.5 w-3/4 overflow-hidden rounded-full bg-white/25">
+                          <div className="h-full rounded-full bg-white transition-all" style={{ width: `${Math.min(100, (burstStep / 14) * 100)}%` }} />
                         </div>
-                        <p className="text-slate-400 text-[11px] mt-1">Step {Math.min(burstStep, 14)} of 14</p>
+                        <p className="mt-1 text-[11px] text-white/70">Step {Math.min(burstStep, 14)} of 14</p>
                       </>
                     );
                   })()}
                 </div>
               )}
             </div>
-            <p className="text-xs text-slate-400 mt-2" role="status">
+            <p className="mt-2 text-xs text-[#667085]" role="status">
               {STATUS_MESSAGES[status] || STATUS_MESSAGES.ready}
             </p>
-            {error && <p className="text-xs text-danger mt-2">{error}</p>}
-            <div className="mt-3 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
-              <button onClick={stopStream} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-400 hover:bg-slate-700 hover:text-white">
-                <X size={14} /> Cancel
+            {error && <p className="mt-2 text-xs font-medium text-[#C62828]" role="alert">{error}</p>}
+            <div className="mt-3 flex flex-col items-stretch justify-center gap-2 sm:flex-row sm:items-center">
+              <button onClick={stopStream} className="gov-btn gov-btn-secondary !min-h-[36px] !px-3 !py-2 !text-[13px]">
+                <X size={14} aria-hidden="true" /> Cancel
               </button>
-              <button onClick={capturePerson} disabled={!videoReady || bursting} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-primary to-accent px-4 py-2 text-xs font-medium text-white hover:from-primary/90 hover:to-accent/90 disabled:opacity-50">
-                {bursting ? <Loader2 size={14} className="animate-spin" /> : <Camera size={14} />}
+              <button onClick={capturePerson} disabled={!videoReady || bursting} className="gov-btn gov-btn-primary !min-h-[36px] !px-4 !py-2 !text-[13px]">
+                {bursting ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Camera size={14} aria-hidden="true" />}
                 {bursting ? 'Capturing…' : 'Capture Person'}
               </button>
             </div>
             {!bursting && (
-              <ol className="mt-3 space-y-2 rounded-lg bg-black/20 p-3 text-left">
+              <ol className="mt-3 space-y-2 rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] p-3 text-left">
                 {FACE_GUIDE_STEPS.map((s) => (
                   <li key={s.n} className="flex items-start gap-2.5">
-                    <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/20 text-[11px] font-bold text-primary">{s.n}</span>
-                    <span className="text-xs text-slate-300">
-                      <span className="font-semibold text-slate-100">{s.title} — </span>
-                      {s.text}
+                    <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#E8F1FA] text-[11px] font-bold text-[#123B66]">{s.n}</span>
+                    <span className="text-xs text-[#172033]">
+                      <span className="font-semibold">{s.title} — </span>
+                      <span className="text-[#667085]">{s.text}</span>
                     </span>
                   </li>
                 ))}
@@ -279,7 +286,7 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
           </>
         )}
       </div>
-      <p className="text-[11px] text-slate-500 mt-2">Iris is RGB-prototype (not NIR). One burst feeds face, liveness and iris.</p>
+      <p className="mt-2 text-[11px] text-[#98A2B3]">Iris is RGB-prototype (not NIR). One burst feeds face, liveness and iris.</p>
     </div>
   );
 }

@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Loader2, ScrollText, Search, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Loader2, ScrollText, Search, ChevronLeft, ChevronRight, ShieldCheck, AlertTriangle } from 'lucide-react';
 import api from '../api';
 import SEO from '../components/SEO';
 import Breadcrumbs from '../components/Breadcrumbs';
+import { PageHeader } from '../components/ui';
 
 export default function AuditTrail() {
   const [logs, setLogs] = useState([]);
@@ -50,104 +51,105 @@ export default function AuditTrail() {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="animate-fade-in space-y-5">
       <SEO
         title="Audit Trail"
         description="Immutable, append-only event ledger of every automated screening check, officer decision and override across the Netraksha system."
         path="/audit"
       />
-      <Breadcrumbs items={[{ label: 'Home', to: '/' }, { label: 'Audit Trail' }]} />
-      <header>
-        <h1 className="text-2xl font-bold text-white flex items-center gap-3">
-          <div className="bg-primary/20 p-2 rounded-lg text-primary">
-            <ScrollText size={24} />
-          </div>
-          Audit Trail
-        </h1>
-        <p className="text-slate-400 text-sm mt-1">
-          Immutable event ledger — every automated check and officer decision. Hash-chained for tamper evidence.
-        </p>
-        <div className="mt-4 flex items-center gap-3">
-          <button onClick={handleVerify} className="px-3 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/30 rounded-lg text-sm font-medium">
-            Verify Chain
+      <Breadcrumbs items={[{ label: 'Overview', to: '/' }, { label: 'Audit Logs' }]} />
+      <PageHeader
+        title="Audit Logs"
+        subtitle="Immutable event ledger — every automated check and officer decision. Hash-chained for tamper evidence."
+        actions={
+          <button onClick={handleVerify} className="gov-btn gov-btn-secondary">
+            <ShieldCheck size={16} aria-hidden="true" /> Verify Chain
           </button>
-          {verifyResult && (
-            <span className={`text-xs px-2 py-1 rounded border ${verifyResult.valid ? 'bg-success/10 text-success border-success/30' : 'bg-danger/10 text-danger border-danger/30'}`}>
-              {verifyResult.valid ? `✓ Verified (${verifyResult.total_entries} entries, last ${String(verifyResult.last_hash).slice(0,8)}…)` : `✗ Broken at #${verifyResult.first_broken_id}: ${verifyResult.reason || ''}`}
-            </span>
-          )}
+        }
+      />
+
+      {verifyResult && (
+        <div className={`gov-notice ${verifyResult.valid ? 'gov-notice-green' : 'gov-notice-red'}`} role="status">
+          {verifyResult.valid
+            ? <ShieldCheck size={18} className="mt-0.5 shrink-0" aria-hidden="true" />
+            : <AlertTriangle size={18} className="mt-0.5 shrink-0" aria-hidden="true" />}
+          <span>
+            {verifyResult.valid
+              ? `Chain verified — ${verifyResult.total_entries} entries, last ${String(verifyResult.last_hash).slice(0, 8)}…`
+              : `Chain broken at #${verifyResult.first_broken_id}: ${verifyResult.reason || ''}`}
+          </span>
         </div>
-      </header>
+      )}
 
       {/* Filters */}
-      <form onSubmit={handleSearch} className="glass-panel flex flex-col gap-4 p-4 sm:flex-row sm:flex-wrap sm:items-end">
+      <form onSubmit={handleSearch} className="gov-card-padded flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
         <div className="min-w-0 flex-1 sm:min-w-[200px]">
-          <label htmlFor="audit-actor" className="block text-xs font-medium text-slate-400 mb-1">Actor</label>
+          <label htmlFor="audit-actor" className="gov-label !mb-1 !text-[13px]">Actor</label>
           <input
             id="audit-actor"
             type="text"
             value={actorFilter}
             onChange={(e) => setActorFilter(e.target.value)}
             placeholder="Filter by officer username"
-            className="w-full bg-black/30 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary transition-colors"
+            className="gov-input"
           />
         </div>
         <div className="min-w-0 flex-1 sm:min-w-[200px]">
-          <label htmlFor="audit-entity" className="block text-xs font-medium text-slate-400 mb-1">Entity</label>
+          <label htmlFor="audit-entity" className="gov-label !mb-1 !text-[13px]">Entity</label>
           <input
             id="audit-entity"
             type="text"
             value={entityFilter}
             onChange={(e) => setEntityFilter(e.target.value)}
             placeholder="e.g. case:12"
-            className="w-full bg-black/30 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-primary transition-colors"
+            className="gov-input"
           />
         </div>
         <button
           type="submit"
-          className="flex items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary/10 px-4 py-2 text-sm font-medium text-primary transition-colors hover:bg-primary/20"
+          className="gov-btn gov-btn-primary"
         >
-          <Search size={16} /> Filter
+          <Search size={16} aria-hidden="true" /> Apply Filters
         </button>
       </form>
 
       {/* Table */}
-      <div className="glass-panel overflow-hidden">
+      <div className="gov-table-wrap">
         {loading ? (
-          <div className="flex items-center justify-center p-12 text-slate-400">
-            <Loader2 className="animate-spin mr-2" size={20} />
-            Loading audit logs...
+          <div className="flex items-center justify-center p-12 text-[#667085]">
+            <Loader2 className="mr-2 animate-spin" size={20} aria-hidden="true" />
+            Loading audit logs…
           </div>
         ) : logs.length === 0 ? (
-          <div className="text-center p-12 text-slate-500">
+          <div className="p-12 text-center text-[#667085]">
             No audit entries found.
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-left text-sm">
+          <div className="gov-table-scroll">
+            <table className="gov-table min-w-[720px]">
               <thead>
-                <tr className="text-slate-400 border-b border-slate-700/50 bg-black/20">
-                  <th className="px-6 py-3 font-medium">ID</th>
-                  <th className="px-6 py-3 font-medium">Timestamp</th>
-                  <th className="px-6 py-3 font-medium">Actor</th>
-                  <th className="px-6 py-3 font-medium">Action</th>
-                  <th className="px-6 py-3 font-medium">Entity</th>
-                  <th className="px-6 py-3 font-medium">Hash</th>
+                <tr>
+                  <th scope="col">ID</th>
+                  <th scope="col">Timestamp</th>
+                  <th scope="col">Actor</th>
+                  <th scope="col">Action</th>
+                  <th scope="col">Entity</th>
+                  <th scope="col">Hash</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-700/30">
+              <tbody>
                 {logs.map((log) => (
-                  <tr key={log.id} className="text-slate-300 hover:bg-white/5 transition-colors">
-                    <td className="px-6 py-3 font-mono text-xs text-slate-500">{log.id}</td>
-                    <td className="px-6 py-3 text-xs">{log.timestamp ? new Date(log.timestamp).toLocaleString() : '-'}</td>
-                    <td className="px-6 py-3">
-                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${log.actor === 'system' ? 'bg-primary/10 text-primary' : 'bg-slate-800 text-slate-200'}`}>
+                  <tr key={log.id}>
+                    <td className="font-mono text-xs text-[#98A2B3]">{log.id}</td>
+                    <td className="text-xs whitespace-nowrap">{log.timestamp ? new Date(log.timestamp).toLocaleString('en-IN') : '-'}</td>
+                    <td>
+                      <span className={`gov-badge ${log.actor === 'system' ? 'gov-badge-blue' : 'gov-badge-grey'}`}>
                         {log.actor}
                       </span>
                     </td>
-                    <td className="px-6 py-3 font-mono text-xs">{log.action}</td>
-                    <td className="px-6 py-3 font-mono text-xs text-slate-400">{log.entity || '-'}</td>
-                    <td className="px-6 py-3 font-mono text-[10px] text-slate-500" title={`${log.prev_hash} → ${log.entry_hash}`}>{log.entry_hash ? `${String(log.entry_hash).slice(0,8)}…` : '-'}</td>
+                    <td className="font-mono text-xs">{log.action}</td>
+                    <td className="font-mono text-xs text-[#667085]">{log.entity || '-'}</td>
+                    <td className="font-mono text-[11px] text-[#98A2B3]" title={`${log.prev_hash} → ${log.entry_hash}`}>{log.entry_hash ? `${String(log.entry_hash).slice(0, 8)}…` : '-'}</td>
                   </tr>
                 ))}
               </tbody>
@@ -157,8 +159,8 @@ export default function AuditTrail() {
 
         {/* Pagination */}
         {!loading && count > 0 && (
-          <div className="flex flex-col gap-3 border-t border-slate-700/50 bg-black/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-            <span className="text-xs text-slate-500">
+          <div className="flex flex-col gap-3 border-t border-[#D9DEE7] bg-[#F7F8FA] px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+            <span className="text-xs text-[#667085]">
               Showing {offset + 1}–{Math.min(offset + limit, offset + count)} entries
             </span>
             <div className="flex gap-2">
@@ -166,17 +168,17 @@ export default function AuditTrail() {
                 onClick={() => setOffset(Math.max(0, offset - limit))}
                 disabled={offset === 0}
                 aria-label="Previous page"
-                className="p-1.5 rounded text-slate-400 hover:text-white hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                className="gov-icon-btn !h-8 !w-8 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                <ChevronLeft size={16} />
+                <ChevronLeft size={16} aria-hidden="true" />
               </button>
               <button
                 onClick={() => setOffset(offset + limit)}
                 disabled={count < limit}
                 aria-label="Next page"
-                className="p-1.5 rounded text-slate-400 hover:text-white hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                className="gov-icon-btn !h-8 !w-8 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                <ChevronRight size={16} />
+                <ChevronRight size={16} aria-hidden="true" />
               </button>
             </div>
           </div>
