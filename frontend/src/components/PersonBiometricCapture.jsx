@@ -13,20 +13,42 @@ const STATUS_MESSAGES = {
   complete: 'Capture complete',
 };
 
-// Action prompts sequenced across the ~2.1s / 14-frame burst. Any one of
-// these actions certifies liveness server-side — the sequence just makes
-// sure at least one is clearly observed.
+// LITE BURST (free-tier Render): 5 frames ~0.9s as downscaled JPEGs.
+// Full 14-frame PNG bursts (~15-25MB multipart) OOM the 512MB instance and
+// surface as 502 Bad Gateway. 5 JPEGs (~0.5MB) pass reliably; liveness may
+// report partial on minimal motion, but face + registry legs still verify.
+const LITE_BURST_FRAMES = 5;
+const LITE_FRAME_GAP_MS = 180;
+const LITE_MAX_DIM = 640;
+const LITE_JPEG_QUALITY = 0.72;
+
+// Action prompts sequenced across the lite burst. Any one of these actions
+// certifies liveness server-side — the sequence just makes sure at least one
+// is clearly observed.
 const BURST_PROMPTS = [
-  { until: 4, title: 'Look straight at the camera', sub: 'Keep your face inside the oval' },
-  { until: 8, title: 'BLINK NOW — close and open your eyes', sub: 'One slow, clear blink' },
-  { until: 11, title: 'Turn your head slowly left and right', sub: 'Small movement is enough' },
-  { until: 14, title: 'Open your mouth wide', sub: 'Almost done — stay in frame' },
+  { until: 1, title: 'Look straight at the camera', sub: 'Keep your face inside the oval' },
+  { until: 2, title: 'BLINK NOW — close and open your eyes', sub: 'One slow, clear blink' },
+  { until: 4, title: 'Turn your head slowly left and right', sub: 'Small movement is enough' },
+  { until: 5, title: 'Open your mouth wide', sub: 'Almost done — stay in frame' },
 ];
+
+function drawScaled(ctx, video, canvas, maxDim) {
+  const vw = video.videoWidth || 640;
+  const vh = video.videoHeight || 480;
+  const scale = Math.min(1, maxDim / Math.max(vw, vh));
+  canvas.width = Math.max(2, Math.round(vw * scale));
+  canvas.height = Math.max(2, Math.round(vh * scale));
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+}
+
+function frameToJpeg(canvas) {
+  return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), 'image/jpeg', LITE_JPEG_QUALITY));
+}
 
 const FACE_GUIDE_STEPS = [
   { n: '1', title: 'Light + uncover', text: 'Face the light. Remove sunglasses, mask, cap or anything covering the face.' },
   { n: '2', title: 'Frame the face', text: 'Face inside the oval, eyes inside the two circles. Move closer if needed.' },
-  { n: '3', title: 'Follow the actions', text: 'During the 2-second capture: look → BLINK → turn head → open mouth.' },
+  { n: '3', title: 'Follow the actions', text: 'During the ~1-second lite capture: look → BLINK → turn head → open mouth.' },
   { n: '4', title: 'Stay in frame', text: 'Keep still otherwise. Do not hold a photo or another screen to the camera.' },
 ];
 
@@ -119,8 +141,6 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
       return;
     }
     const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
     const ctx = canvas.getContext('2d');
 
     setBursting(true);
@@ -130,15 +150,15 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
       setStatus('capturing');
       // Brief settle so the officer sees the guide before motion starts
       await new Promise((r) => setTimeout(r, 650));
-      const totalFrames = 14; // same ~2.1s window as the legacy face burst
+      const totalFrames = LITE_BURST_FRAMES;
       const frames = [];
       for (let i = 0; i < totalFrames; i++) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        frames.push(new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), 'image/png')));
+        drawScaled(ctx, video, canvas, LITE_MAX_DIM);
+        frames.push(frameToJpeg(canvas));
         setBurstStep(i + 1);
-        if (i < 4) setStatus('faceDetected');
-        else if (i < 8) setStatus('eyesDetected');
-        await new Promise((r) => setTimeout(r, 150));
+        if (i < 1) setStatus('faceDetected');
+        else if (i < 2) setStatus('eyesDetected');
+        await new Promise((r) => setTimeout(r, LITE_FRAME_GAP_MS));
       }
       setStatus('checkingLiveness');
       const blobs = await Promise.all(frames);
@@ -248,9 +268,9 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
                         <p className="animate-pulse text-center text-lg font-bold text-white">{prompt.title}</p>
                         <p className="mt-1 text-xs text-white/75">{prompt.sub}</p>
                         <div className="mt-3 h-1.5 w-3/4 overflow-hidden rounded-full bg-white/25">
-                          <div className="h-full rounded-full bg-white transition-all" style={{ width: `${Math.min(100, (burstStep / 14) * 100)}%` }} />
+                          <div className="h-full rounded-full bg-white transition-all" style={{ width: `${Math.min(100, (burstStep / LITE_BURST_FRAMES) * 100)}%` }} />
                         </div>
-                        <p className="mt-1 text-[11px] text-white/70">Step {Math.min(burstStep, 14)} of 14</p>
+                        <p className="mt-1 text-[11px] text-white/70">Step {Math.min(burstStep, LITE_BURST_FRAMES)} of {LITE_BURST_FRAMES} · lite upload for free-tier backend</p>
                       </>
                     );
                   })()}

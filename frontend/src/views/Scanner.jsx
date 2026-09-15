@@ -120,13 +120,20 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
       return;
     }
 
+    // Lite document: downscale to max 1280px JPEG (~300-600KB) instead of
+    // full-res PNG (~3MB). Avoids 502s on the 512MB free-tier backend.
+    const vw = video.videoWidth || 1280;
+    const vh = video.videoHeight || 720;
+    const scale = Math.min(1, 1280 / Math.max(vw, vh));
+    canvas.width = Math.max(2, Math.round(vw * scale));
+    canvas.height = Math.max(2, Math.round(vh * scale));
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     canvas.toBlob((blob) => {
       if (!blob) return;
-      const captured = new File([blob], `${subject === 'document' ? 'document_capture' : 'live_capture'}.png`, { type: 'image/png' });
+      const captured = new File([blob], `${subject === 'document' ? 'document_capture' : 'live_capture'}.jpg`, { type: 'image/jpeg' });
       onCapture(captured);
       stopStream();
-    }, 'image/png');
+    }, 'image/jpeg', 0.85);
   };
 
   return (
@@ -274,12 +281,15 @@ export default function Scanner() {
       // camera or separate iris upload is needed.
       const burst = Array.isArray(personCapture.burst) ? personCapture.burst : [];
       const primary = personCapture.primaryFrame || burst[Math.floor(burst.length / 2)] || burst[0];
+      const primaryType = primary?.type || 'image/jpeg';
+      const primaryExt = primaryType.includes('png') ? 'png' : 'jpg';
       if (primary) {
-        formData.append('live_capture', new File([primary], 'live_capture.png', { type: 'image/png' }));
+        formData.append('live_capture', new File([primary], `live_capture.${primaryExt}`, { type: primaryType }));
       }
-      burst.forEach((b, i) =>
-        formData.append('live_frames', new File([b], `live_frame_${i}.png`, { type: 'image/png' }))
-      );
+      burst.forEach((b, i) => {
+        const t = b?.type || 'image/jpeg';
+        formData.append('live_frames', new File([b], `live_frame_${i}.${t.includes('png') ? 'png' : 'jpg'}`, { type: t }));
+      });
       formData.append('iris_eye', personCapture.eyeHint || 'auto');
     }
 
