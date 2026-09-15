@@ -281,6 +281,7 @@ _CORS_DEFAULTS = [
     "https://sih-weld-psi.vercel.app",
     "https://netraksha.xyz",
     "https://www.netraksha.xyz",
+    "https://api.netraksha.xyz",
 ]
 _CORS_EXTRA = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
 app.add_middleware(
@@ -289,6 +290,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 

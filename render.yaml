@@ -45,7 +45,7 @@ services:
       - key: CORS_ORIGINS
         # Append your Vercel URL here when using split deploy, e.g.
         # https://netraksha.xyz,https://www.netraksha.xyz,https://<app>.vercel.app
-        value: https://netraksha.xyz,https://www.netraksha.xyz
+        value: https://netraksha.xyz,https://www.netraksha.xyz,https://sih-weld-psi.vercel.app
       - key: SCREEN_EVIDENCE_DIR
         value: /tmp/evidence # ephemeral on free tier (no persistent disk)
       - key: VITE_SITE_URL
