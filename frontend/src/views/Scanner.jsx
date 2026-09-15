@@ -1,11 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Camera, Loader2, Scan, RefreshCw, X, Video, Image as ImageIcon } from 'lucide-react';
+import { Camera, Loader2, ScanLine, RefreshCw, X, Video, Image as ImageIcon, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import api from '../api';
 import SEO from '../components/SEO';
 import Breadcrumbs from '../components/Breadcrumbs';
+import { PageHeader, WorkflowSteps, GovNotice } from '../components/ui';
 
-function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear, onAllowBurst }) {
+function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear, onAllowBurst, stepNo }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const [previewing, setPreviewing] = useState(false);
@@ -129,33 +130,39 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
   };
 
   return (
-    <div className="flex-1 min-w-0">
-      <label className="block text-sm font-medium text-slate-300 mb-2">{label}</label>
-      <div className={`flex min-h-[260px] flex-col rounded-xl border-2 border-dashed p-4 text-center transition-all sm:min-h-[280px] sm:p-5 ${file ? 'border-success/50 bg-success/5' : 'border-slate-700 hover:border-primary/50'}`}>
+    <div className="flex min-w-0 flex-1 flex-col">
+      <p className="mb-2 flex items-center gap-2 text-sm font-semibold text-[#172033]">
+        <span className="gov-step-dot gov-step-current" aria-hidden="true">{stepNo}</span>
+        {label}
+      </p>
+      <div className={`flex min-h-[260px] flex-col rounded-lg border-2 border-dashed bg-white p-4 text-center sm:min-h-[280px] sm:p-5 ${file ? 'border-[#16803C] bg-[#EAF6EE]/40' : 'border-[#BEC6D5] hover:border-[#1769AA]'}`}>
         {file ? (
-          <div className="flex flex-col items-center justify-center flex-1">
+          <div className="flex flex-1 flex-col items-center justify-center">
             {previewUrl && (
               <img
                 src={previewUrl}
                 alt={subject === 'document' ? 'Captured identity document preview' : 'Captured live face preview'}
-                className="mb-3 max-h-[180px] max-w-full rounded-lg border border-slate-700/50 object-contain"
+                className="mb-3 max-h-[180px] max-w-full rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] object-contain"
               />
             )}
-            <p className="max-w-full truncate text-sm font-medium text-slate-200 sm:max-w-[260px]">{file.name}</p>
-            <p className="text-xs text-slate-500 mt-1">{(file.size / 1024).toFixed(1)} KB</p>
-            <div className="mt-4 flex w-full flex-col gap-3 sm:w-auto sm:flex-row">
+            <p className="flex items-center gap-1.5 text-sm font-semibold text-[#16803C]">
+              <CheckCircle2 size={15} aria-hidden="true" /> Captured
+            </p>
+            <p className="mt-1 max-w-full truncate text-sm font-medium text-[#172033] sm:max-w-[260px]">{file.name}</p>
+            <p className="mt-1 text-xs text-[#98A2B3]">{(file.size / 1024).toFixed(1)} KB</p>
+            <div className="mt-4 flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
               <button
                 onClick={() => { stopStream(); onClear(); }}
-                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-400 transition-all hover:bg-slate-700 hover:text-white"
+                className="gov-btn gov-btn-secondary !min-h-[36px] !px-3 !py-2 !text-[13px]"
               >
-                <X size={14} />
+                <X size={14} aria-hidden="true" />
                 Clear
               </button>
               <button
                 onClick={startCamera}
-                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-xs font-medium text-primary transition-all hover:bg-primary/20"
+                className="gov-btn gov-btn-secondary !min-h-[36px] !px-3 !py-2 !text-[13px]"
               >
-                <RefreshCw size={14} />
+                <RefreshCw size={14} aria-hidden="true" />
                 Retake
               </button>
             </div>
@@ -169,49 +176,49 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
               playsInline
               muted
               onLoadedMetadata={() => setVideoReady(true)}
-              className="h-[180px] w-full rounded-lg border border-slate-700/50 bg-black object-contain sm:h-[220px] md:h-[180px]"
+              className="h-[180px] w-full rounded-lg border border-[#D9DEE7] bg-[#172033] object-contain sm:h-[220px] md:h-[180px]"
             />
             {bursting && (
-              <div className="absolute inset-0 rounded-lg bg-black/70 flex flex-col items-center justify-center">
-                <p className="text-white font-bold text-lg animate-pulse">Follow the prompt — Blink / Turn Head / Open Mouth</p>
-                <p className="text-slate-300 text-xs mt-1">Active liveness challenge — capturing face motion…</p>
+              <div className="absolute inset-0 flex flex-col items-center justify-center rounded-lg bg-[#172033]/80">
+                <p className="px-4 text-center font-bold text-white">Follow the prompt — Blink / Turn Head / Open Mouth</p>
+                <p className="mt-1 text-xs text-white/75">Active liveness challenge — capturing face motion…</p>
               </div>
             )}
           </div>
-            <p className="text-xs text-slate-400 mt-2">{hint}</p>
-            {error && <p className="text-xs text-danger mt-2">{error}</p>}
-            <div className="mt-3 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
+            <p className="mt-2 text-xs text-[#667085]">{hint}</p>
+            {error && <p className="mt-2 text-xs font-medium text-[#C62828]" role="alert">{error}</p>}
+            <div className="mt-3 flex flex-col items-stretch justify-center gap-2 sm:flex-row sm:items-center">
               <button
                 onClick={stopStream}
-                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-400 transition-all hover:bg-slate-700 hover:text-white"
+                className="gov-btn gov-btn-secondary !min-h-[36px] !px-3 !py-2 !text-[13px]"
               >
-                <X size={14} />
+                <X size={14} aria-hidden="true" />
                 Cancel
               </button>
               <button
                 onClick={capturePhoto}
                 disabled={!videoReady || bursting}
-                className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-gradient-to-r from-primary to-accent px-4 py-2 text-xs font-medium text-white transition-all hover:from-primary/90 hover:to-accent/90 disabled:cursor-not-allowed disabled:opacity-50"
+                className="gov-btn gov-btn-primary !min-h-[36px] !px-4 !py-2 !text-[13px]"
               >
-                {bursting ? <Loader2 size={14} className="animate-spin" /> : <Camera size={14} />}
+                {bursting ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Camera size={14} aria-hidden="true" />}
                 {bursting ? 'Capturing…' : 'Capture Photo'}
               </button>
             </div>
           </>
         ) : (
-          <button onClick={startCamera} disabled={starting} className="flex-1 flex flex-col items-center justify-center group cursor-pointer disabled:opacity-60">
+          <button onClick={startCamera} disabled={starting} className="group flex flex-1 cursor-pointer flex-col items-center justify-center disabled:opacity-60">
             {starting ? (
-              <Loader2 size={32} className="animate-spin text-slate-400 mb-3" />
+              <Loader2 size={30} className="mb-3 animate-spin text-[#98A2B3]" aria-hidden="true" />
             ) : (
-              <div className="bg-slate-800 p-3 rounded-full text-slate-400 group-hover:text-primary group-hover:bg-primary/10 transition-all mb-3">
-                {subject === 'document' ? <ImageIcon size={32} /> : <Video size={32} />}
+              <div className="mb-3 rounded-full border border-[#D9DEE7] bg-[#F1F4F9] p-3 text-[#667085] transition-colors group-hover:border-[#1769AA] group-hover:text-[#1769AA]" aria-hidden="true">
+                {subject === 'document' ? <ImageIcon size={28} /> : <Video size={28} />}
               </div>
             )}
-            <p className="text-sm text-slate-300 font-medium group-hover:text-white transition-colors">
-              {starting ? 'Opening webcam...' : `Click to open webcam`}
+            <p className="text-sm font-semibold text-[#172033]">
+              {starting ? 'Opening webcam…' : 'Click to open webcam'}
             </p>
-            <p className="text-xs text-slate-500 mt-1">{hint}</p>
-            {error && <p className="text-xs text-danger mt-2">{error}</p>}
+            <p className="mt-1 text-xs text-[#667085]">{hint}</p>
+            {error && <p className="mt-2 text-xs font-medium text-[#C62828]" role="alert">{error}</p>}
           </button>
         )}
       </div>
@@ -334,35 +341,52 @@ export default function Scanner() {
     }
   };
 
+  const ready = Boolean(docFile);
+
   return (
-    <div className="mx-auto max-w-4xl space-y-6 animate-fade-in">
+    <div className="mx-auto max-w-5xl animate-fade-in space-y-5">
       <SEO
         title="Kiosk Scanner"
         description="Capture an identity document and the traveler’s live face to run the full forensic screening pipeline and receive a composite risk verdict."
         path="/scan"
       />
-      <Breadcrumbs items={[{ label: 'Home', to: '/' }, { label: 'Kiosk Scanner' }]} />
-      <header>
-        <h1 className="text-2xl font-bold text-white">Kiosk Simulator</h1>
-        <p className="text-slate-400 text-sm mt-1">Capture the identity document, then capture the traveler once — one person capture feeds face, liveness and iris.</p>
-      </header>
+      <Breadcrumbs items={[{ label: 'Overview', to: '/' }, { label: 'New Verification' }]} />
+      <PageHeader
+        title="New Verification"
+        subtitle="Capture the identity document, then capture the traveler once — one person capture feeds face, liveness and iris."
+      />
+
+      <section aria-label="Verification workflow" className="gov-card-padded">
+        <h2 className="gov-card-title">Verification Workflow</h2>
+        <p className="gov-meta mt-0.5">Stages run automatically after you initiate screening. Technical evidence appears in the case report.</p>
+        <div className="mt-4">
+          <WorkflowSteps activeIndex={scanning ? 4 : 0} />
+        </div>
+      </section>
 
       {error && (
-        <div className="p-4 bg-danger/10 border border-danger/50 text-danger rounded-lg">
+        <GovNotice tone="red" icon={<AlertTriangle size={18} aria-hidden="true" />} title="Screening could not be completed">
           {error}
-        </div>
+        </GovNotice>
       )}
 
-      <div className="glass-panel p-4 sm:p-6">
-        <div className="flex gap-6 mb-8 flex-col md:flex-row">
+      <section aria-label="Evidence capture" className="gov-card-padded">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-[#D9DEE7] pb-3">
+          <h2 className="gov-card-title">1 · Evidence Capture</h2>
+          <span className={`gov-badge ${ready ? 'gov-badge-green' : 'gov-badge-grey'}`}>
+            {ready ? 'Document ready' : 'Awaiting document'}
+          </span>
+        </div>
+        <div className="mb-6 flex flex-col gap-6 md:flex-row">
           <WebcamCapture
-            label="1. Document Image (Required)"
+            label="Document Image (Required)"
             hint="Position the identity document inside the frame"
             facing="environment"
             subject="document"
             file={docFile}
             onCapture={setDocFile}
             onClear={() => setDocFile(null)}
+            stepNo="1"
           />
           <PersonBiometricCapture
             file={personCapture}
@@ -372,26 +396,29 @@ export default function Scanner() {
           />
         </div>
 
-        <div className="flex justify-stretch border-t border-slate-700/50 pt-4 sm:justify-end">
+        <div className="flex flex-col gap-3 border-t border-[#D9DEE7] pt-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-[#667085]">
+            Screening runs document validation → OCR/MRZ → registry check → vision analysis → face match → demographics → risk engine.
+          </p>
           <button
             onClick={handleScan}
             disabled={scanning || !docFile}
-            className="flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-primary to-accent px-6 py-3 font-medium text-white shadow-lg shadow-primary/25 transition-all hover:from-primary/90 hover:to-accent/90 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:px-8"
+            className="gov-btn gov-btn-primary w-full sm:w-auto sm:min-w-[220px]"
           >
             {scanning ? (
               <>
-                <Loader2 size={20} className="animate-spin" />
-                Processing...
+                <Loader2 size={18} className="animate-spin" aria-hidden="true" />
+                Processing…
               </>
             ) : (
               <>
-                <Scan size={20} />
+                <ScanLine size={18} aria-hidden="true" />
                 Initiate Screening
               </>
             )}
           </button>
         </div>
-      </div>
+      </section>
     </div>
   );
 }
