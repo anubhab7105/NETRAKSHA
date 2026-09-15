@@ -380,6 +380,17 @@ async def startup():
     except Exception as e:
         print(f"[startup] Orphan check warning: {e}")
 
+    # Registry photo backend: log which photo_uri forms will resolve (no secrets).
+    try:
+        _photo_backend = _registry_photo_backend_status()
+        print(f"[startup] Registry photos: mode={_photo_backend['mode']} bucket={_photo_backend['bucket']} "
+              f"configured={_photo_backend['configured']} private_reads={_photo_backend['private_reads']}")
+        if not _photo_backend["configured"]:
+            print("[startup] WARNING: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY not set — "
+                  "Storage refs like 'img/<object>' will NOT resolve; only local paths + public http(s) URLs work.")
+    except Exception as e:
+        print(f"[startup] Registry photo backend check warning: {e}")
+
     # Background prewarm of the local InsightFace engine (non-blocking):
     # a first-use ~300MB buffalo_l download happens here — loudly — instead
     # of timing out somebody's first screening with silent N/A face legs.
@@ -3027,9 +3038,99 @@ def _citizen_identity_clause(doc_type: str, norm_number: str):
     )
 
 
-# Registry reference photos: server-local paths AND remote URLs.
+# Registry reference photos: server-local paths, Supabase Storage object
+# refs (`img/<object>`, `img://<object>`, bare image filenames when a
+# Supabase backend is configured), AND remote http(s) URLs.
+#
+# Production layout: `citizens_registry.photo_uri` stores the STORAGE PATH
+# (e.g. `img/aadhaar_2345.png`), never an expiring signed URL. The backend
+# resolves it server-side with SUPABASE_SERVICE_ROLE_KEY (never exposed to
+# the browser) via the Storage REST API: short-lived signed URL first,
+# authenticated object GET as fallback. Public buckets also work with only
+# SUPABASE_URL set. See .env.example.
 _REGISTRY_PHOTO_MAX_BYTES = 5_000_000
 _REGISTRY_PHOTO_TIMEOUT_S = 8.0
+_REGISTRY_PHOTO_IMAGE_EXTS = ("jpg", "jpeg", "png", "webp", "bmp")
+
+
+def _supabase_photo_config() -> dict:
+    """Lazy Supabase Storage config for registry photos (no secrets logged).
+
+    Env:
+      SUPABASE_URL — e.g. https://<ref>.supabase.co (required to enable)
+      SUPABASE_SERVICE_ROLE_KEY — server-only, private-bucket reads (preferred)
+      SUPABASE_ANON_KEY — fallback for public buckets
+      SUPABASE_PHOTOS_BUCKET — default bucket (default "img")
+      SUPABASE_PHOTO_SIGNED_TTL — signed-URL TTL seconds (default 60)
+    """
+    base = (os.environ.get("SUPABASE_URL", "") or "").strip().rstrip("/")
+    service = (os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "") or "").strip()
+    anon = (os.environ.get("SUPABASE_ANON_KEY", "") or "").strip()
+    bucket = (os.environ.get("SUPABASE_PHOTOS_BUCKET", "") or "img").strip().strip("/") or "img"
+    try:
+        ttl = int(os.environ.get("SUPABASE_PHOTO_SIGNED_TTL", "60") or "60")
+    except ValueError:
+        ttl = 60
+    ttl = max(15, min(ttl, 600))
+    return {
+        "base": base,
+        "service_key": service,
+        "anon_key": anon,
+        "bucket": bucket,
+        "ttl": ttl,
+        "configured": bool(base and (service or anon)),
+        "private_ok": bool(base and service),
+    }
+
+
+def _parse_storage_ref(photo_uri: str, default_bucket: str) -> Optional[tuple]:
+    """Parse a Supabase Storage object ref into (bucket, object_path).
+
+    Accepted prod forms (all stored WITHOUT host or token):
+      * "img/photo.jpg" / "img/folder/photo.png" (bucket/object)
+      * "img://photo.jpg" / "img://folder/photo.png"
+      * "supabase://img/photo.jpg" / "storage://img/photo.jpg"
+      * "photo.jpg" (bare image filename → default bucket; only when the
+        value is a single path component, so local paths like
+        "samples/faces/x.png" never match)
+    Returns None for http(s) URLs, local paths, and anything unsafe.
+    """
+    if not isinstance(photo_uri, str):
+        return None
+    uri = photo_uri.strip()
+    if not uri or len(uri) > 512:
+        return None
+    lowered = uri.lower()
+    if lowered.startswith("http://") or lowered.startswith("https://"):
+        return None
+    # Windows absolute paths and explicit relative/local markers are local.
+    if "\\" in uri or uri.startswith(("/", "./", "../")):
+        return None
+    for prefix in ("supabase://", "storage://", "bucket://"):
+        if lowered.startswith(prefix):
+            uri = uri[len(prefix):]
+            lowered = uri.lower()
+            break
+    if lowered.startswith("img://"):
+        obj = uri[6:].strip().lstrip("/")
+        bucket = "img"
+    elif lowered.startswith(f"{(default_bucket or 'img').lower()}/"):
+        bucket = (default_bucket or "img").strip().strip("/") or "img"
+        obj = uri[len(bucket) + 1:].strip().lstrip("/")
+    elif "/" not in uri and "." in uri:
+        ext = uri.rsplit(".", 1)[-1].lower()[:5]
+        if ext not in _REGISTRY_PHOTO_IMAGE_EXTS:
+            return None
+        bucket = (default_bucket or "img").strip().strip("/") or "img"
+        obj = uri
+    else:
+        return None
+    if not obj or ".." in obj.split("/") or obj.startswith("/") or "\\" in obj:
+        return None
+    obj = "/".join(s for s in obj.split("/") if s not in ("", "."))
+    if not obj or len(obj) > 400:
+        return None
+    return bucket, obj
 
 
 def _registry_photo_cache_dir() -> Path:
@@ -3062,66 +3163,261 @@ def _looks_like_image(data: bytes) -> bool:
     return data.startswith(b"RIFF") and len(data) >= 12 and data[8:12] == b"WEBP"
 
 
+def _supabase_auth_headers(cfg: dict) -> dict:
+    """Auth headers for Supabase Storage REST calls (never logged)."""
+    key = cfg.get("service_key") or cfg.get("anon_key") or ""
+    if not key:
+        return {}
+    return {"apikey": key, "Authorization": f"Bearer {key}"}
+
+
+def _http_get_bytes(url: str, headers: Optional[dict] = None) -> tuple:
+    """GET a URL with size + Content-Type + magic-byte validation.
+
+    Returns (data, error_reason). Never raises. Shared by direct URL and
+    Supabase signed-URL downloads so both paths enforce the same guardrails.
+    """
+    import urllib.request
+
+    try:
+        base_headers = {"User-Agent": "NetrakshaScreening/1.0"}
+        if headers:
+            base_headers.update(headers)
+        req = urllib.request.Request(url, headers=base_headers)
+        with urllib.request.urlopen(req, timeout=_REGISTRY_PHOTO_TIMEOUT_S) as resp:
+            ctype = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if ctype and ctype != "application/octet-stream" and not ctype.startswith("image/"):
+                return None, f"unexpected Content-Type {ctype!r}"
+            data = resp.read(_REGISTRY_PHOTO_MAX_BYTES + 1)
+        if not data:
+            return None, "empty body"
+        if len(data) > _REGISTRY_PHOTO_MAX_BYTES:
+            return None, "oversize (>5MB)"
+        if not _looks_like_image(data):
+            return None, "non-image magic bytes"
+        return data, None
+    except Exception as exc:  # noqa: BLE001
+        return None, f"{type(exc).__name__}"
+
+
+def _cache_photo_bytes(data: bytes, citizen_id, cache_key: str, ext: str):
+    """Atomically write validated image bytes to the disk cache."""
+    ext = (ext or "").lower()[:5]
+    if ext not in _REGISTRY_PHOTO_IMAGE_EXTS:
+        ext = "jpg"
+    cache_dir = _registry_photo_cache_dir()
+    cached = cache_dir / f"citizen_{citizen_id}_{cache_key}.{ext}"
+    if cached.is_file() and cached.stat().st_size > 0:
+        # Callers check the cache first; this covers races.
+        return str(cached)
+    tmp = cache_dir / f".tmp_{cache_key}.{ext}"
+    try:
+        tmp.write_bytes(data)
+        os.replace(tmp, cached)
+    finally:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+    return str(cached)
+
+
+def _fetch_supabase_object(bucket: str, object_path: str, citizen_id=None):
+    """Download one private/public Storage object via the REST API.
+
+    Order: short-lived signed URL (works for private buckets with the
+    service_role key) → authenticated object GET (works for public buckets
+    and private buckets when RLS/service key allows). Returns
+    (local_path, None) or (None, "registry_photo_download_failed").
+    Never raises, never logs key material.
+    """
+    import json as _json
+    import urllib.parse as _parse
+    import urllib.request as _request
+
+    cfg = _supabase_photo_config()
+    if not cfg["configured"]:
+        print("[registry_photo] storage ref needs SUPABASE_URL + key — set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY")
+        return None, "registry_photo_download_failed"
+    quoted = _parse.quote(object_path, safe="/")
+    ext = (object_path.rsplit(".", 1)[-1] if "." in object_path else "").lower()[:5]
+    cache_key = "sb_" + hashlib.sha256(f"{citizen_id}:{bucket}:{object_path}".encode()).hexdigest()[:24]
+    cached = _registry_photo_cache_dir() / f"citizen_{citizen_id}_{cache_key}.{ext if ext in _REGISTRY_PHOTO_IMAGE_EXTS else 'jpg'}"
+    if cached.is_file() and cached.stat().st_size > 0:
+        return str(cached), None
+
+    # 1) Signed URL (private-bucket path; needs service_role).
+    if cfg["private_ok"]:
+        try:
+            sign_url = f"{cfg['base']}/storage/v1/object/sign/{bucket}/{quoted}"
+            body = _json.dumps({"expiresIn": cfg["ttl"]}).encode()
+            req = _request.Request(
+                sign_url, data=body, method="POST",
+                headers={**_supabase_auth_headers(cfg), "Content-Type": "application/json",
+                         "User-Agent": "NetrakshaScreening/1.0"},
+            )
+            with _request.urlopen(req, timeout=_REGISTRY_PHOTO_TIMEOUT_S) as resp:
+                payload = _json.loads(resp.read(8192).decode("utf-8", "replace"))
+            signed = (payload or {}).get("signedURL") or (payload or {}).get("signedUrl") or ""
+            if signed:
+                full = signed if signed.startswith("http") else f"{cfg['base']}/storage/v1{signed}"
+                data, err = _http_get_bytes(full)
+                if data:
+                    return _cache_photo_bytes(data, citizen_id, cache_key, ext), None
+                print(f"[registry_photo] citizen {citizen_id}: signed-URL fetch failed ({err})")
+        except Exception as exc:  # noqa: BLE001 — fall through to object GET
+            print(f"[registry_photo] citizen {citizen_id}: sign request failed ({type(exc).__name__})")
+
+    # 2) Direct object GET (public buckets; private with adequate key).
+    try:
+        obj_url = f"{cfg['base']}/storage/v1/object/{bucket}/{quoted}"
+        data, err = _http_get_bytes(obj_url, _supabase_auth_headers(cfg) or None)
+        if data:
+            return _cache_photo_bytes(data, citizen_id, cache_key, ext), None
+        print(f"[registry_photo] citizen {citizen_id}: storage GET failed ({err}) — partial comparison")
+        return None, "registry_photo_download_failed"
+    except Exception as exc:  # noqa: BLE001
+        print(f"[registry_photo] citizen {citizen_id}: storage download failed ({type(exc).__name__}) — partial comparison")
+        return None, "registry_photo_download_failed"
+
+
+def _upload_to_supabase_bucket(bucket: str, object_path: str, data: bytes, content_type: str) -> bool:
+    """Upload enrollment bytes to Supabase Storage (server-side, never raises).
+
+    Uses POST /storage/v1/object/{bucket}/{object} with x-upsert:true so
+    re-approvals overwrite deterministically. Requires SUPABASE_URL +
+    SERVICE_ROLE_KEY (private bucket writes). Returns True on 2xx.
+    """
+    import urllib.request as _request
+
+    try:
+        cfg = _supabase_photo_config()
+        if not cfg["private_ok"]:
+            return False
+        if not data or len(data) > _REGISTRY_PHOTO_MAX_BYTES or not _looks_like_image(data):
+            return False
+        import urllib.parse as _parse
+
+        quoted = _parse.quote(object_path, safe="/")
+        url = f"{cfg['base']}/storage/v1/object/{bucket}/{quoted}"
+        req = _request.Request(
+            url, data=data, method="POST",
+            headers={**_supabase_auth_headers(cfg),
+                     "Content-Type": content_type or "image/jpeg",
+                     "x-upsert": "true",
+                     "User-Agent": "NetrakshaScreening/1.0"},
+        )
+        with _request.urlopen(req, timeout=_REGISTRY_PHOTO_TIMEOUT_S) as resp:
+            code = getattr(resp, "status", 200) or 200
+            return 200 <= int(code) < 300
+    except Exception as exc:  # noqa: BLE001 — approval must never block on storage
+        print(f"[registry_photo] upload failed ({type(exc).__name__}) — keeping local staged path")
+        return False
+
+
+def _storage_object_for_enrollment(doc_type: str, doc_number: str, photo_hash: str, suffix: str) -> str:
+    """Deterministic Storage object key for an approved enrollment."""
+    try:
+        safe_num = _normalize_doc_number(doc_number or "unknown") or "unknown"
+    except Exception:
+        safe_num = "".join(c for c in (doc_number or "unknown").upper() if c.isalnum()) or "unknown"
+    safe_type = "".join(c for c in (doc_type or "id").lower() if c.isalnum() or c == "_") or "id"
+    short = (photo_hash or "nohash")[:10]
+    ext = (suffix or ".jpg").lower()
+    if ext not in (".jpg", ".jpeg", ".png", ".webp"):
+        ext = ".jpg"
+    return f"{safe_type}_{safe_num}_{short}{ext}"
+
+
 def _resolve_db_photo(photo_uri, citizen_id=None):
     """Resolve a citizen `photo_uri` to a local file path for face comparison.
 
-    Handles server-local paths (`samples/faces/x.png`, absolute paths) AND
-    `http(s)` URLs (Supabase Storage signed URLs): remote photos are
-    downloaded once into a disk cache and reused. Runs synchronously —
-    callers must use `run_in_executor` so the event loop never blocks.
+    Handles, in order:
+      1. `http(s)` URLs — direct/signed URLs (Supabase hosts get the
+         configured apikey attached when available). Downloaded once into
+         a disk cache and reused.
+      2. Supabase Storage refs — `img/<object>`, `img://<object>`, or a
+         bare image filename (resolved into SUPABASE_PHOTOS_BUCKET).
+         Requires SUPABASE_URL + key (see `_supabase_photo_config`).
+      3. Server-local paths (`samples/faces/x.png`, absolute paths).
 
-    Returns `(path, reason)`; never raises. `path` is None when unusable:
+    Runs synchronously — callers must use `run_in_executor` so the event
+    loop never blocks. Returns `(path, reason)`; never raises:
       * `no_registry_photo` — no URI enrolled on the citizen row
       * `registry_photo_missing_on_server` — local path does not exist
-      * `registry_photo_download_failed` — URL fetch failed / non-image /
-        oversize (failures degrade to partial comparison, never halt)
+        (or storage ref supplied without Supabase configured)
+      * `registry_photo_download_failed` — fetch failed / non-image /
+        oversize (degrades to partial comparison, never halts)
     """
     uri = photo_uri.strip() if isinstance(photo_uri, str) else ""
     if not uri:
         return None, "no_registry_photo"
     lowered = uri.lower()
-    if not (lowered.startswith("http://") or lowered.startswith("https://")):
-        p = Path(uri)
-        if not p.is_absolute():
-            p = _PROJECT_ROOT / p
-        if p.is_file():
-            return str(p), None
-        return None, "registry_photo_missing_on_server"
-    try:
-        key = hashlib.sha256(f"{citizen_id}:{uri}".encode()).hexdigest()[:24]
-        stem = uri.split("?", 1)[0].rsplit(".", 1)
-        ext = (stem[1] if len(stem) == 2 else "").lower()[:5]
-        if ext not in ("jpg", "jpeg", "png", "webp", "bmp"):
-            ext = "jpg"
-        cache_dir = _registry_photo_cache_dir()
-        cached = cache_dir / f"citizen_{citizen_id}_{key}.{ext}"
-        if cached.is_file() and cached.stat().st_size > 0:
-            return str(cached), None
-        import urllib.request
 
-        req = urllib.request.Request(uri, headers={"User-Agent": "NetrakshaScreening/1.0"})
-        with urllib.request.urlopen(req, timeout=_REGISTRY_PHOTO_TIMEOUT_S) as resp:
-            ctype = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-            if ctype and ctype != "application/octet-stream" and not ctype.startswith("image/"):
-                print(f"[registry_photo] citizen {citizen_id}: unexpected Content-Type {ctype!r} — skipping")
-                return None, "registry_photo_download_failed"
-            data = resp.read(_REGISTRY_PHOTO_MAX_BYTES + 1)
-        if not data or len(data) > _REGISTRY_PHOTO_MAX_BYTES or not _looks_like_image(data):
-            print(f"[registry_photo] citizen {citizen_id}: download rejected (empty/oversize/non-image) — skipping")
-            return None, "registry_photo_download_failed"
-        tmp = cache_dir / f".tmp_{key}.{ext}"
+    # --- 1) Remote URL -------------------------------------------------
+    if lowered.startswith("http://") or lowered.startswith("https://"):
         try:
-            tmp.write_bytes(data)
-            os.replace(tmp, cached)
-        finally:
+            import urllib.parse as _parse
+
+            cfg = _supabase_photo_config()
+            extra = None
             try:
-                tmp.unlink(missing_ok=True)
+                host = (_parse.urlparse(uri).netloc or "").lower()
+                base_host = (_parse.urlparse(cfg["base"]).netloc or "").lower() if cfg["base"] else ""
+                if cfg["configured"] and base_host and host == base_host:
+                    extra = _supabase_auth_headers(cfg) or None
             except Exception:
-                pass
-        return str(cached), None
-    except Exception as exc:  # noqa: BLE001 — degraded, never fatal
-        print(f"[registry_photo] citizen {citizen_id}: download failed ({type(exc).__name__}) — partial comparison")
+                extra = None
+            key = hashlib.sha256(f"{citizen_id}:{uri}".encode()).hexdigest()[:24]
+            stem = uri.split("?", 1)[0].rsplit(".", 1)
+            ext = (stem[1] if len(stem) == 2 else "").lower()[:5]
+            if ext not in _REGISTRY_PHOTO_IMAGE_EXTS:
+                ext = "jpg"
+            cached = _registry_photo_cache_dir() / f"citizen_{citizen_id}_{key}.{ext}"
+            if cached.is_file() and cached.stat().st_size > 0:
+                return str(cached), None
+            data, err = _http_get_bytes(uri, extra)
+            if not data:
+                print(f"[registry_photo] citizen {citizen_id}: download rejected ({err}) — skipping")
+                return None, "registry_photo_download_failed"
+            return _cache_photo_bytes(data, citizen_id, key, ext), None
+        except Exception as exc:  # noqa: BLE001 — degraded, never fatal
+            print(f"[registry_photo] citizen {citizen_id}: download failed ({type(exc).__name__}) — partial comparison")
+            return None, "registry_photo_download_failed"
+
+    # --- 2) Supabase Storage object ref (prod bucket layout) ------------
+    try:
+        cfg = _supabase_photo_config()
+        ref = _parse_storage_ref(uri, cfg.get("bucket") or "img")
+        if ref is not None:
+            bucket, object_path = ref
+            if not cfg["configured"]:
+                print("[registry_photo] storage ref without SUPABASE_URL/keys — cannot fetch; "
+                      "set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY on the backend")
+                return None, "registry_photo_missing_on_server"
+            return _fetch_supabase_object(bucket, object_path, citizen_id)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[registry_photo] citizen {citizen_id}: storage resolve failed ({type(exc).__name__})")
         return None, "registry_photo_download_failed"
+
+    # --- 3) Server-local path (dev seeds, migrated absolute paths) -----
+    p = Path(uri)
+    if not p.is_absolute():
+        p = _PROJECT_ROOT / p
+    if p.is_file():
+        return str(p), None
+    return None, "registry_photo_missing_on_server"
+
+
+def _registry_photo_backend_status() -> dict:
+    """Non-secret photo-backend summary for /api/health and startup logs."""
+    cfg = _supabase_photo_config()
+    if cfg["configured"]:
+        mode = "supabase_storage+http+local" if cfg["private_ok"] else "supabase_public+http+local"
+    else:
+        mode = "http+local (set SUPABASE_URL + keys for private bucket refs)"
+    return {"mode": mode, "bucket": cfg["bucket"], "configured": cfg["configured"],
+            "private_reads": cfg["private_ok"]}
 
 
 async def _find_citizen_by_number(doc_type: str, doc_number: str):
@@ -3627,6 +3923,29 @@ async def approve_enrollment(enrollment_id: int, request: Request):
             if req.photo_hash and actual_hash != req.photo_hash:
                 raise HTTPException(status_code=400, detail="Staged photo integrity mismatch (hash changed) — possible tampering; request a fresh enrollment")
 
+            # Production persistence: Render disks are ephemeral, so mirror the
+            # staged face to Supabase Storage when configured and point the
+            # live row at the storage ref (e.g. "img/aadhaar_X_<hash>.jpg").
+            # Dev fallback (no Supabase): keep the local staged path.
+            final_photo_uri = req.photo_uri
+            try:
+                _photo_cfg = _supabase_photo_config()
+                if _photo_cfg["private_ok"]:
+                    _staged_bytes = staged.read_bytes()
+                    _suffix = staged.suffix.lower() or ".jpg"
+                    _obj = _storage_object_for_enrollment(
+                        req.document_type or "id", req.document_number or "unknown",
+                        req.photo_hash or actual_hash, _suffix)
+                    _ctype = {".png": "image/png", ".webp": "image/webp"}.get(
+                        _suffix, "image/jpeg")
+                    if _upload_to_supabase_bucket(_photo_cfg["bucket"], _obj, _staged_bytes, _ctype):
+                        final_photo_uri = f"{_photo_cfg['bucket']}/{_obj}"
+                        print(f"[registry_photo] enrollment #{req.id}: mirrored to {final_photo_uri}")
+                    else:
+                        print(f"[registry_photo] enrollment #{req.id}: storage upload failed — keeping local path")
+            except Exception as _e:
+                print(f"[registry_photo] enrollment #{req.id}: persist warning ({type(_e).__name__}) — keeping local path")
+
             citizen = CitizenRegistry(
                 document_type=req.document_type,
                 document_number=req.document_number,
@@ -3635,7 +3954,7 @@ async def approve_enrollment(enrollment_id: int, request: Request):
                 gender=req.gender,
                 address=req.address,
                 father_or_spouse_name=req.father_or_spouse_name,
-                photo_uri=req.photo_uri,
+                photo_uri=final_photo_uri,
                 source=req.source,
                 source_ref=req.source_ref,
                 verification_method=req.verification_method,
@@ -4530,11 +4849,17 @@ async def health():
     except Exception as e:
         face_engine = {"initialised": False, "models_present": None,
                        "provider": None, "last_error": f"{type(e).__name__}"}
+    try:
+        registry_photos = _registry_photo_backend_status()
+    except Exception:
+        registry_photos = {"mode": "unknown", "bucket": "img", "configured": False,
+                           "private_reads": False}
     return {
         "status": "healthy",
         "version": "0.1.0",
         "database": get_engine_info(),
         "face_engine": face_engine,
+        "registry_photos": registry_photos,
     }
 
 @app.get("/evidence/{path:path}")

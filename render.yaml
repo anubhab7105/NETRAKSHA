@@ -62,3 +62,16 @@ services:
       # 512MB RAM. Face match degrades to Gemini fallback; registry legs N/A.
       - key: DISABLE_LOCAL_FACE_ENGINE
         value: "true"
+      # Registry photos (Supabase Storage bucket "img", private recommended).
+      # photo_uri stores "img/<object>" — backend mints short-lived signed URLs
+      # server-side with the service_role key. ANON key covers public buckets.
+      - key: SUPABASE_URL
+        sync: false # e.g. https://<ref>.supabase.co
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false # server-only; never expose to frontend/Vercel
+      - key: SUPABASE_ANON_KEY
+        sync: false # optional; public-bucket fallback
+      - key: SUPABASE_PHOTOS_BUCKET
+        value: img
+      - key: SUPABASE_PHOTO_SIGNED_TTL
+        value: 60
