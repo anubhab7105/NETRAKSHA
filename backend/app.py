@@ -304,6 +304,23 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(HTTPException)
+async def _http_exception_handler(request: Request, exc: HTTPException):
+    """Ensure HTTPException (401, 403, 422, etc.) responses carry CORS headers.
+
+    FastAPI's default HTTPException handler runs BEFORE CORSMiddleware can
+    attach headers, so cross-origin browsers see a CORS error instead of the
+    real 401/403. This handler delegates to JSONResponse so the response flows
+    back through the middleware stack and gets the correct CORS headers.
+    """
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers=dict(exc.headers) if exc.headers else None,
+    )
+
+
 @app.exception_handler(Exception)
 async def _unhandled_exception_handler(request: Request, exc: Exception):
     """Last-resort JSON 500 that still passes through CORSMiddleware.
