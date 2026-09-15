@@ -1,65 +1,91 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  ShieldAlert, CheckCircle, AlertTriangle, ArrowLeft, Loader2, User,
-  FileText, Image as ImageIcon, Check, X, Shield, Activity, Scan,
-  Eye, Fingerprint, Hash, Radio
+  ShieldAlert, CheckCircle2, AlertTriangle, ArrowLeft, Loader2, UserRound,
+  FileText, Image as ImageIcon, Check, X, ShieldCheck, Activity, ScanLine,
+  Eye, Fingerprint, Hash, Radio, ChevronDown,
 } from 'lucide-react';
 import api from '../api';
 import SEO from '../components/SEO';
 import Breadcrumbs from '../components/Breadcrumbs';
+import { CheckRow, GovNotice, StatusBadge } from '../components/ui';
 
-const VerdictBanner = ({ verdict }) => {
-  const styles = {
-    Green: 'bg-success/20 text-success border-success/50',
-    Yellow: 'bg-warning/20 text-warning border-warning/50',
-    Red: 'bg-danger/20 text-danger border-danger/50',
-  };
-  const icons = {
-    Green: <CheckCircle size={28} className="text-success" />,
-    Yellow: <AlertTriangle size={28} className="text-warning" />,
-    Red: <ShieldAlert size={28} className="text-danger" />
-  };
-  // Audit P2 §7: no detention/denial language in automated output
-  const descriptions = {
-    Green: 'All checks passed. Low risk. Recommend clearance pending officer confirmation.',
-    Yellow: 'Anomalies detected. Manual review required by reviewing officer.',
-    Red: 'Critical risk flags detected. Escalation recommended for officer review.',
+const VERDICT_META = {
+  Green: {
+    tone: 'green', bar: '#16803C', icon: <CheckCircle2 size={30} aria-hidden="true" />,
+    title: 'VERIFIED', desc: 'All checks passed. Low risk. Recommend clearance pending officer confirmation.',
+  },
+  Yellow: {
+    tone: 'amber', bar: '#B7791F', icon: <AlertTriangle size={30} aria-hidden="true" />,
+    title: 'MANUAL REVIEW', desc: 'Anomalies detected. Manual review required by reviewing officer.',
+  },
+  Red: {
+    tone: 'red', bar: '#C62828', icon: <ShieldAlert size={30} aria-hidden="true" />,
+    title: 'HIGH RISK — ESCALATE', desc: 'Critical risk flags detected. Escalation recommended for officer review.',
+  },
+};
+
+const VerdictCard = ({ verdict, riskScore, anomalyCount, similarity }) => {
+  const meta = VERDICT_META[verdict] || {
+    tone: 'grey', bar: '#98A2B3', icon: <ShieldAlert size={30} aria-hidden="true" />,
+    title: String(verdict || 'UNKNOWN').toUpperCase(), desc: 'Unable to determine risk level.',
   };
   return (
-    <div className={`flex flex-col gap-4 rounded-xl border p-4 sm:flex-row sm:items-center sm:p-6 ${styles[verdict] || 'bg-slate-800 text-slate-300 border-slate-700'} glass-panel`}>
-      <div className="p-3 bg-black/20 rounded-full">
-        {icons[verdict]}
+    <section aria-label="Verification result" className="gov-card overflow-hidden">
+      <div className="h-1.5" style={{ background: meta.bar }} aria-hidden="true" />
+      <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:p-6">
+        <div
+          className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl border"
+          style={{ color: meta.bar, background: `${meta.bar}14`, borderColor: `${meta.bar}45` }}
+          aria-hidden="true"
+        >
+          {meta.icon}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#667085]">Verification Result</p>
+          <h2 className="mt-0.5 flex flex-wrap items-center gap-2 text-xl font-bold text-[#172033]">
+            {meta.title}
+            <StatusBadge tone={meta.tone} icon={meta.icon}>{`Risk: ${verdict || 'Unknown'}`}</StatusBadge>
+          </h2>
+          <p className="mt-1 text-sm text-[#667085]">{meta.desc}</p>
+        </div>
+        <dl className="grid shrink-0 grid-cols-3 gap-3 sm:grid-cols-1 sm:min-w-[190px] lg:grid-cols-3 lg:min-w-[320px]">
+          <div className="rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] px-3 py-2 text-center">
+            <dt className="text-[11px] font-semibold uppercase tracking-wide text-[#667085]">Risk Score</dt>
+            <dd className="text-lg font-bold text-[#172033]">{riskScore != null ? `${Math.round(Number(riskScore))} / 100` : '—'}</dd>
+          </div>
+          <div className="rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] px-3 py-2 text-center">
+            <dt className="text-[11px] font-semibold uppercase tracking-wide text-[#667085]">Face Match</dt>
+            <dd className="text-lg font-bold text-[#172033]">{similarity != null ? `${(Number(similarity) * 100).toFixed(1)}%` : 'N/A'}</dd>
+          </div>
+          <div className="rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] px-3 py-2 text-center">
+            <dt className="text-[11px] font-semibold uppercase tracking-wide text-[#667085]">Anomalies</dt>
+            <dd className="text-lg font-bold text-[#172033]">{anomalyCount}</dd>
+          </div>
+        </dl>
       </div>
-      <div>
-        <h2 className="text-lg font-bold">SYSTEM VERDICT: {(verdict || 'UNKNOWN').toUpperCase()}</h2>
-        <p className="text-sm opacity-90 mt-1">{descriptions[verdict] || 'Unable to determine risk level.'}</p>
-      </div>
-    </div>
+    </section>
   );
 };
 
 /** Module status indicator */
-const StatusBadge = ({ status, score }) => {
+const StatusBadgeLocal = ({ status, score }) => {
   if (status === 'inconclusive') {
-    return <span className="text-xs px-2 py-0.5 bg-warning/10 text-warning rounded border border-warning/30">Inconclusive</span>;
+    return <StatusBadge tone="amber" icon={<AlertTriangle size={12} aria-hidden="true" />}>Inconclusive</StatusBadge>;
   }
   if (score !== null && score !== undefined) {
-    const color = score > 0.5 ? 'text-danger' : 'text-success';
     return (
-      <span className="text-sm px-2 py-1 bg-black/40 rounded border border-slate-700 text-slate-300">
-        Score: <span className={color}>{(score * 100).toFixed(0)}%</span>
+      <span className="gov-badge gov-badge-grey">
+        Score: <strong>{(score * 100).toFixed(0)}%</strong>
       </span>
     );
   }
-  return <span className="text-xs px-2 py-0.5 bg-success/10 text-success rounded border border-success/30">OK</span>;
+  return <StatusBadge tone="green" icon={<Check size={12} aria-hidden="true" />}>OK</StatusBadge>;
 };
 
 /** Violet badge marking mocked/simulated data — must never look like verified output */
 const MockedDataBadge = ({ label = 'MOCKED DATA' }) => (
-  <span className="rounded border border-violet-400/40 bg-violet-500/15 px-2 py-1 text-xs font-semibold tracking-wide text-violet-300">
-    {label}
-  </span>
+  <StatusBadge tone="violet">{label}</StatusBadge>
 );
 
 /** Mask Aadhaar numbers to XXXX-XXXX-<last4> before render (PII hygiene) */
@@ -95,17 +121,29 @@ const EvidenceImage = ({ evidenceUri, alt }) => {
     fetchToken();
     return () => { cancelled = true; };
   }, [evidenceUri]);
-  if (error) return <p className="text-sm text-slate-500">Evidence unavailable (access denied or expired).</p>;
-  if (!src) return <div className="bg-black/20 rounded-lg p-8 flex items-center justify-center text-slate-500"><Loader2 size={24} className="animate-spin" /></div>;
+  if (error) return <p className="text-sm text-[#667085]">Evidence unavailable (access denied or expired).</p>;
+  if (!src) return <div className="flex items-center justify-center rounded-lg border border-dashed border-[#D9DEE7] bg-[#F7F8FA] p-8 text-[#98A2B3]"><Loader2 size={24} className="animate-spin" aria-hidden="true" /></div>;
   return (
     <img
       src={src}
       alt={alt}
-      className="w-full h-auto object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+      className="h-auto w-full border border-[#D9DEE7] object-cover"
       onError={() => setError(true)}
     />
   );
 };
+
+function Details({ title, children, defaultOpen = false }) {
+  return (
+    <details className="group rounded-lg border border-[#D9DEE7] bg-white" open={defaultOpen || undefined}>
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold text-[#123B66] hover:bg-[#F7F8FA] [&::-webkit-details-marker]:hidden">
+        {title}
+        <ChevronDown size={16} className="shrink-0 text-[#667085] transition-transform group-open:rotate-180" aria-hidden="true" />
+      </summary>
+      <div className="border-t border-[#D9DEE7] px-4 py-3">{children}</div>
+    </details>
+  );
+}
 
 export default function CaseReport() {
   const { id } = useParams();
@@ -170,15 +208,15 @@ export default function CaseReport() {
   };
 
   if (loading) {
-    return <div className="flex h-64 items-center justify-center text-slate-400"><Loader2 className="animate-spin mr-2" /> Loading case report...</div>;
+    return <div className="flex h-64 items-center justify-center text-[#667085]"><Loader2 className="mr-2 animate-spin" aria-hidden="true" /> Loading case report…</div>;
   }
 
   if (!data || !data.case) {
-    return <div className="text-center text-danger mt-10">Case not found.</div>;
+    return <div className="mt-10 text-center font-semibold text-[#C62828]">Case not found.</div>;
   }
 
   const { case: c, extracted_fields, module_results } = data;
-  
+
   // Find specific modules (audit P2 §5: render ALL)
   const findModule = (name) => module_results.find(m => m.module_name === name);
   const geminiModule = findModule('gemini_ai');
@@ -236,148 +274,169 @@ export default function CaseReport() {
   // — reported by the case API as db_record_found.
   const hasGenuineDbRecord = Boolean(data.db_record_found);
 
+  // Structured verification summary (spec §10) — neutral shell, color only on badges
+  const mismatchCount = (extracted_fields || []).filter((f) => f.match_status === 'mismatch').length;
+  const summaryRows = [
+    {
+      label: 'DOCUMENT AUTHENTICITY',
+      state: tamperModule?.status === 'inconclusive' ? 'REVIEW' : tamperModule?.score != null ? (tamperModule.score >= 0.5 ? 'FAIL' : tamperModule.score >= 0.25 ? 'REVIEW' : 'PASS') : 'NA',
+      detail: tamperModule?.status === 'inconclusive' ? 'Tamper analysis inconclusive — physical inspection advised' : undefined,
+    },
+    {
+      label: 'MRZ CONSISTENCY',
+      state: checksumModule?.raw_output?.valid === true ? 'PASS' : checksumModule?.raw_output?.valid === false ? 'FAIL' : 'NA',
+      detail: checksumModule?.raw_output?.algorithm ? `Algorithm: ${checksumModule.raw_output.algorithm}` : undefined,
+    },
+    {
+      label: 'REGISTRY VERIFICATION',
+      state: !hasGenuineDbRecord ? 'REVIEW' : mismatchCount > 0 ? 'REVIEW' : 'PASS',
+      detail: !hasGenuineDbRecord ? 'No registry record available for comparison' : `${mismatchCount} field mismatch${mismatchCount === 1 ? '' : 'es'}`,
+    },
+    {
+      label: 'FACE MATCH',
+      state: faceMatch.live_vs_doc_match === true ? 'PASS' : faceMatch.live_vs_doc_match === false ? 'FAIL' : 'REVIEW',
+      detail: faceMatch.similarity_score != null ? `Similarity ${(faceMatch.similarity_score * 100).toFixed(1)}%` : 'No biometric verdict produced',
+    },
+    {
+      label: 'DEMOGRAPHICS',
+      state: !hasGenuineDbRecord ? 'REVIEW' : mismatchCount === 0 ? 'PASS' : 'REVIEW',
+      detail: `${extracted_fields.length} fields compared`,
+    },
+    {
+      label: 'FRAUD INDICATORS',
+      state: watchlistModule?.raw_output?.is_hit || deepfakeModule?.score >= 0.7 || faceLive === false ? 'FAIL' : livenessModule?.status === 'inconclusive' || deepfakeModule?.status === 'inconclusive' ? 'REVIEW' : 'NONE',
+      detail: watchlistModule?.raw_output?.is_hit ? 'Watchlist hit requires supervisor review' : undefined,
+    },
+  ];
+  const anomalyCount = summaryRows.filter((r) => r.state === 'FAIL' || r.state === 'REVIEW').length;
+
   return (
-    <div className="space-y-6 animate-fade-in pb-12">
+    <div className="animate-fade-in space-y-5 pb-8">
       <SEO
         title={caseLabel}
         description={`Forensic screening report for ${caseLabel}: demographic parity, 3-way face verification, tamper and deepfake analysis, liveness and watchlist results.`}
         path={`/case/${id}`}
         noindex
       />
-      <Breadcrumbs items={[{ label: 'Home', to: '/' }, { label: 'Cases', to: '/' }, { label: caseLabel }]} />
-      <div className="flex items-start gap-3 sm:items-center sm:gap-4">
-        <button onClick={() => navigate('/')} aria-label="Back to case dashboard" className="p-2 text-slate-400 hover:text-white hover:bg-white/10 rounded-lg transition-colors">
-          <ArrowLeft size={24} />
+      <Breadcrumbs items={[{ label: 'Overview', to: '/' }, { label: 'Case Queue', to: '/' }, { label: caseLabel }]} />
+      <div className="flex items-start gap-3">
+        <button onClick={() => navigate('/')} aria-label="Back to case dashboard" className="gov-icon-btn mt-1">
+          <ArrowLeft size={20} aria-hidden="true" />
         </button>
         <div className="min-w-0">
-          <h1 className="flex flex-col gap-2 text-2xl font-bold text-white sm:flex-row sm:items-center sm:gap-3">
+          <h1 className="gov-page-title flex flex-wrap items-center gap-2">
             {caseLabel}
-            <span className="inline-flex w-fit items-center gap-2 rounded border border-slate-700 bg-slate-800 px-2.5 py-1 text-sm font-normal text-slate-300">
-              <FileText size={14} /> {c.document_type?.toUpperCase() || 'UNKNOWN'}
+            <span className="gov-badge gov-badge-grey">
+              <FileText size={13} aria-hidden="true" /> {c.document_type?.toUpperCase() || 'UNKNOWN'}
             </span>
             {(data.is_demo || geminiModule?.is_mocked || watchlistModule?.is_mocked) && (
               <MockedDataBadge />
             )}
           </h1>
-          <p className="text-slate-400 text-sm mt-1">{new Date(c.timestamp).toLocaleString()}</p>
+          <p className="gov-subtitle">{new Date(c.timestamp).toLocaleString('en-IN')} · Version v{c.version ?? 0} · Status: {String(c.status || '').replace('_', ' ')}</p>
         </div>
       </div>
 
-      <VerdictBanner verdict={c.verdict || 'Unknown'} />
+      <VerdictCard verdict={c.verdict} riskScore={c.risk_score} anomalyCount={anomalyCount} similarity={faceMatch.similarity_score} />
+
+      {/* Verification summary — structured PASS/REVIEW/FAIL */}
+      <section aria-label="Verification summary" className="gov-card-padded">
+        <div className="mb-2 flex items-center justify-between gap-2 border-b border-[#D9DEE7] pb-3">
+          <h2 className="gov-card-title">Verification Summary</h2>
+          <span className="gov-badge gov-badge-grey">Verification Engine</span>
+        </div>
+        <div className="grid grid-cols-1 gap-x-8 md:grid-cols-2">
+          {summaryRows.map((r) => (
+            <CheckRow key={r.label} label={r.label} state={r.state} detail={r.detail} />
+          ))}
+        </div>
+      </section>
 
       {/* Demo-only: simulated AI was excluded from scoring */}
       {(data.is_demo || geminiModule?.is_mocked) && (
-        <div className="flex items-start gap-4 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 sm:p-6">
-          <ShieldAlert size={24} className="text-amber-400 shrink-0 mt-0.5" />
-          <div>
-            <h2 className="text-lg font-bold text-amber-400">DEMO ONLY — Simulated AI Excluded</h2>
-            <p className="text-sm text-amber-200/80 mt-1">
-              {data.demo_label || geminiData.is_demo && 'This case used offline simulation for face/tamper AI. Those simulated results were excluded from the risk score — this verdict is DEMO ONLY and requires manual officer review.'}
-              {!data.demo_label && !geminiData.is_demo && 'Gemini AI was offline, so face/tamper results are simulated and were excluded from scoring. Manual review required.'}
-            </p>
-          </div>
-        </div>
+        <GovNotice tone="amber" icon={<ShieldAlert size={18} className="mt-0.5 shrink-0" aria-hidden="true" />} title="DEMO ONLY — Simulated AI Excluded">
+          {data.demo_label || geminiData.is_demo && 'This case used offline simulation for face/tamper AI. Those simulated results were excluded from the risk score — this verdict is DEMO ONLY and requires manual officer review.'}
+          {!data.demo_label && !geminiData.is_demo && 'Gemini AI was offline, so face/tamper results are simulated and were excluded from scoring. Manual review required.'}
+        </GovNotice>
       )}
 
       {/* Cloud unavailable — network failure fallback, local checks only */}
       {(data.cloud_unavailable || data.gemini_metadata?.cloud_unavailable || geminiData.cloud_unavailable) && (
-        <div className="flex items-start gap-4 rounded-xl border border-orange-500/40 bg-orange-500/10 p-4 sm:p-6">
-          <AlertTriangle size={24} className="text-orange-400 shrink-0 mt-0.5" />
-          <div>
-            <h2 className="text-lg font-bold text-orange-400">CLOUD UNAVAILABLE — Local Checks Only</h2>
-            <p className="text-sm text-orange-200/80 mt-1">
-              Cloud AI verification was unavailable due to network/cloud failure. Local forensic checks (tamper, liveness, OCR) completed, but final decision requires <strong>manual officer review</strong>. System did not halt — controlled fallback to Yellow applied.
-              {geminiData.cloud_fallback_reason && ` Reason: ${geminiData.cloud_fallback_reason}.`}
-            </p>
-          </div>
-        </div>
+        <GovNotice tone="amber" icon={<AlertTriangle size={18} className="mt-0.5 shrink-0" aria-hidden="true" />} title="CLOUD UNAVAILABLE — Local Checks Only">
+          Cloud AI verification was unavailable due to network/cloud failure. Local forensic checks (tamper, liveness, OCR) completed, but final decision requires <strong>manual officer review</strong>. System did not halt — controlled fallback to Yellow applied.
+          {geminiData.cloud_fallback_reason && ` Reason: ${geminiData.cloud_fallback_reason}.`}
+        </GovNotice>
       )}
 
       {/* No DB record / unverifiable — alert the officer instead of faking a comparison */}
       {!hasGenuineDbRecord && (
-        <div className="flex items-start gap-4 rounded-xl border border-warning/50 bg-warning/10 p-4 sm:p-6">
-          <AlertTriangle size={24} className="text-warning shrink-0 mt-0.5" />
-          <div>
-            <h2 className="text-lg font-bold text-warning">NO DOCUMENT FOUND IN THE DATABASE</h2>
-            <p className="text-sm text-warning/80 mt-1">
-              No matching record exists in the citizens registry for this document, or the
-              document could not be read automatically. The identity could not be verified
-              against the database — manual verification by the officer/supervisor is required.
-            </p>
-          </div>
-        </div>
+        <GovNotice tone="amber" icon={<AlertTriangle size={18} className="mt-0.5 shrink-0" aria-hidden="true" />} title="NO DOCUMENT FOUND IN THE DATABASE">
+          No matching record exists in the citizens registry for this document, or the
+          document could not be read automatically. The identity could not be verified
+          against the database — manual verification by the officer/supervisor is required.
+        </GovNotice>
       )}
 
       {/* Recapture requested — face image quality too poor for a biometric verdict */}
       {(faceMatch.recapture_requested || faceMatch.face_quality?.gate === 'failed') && (
-        <div className="flex items-start gap-4 rounded-xl border border-sky-500/40 bg-sky-500/10 p-4 sm:p-6">
-          <Scan size={24} className="text-sky-400 shrink-0 mt-0.5" />
-          <div className="min-w-0 flex-1">
-            <h2 className="text-lg font-bold text-sky-300">
-              RECAPTURE NEEDED{(faceMatch.recapture_target && faceMatch.recapture_target !== 'both') ? ` — ${String(faceMatch.recapture_target).toUpperCase()}` : ''}
-            </h2>
-            <p className="text-sm text-sky-200/80 mt-1">
-              No biometric verdict was produced — the {(faceMatch.recapture_target === 'document' ? 'document photo' : faceMatch.recapture_target === 'live' ? 'live capture' : 'face images')} failed quality checks. This is a capture problem, not an identity mismatch.
-            </p>
-            {(faceMatch.recapture_reasons?.length > 0) && (
-              <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-sky-200/90">
-                {faceMatch.recapture_reasons.map((r, i) => <li key={i}>{r}</li>)}
-              </ul>
-            )}
-          </div>
-        </div>
+        <GovNotice tone="blue" icon={<ScanLine size={18} className="mt-0.5 shrink-0" aria-hidden="true" />} title={`RECAPTURE NEEDED${(faceMatch.recapture_target && faceMatch.recapture_target !== 'both') ? ` — ${String(faceMatch.recapture_target).toUpperCase()}` : ''}`}>
+          No biometric verdict was produced — the {(faceMatch.recapture_target === 'document' ? 'document photo' : faceMatch.recapture_target === 'live' ? 'live capture' : 'face images')} failed quality checks. This is a capture problem, not an identity mismatch.
+          {(faceMatch.recapture_reasons?.length > 0) && (
+            <ul className="mt-2 list-disc space-y-1 pl-5">
+              {faceMatch.recapture_reasons.map((r, i) => <li key={i}>{r}</li>)}
+            </ul>
+          )}
+        </GovNotice>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+
         {/* Demographic Parity Panel */}
-        <div className="glass-panel p-4 sm:p-6">
-          <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-slate-700/50 pb-4">
-            <User className="text-primary" size={20} />
-            <h2 className="text-lg font-semibold text-white">Demographic Parity</h2>
+        <div className="gov-card-padded">
+          <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-[#D9DEE7] pb-3">
+            <UserRound className="text-[#123B66]" size={18} aria-hidden="true" />
+            <h2 className="gov-card-title">Demographic Parity</h2>
             {!hasGenuineDbRecord && (
-              <span className="rounded border border-warning/30 bg-warning/20 px-2 py-1 text-xs font-medium text-warning sm:ml-auto">
-                NO DB RECORD
-              </span>
+              <StatusBadge tone="amber" icon={<AlertTriangle size={12} aria-hidden="true" />}>NO DB RECORD</StatusBadge>
             )}
           </div>
 
           {!hasGenuineDbRecord && (
-            <div className="mb-4 p-3 bg-warning/5 border border-warning/20 text-warning rounded-lg text-sm">
+            <div className="gov-notice gov-notice-amber mb-3">
               No database record is available to compare against. The officer must
               verify this identity manually against the document.
             </div>
           )}
-          
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[620px] text-left text-sm">
+
+          <div className="gov-table-scroll -mx-1">
+            <table className="gov-table min-w-[520px]">
               <thead>
-                <tr className="text-slate-400 border-b border-slate-700/50">
-                  <th className="py-2 font-medium">Field</th>
-                  <th className="py-2 font-medium">Extracted</th>
-                  <th className="py-2 font-medium">Database</th>
-                  <th className="py-2 font-medium text-center">Status</th>
+                <tr>
+                  <th scope="col">Field</th>
+                  <th scope="col">Extracted</th>
+                  <th scope="col">Database</th>
+                  <th scope="col" className="!text-center">Status</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-700/30">
+              <tbody>
                 {extracted_fields.map(f => (
-                  <tr key={f.id} className="text-slate-300">
-                    <td className="py-3 pr-4">{f.field_name}</td>
-                    <td className="py-3 pr-4 font-mono text-xs">{maskAadhaar(f.field_name, f.extracted_value) || '-'}</td>
-                    <td className="py-3 pr-4 font-mono text-xs">{maskAadhaar(f.field_name, f.database_value) || '-'}</td>
-                    <td className="py-3 flex justify-center">
+                  <tr key={f.id}>
+                    <td className="font-medium">{f.field_name}</td>
+                    <td className="font-mono text-xs">{maskAadhaar(f.field_name, f.extracted_value) || '-'}</td>
+                    <td className="font-mono text-xs">{maskAadhaar(f.field_name, f.database_value) || '-'}</td>
+                    <td className="!text-center">
                       {f.match_status === 'match' ? (
-                        <span className="bg-success/20 text-success p-1 rounded"><Check size={16} /></span>
+                        <span className="gov-badge gov-badge-green"><Check size={13} aria-hidden="true" /> Match</span>
                       ) : f.match_status === 'mismatch' ? (
-                        <span className="bg-danger/20 text-danger p-1 rounded"><X size={16} /></span>
+                        <span className="gov-badge gov-badge-red"><X size={13} aria-hidden="true" /> Mismatch</span>
                       ) : (
-                        <span className="bg-slate-700 text-slate-400 px-2 py-1 rounded text-xs">N/A</span>
+                        <span className="gov-badge gov-badge-grey">N/A</span>
                       )}
                     </td>
                   </tr>
                 ))}
                 {extracted_fields.length === 0 && (
-                  <tr><td colSpan={4} className="py-6 text-center text-slate-500 text-sm">No demographic data extracted.</td></tr>
+                  <tr><td colSpan={4} className="!py-6 text-center text-sm text-[#667085]">No demographic data extracted.</td></tr>
                 )}
               </tbody>
             </table>
@@ -385,20 +444,20 @@ export default function CaseReport() {
         </div>
 
         {/* AI Forensic Panel — 3-Way Face Match */}
-        <div className="space-y-6">
-          <div className="glass-panel p-4 sm:p-6">
-            <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-slate-700/50 pb-4">
-              <Scan className="text-accent" size={20} />
-              <h2 className="text-lg font-semibold text-white">3-Way Face Match</h2>
-              {geminiModule && !geminiModule.is_mocked && <StatusBadge status={geminiModule.status} />}
+        <div className="space-y-5">
+          <div className="gov-card-padded">
+            <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-[#D9DEE7] pb-3">
+              <ScanLine className="text-[#1769AA]" size={18} aria-hidden="true" />
+              <h2 className="gov-card-title">3-Way Face Match</h2>
+              {geminiModule && !geminiModule.is_mocked && <StatusBadgeLocal status={geminiModule.status} />}
               {geminiModule?.is_mocked && hasRealFaceVerdict && (
-                <span className="text-xs px-2 py-0.5 bg-success/10 text-success rounded border border-success/30">Local biometric</span>
+                <StatusBadge tone="green">Local biometric</StatusBadge>
               )}
             </div>
 
             {!hasRealFaceVerdict ? (
-              <div className="bg-warning/5 border border-warning/20 p-4 rounded-lg text-sm text-warning">
-                <AlertTriangle size={16} className="inline mr-2" />
+              <div className="gov-notice gov-notice-amber">
+                <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
                 {geminiModule?.is_mocked
                   ? 'AI face verification is unavailable in this environment. No simulated results are displayed during document verification.'
                   : 'AI module was inconclusive. Face verification results are not available.'}
@@ -406,55 +465,55 @@ export default function CaseReport() {
             ) : (
               <>
                 {geminiModule?.is_mocked && (
-                  <div className="mb-4 bg-primary/5 border border-primary/20 p-3 rounded-lg text-xs text-slate-300">
+                  <div className="gov-notice gov-notice-blue mb-3">
                     Cloud AI was offline — the pairs below are the evidence-backed local biometric verification (InsightFace), not cloud results.
                   </div>
                 )}
-                <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <div className="flex items-center justify-between rounded-lg border border-slate-700/50 bg-black/30 p-4">
-                    <span className="text-sm text-slate-400">Live vs Doc</span>
-                    {faceMatch.live_vs_doc_match === true ? <span className="text-success flex items-center gap-1 text-sm font-medium"><Check size={16}/> Match</span> : 
-                     faceMatch.live_vs_doc_match === false ? <span className="text-danger flex items-center gap-1 text-sm font-medium"><X size={16}/> Mismatch</span> : 
-                     <span className="text-slate-500 text-sm">N/A</span>}
+                <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="flex items-center justify-between rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] p-3">
+                    <span className="text-sm text-[#667085]">Live vs Doc</span>
+                    {faceMatch.live_vs_doc_match === true ? <span className="gov-badge gov-badge-green"><Check size={13} aria-hidden="true" /> Match</span> :
+                     faceMatch.live_vs_doc_match === false ? <span className="gov-badge gov-badge-red"><X size={13} aria-hidden="true" /> Mismatch</span> :
+                     <span className="gov-badge gov-badge-grey">N/A</span>}
                   </div>
-                  <div className="flex items-center justify-between rounded-lg border border-slate-700/50 bg-black/30 p-4">
-                    <span className="text-sm text-slate-400">Doc vs DB</span>
-                    {faceMatch.doc_vs_db_match === true ? <span className="text-success flex items-center gap-1 text-sm font-medium"><Check size={16}/> Match</span> : 
-                     faceMatch.doc_vs_db_match === false ? <span className="text-danger flex items-center gap-1 text-sm font-medium"><X size={16}/> Mismatch</span> : 
-                     <span className="text-slate-500 text-sm">N/A</span>}
+                  <div className="flex items-center justify-between rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] p-3">
+                    <span className="text-sm text-[#667085]">Doc vs DB</span>
+                    {faceMatch.doc_vs_db_match === true ? <span className="gov-badge gov-badge-green"><Check size={13} aria-hidden="true" /> Match</span> :
+                     faceMatch.doc_vs_db_match === false ? <span className="gov-badge gov-badge-red"><X size={13} aria-hidden="true" /> Mismatch</span> :
+                     <span className="gov-badge gov-badge-grey">N/A</span>}
                   </div>
-                  <div className="flex items-center justify-between rounded-lg border border-slate-700/50 bg-black/30 p-4">
-                    <span className="text-sm text-slate-400">Live vs DB</span>
-                    {faceMatch.live_vs_db_match === true ? <span className="text-success flex items-center gap-1 text-sm font-medium"><Check size={16}/> Match</span> : 
-                     faceMatch.live_vs_db_match === false ? <span className="text-danger flex items-center gap-1 text-sm font-medium"><X size={16}/> Mismatch</span> : 
-                     <span className="text-slate-500 text-sm">N/A</span>}
+                  <div className="flex items-center justify-between rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] p-3">
+                    <span className="text-sm text-[#667085]">Live vs DB</span>
+                    {faceMatch.live_vs_db_match === true ? <span className="gov-badge gov-badge-green"><Check size={13} aria-hidden="true" /> Match</span> :
+                     faceMatch.live_vs_db_match === false ? <span className="gov-badge gov-badge-red"><X size={13} aria-hidden="true" /> Mismatch</span> :
+                     <span className="gov-badge gov-badge-grey">N/A</span>}
                   </div>
-                  <div className="flex flex-col justify-center rounded-lg border border-slate-700/50 bg-black/30 p-4 text-center">
-                    <span className="text-xs text-slate-400 mb-1">AI Similarity Score</span>
-                    <span className="text-2xl font-bold text-white">{faceMatch.similarity_score != null ? `${(faceMatch.similarity_score * 100).toFixed(1)}%` : 'N/A'}</span>
+                  <div className="flex flex-col justify-center rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] p-3 text-center">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-[#667085]">Similarity Score</span>
+                    <span className="text-2xl font-bold text-[#172033]">{faceMatch.similarity_score != null ? `${(faceMatch.similarity_score * 100).toFixed(1)}%` : 'N/A'}</span>
                   </div>
                 </div>
-                
+
                 {faceMatch.visual_reasoning && (
-                  <div className="bg-primary/5 border border-primary/20 p-4 rounded-lg">
-                    <h3 className="text-xs font-semibold text-primary uppercase tracking-wider mb-2">Forensic Reasoning</h3>
-                    <p className="text-sm text-slate-300 leading-relaxed">{faceMatch.visual_reasoning}</p>
+                  <div className="rounded-lg border border-[#1769AA]/25 bg-[#EAF2FA] p-3">
+                    <h3 className="mb-1 text-xs font-bold uppercase tracking-[0.06em] text-[#123B66]">Forensic Reasoning</h3>
+                    <p className="text-sm leading-relaxed text-[#172033]">{faceMatch.visual_reasoning}</p>
                   </div>
                 )}
 
                 {/* Three-way completeness — every advertised pair traced to evidence */}
                 {(faceMatch.comparison_completeness || faceMatch.pair_sources) && (
-                  <div className="mt-4 rounded-lg border border-slate-700/50 bg-black/30 p-4 text-xs text-slate-400">
-                    <span className="font-semibold uppercase tracking-wider text-slate-300">Registry comparison: </span>
+                  <div className="mt-3 rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] p-3 text-xs text-[#667085]">
+                    <span className="font-semibold uppercase tracking-wide text-[#172033]">Registry comparison: </span>
                     {faceMatch.comparison_completeness === 'complete' ? (
-                      <span className="text-success">complete — doc↔live, doc↔registry and live↔registry all measured</span>
+                      <span className="font-medium text-[#16803C]">complete — doc↔live, doc↔registry and live↔registry all measured</span>
                     ) : faceMatch.comparison_completeness === 'partial' ? (
-                      <span className="text-warning">partial{faceMatch.db_pairs_unavailable_reason ? ` — registry legs unavailable: ${dbPairsReasonText(faceMatch.db_pairs_unavailable_reason)}` : ''}{faceMatch.db_photo_late ? ' (registry record identified after the AI scan; registry legs measured locally)' : ''}</span>
+                      <span className="font-medium text-[#B7791F]">partial{faceMatch.db_pairs_unavailable_reason ? ` — registry legs unavailable: ${dbPairsReasonText(faceMatch.db_pairs_unavailable_reason)}` : ''}{faceMatch.db_photo_late ? ' (registry record identified after the AI scan; registry legs measured locally)' : ''}</span>
                     ) : (
-                      <span className="text-slate-500">unavailable</span>
+                      <span>unavailable</span>
                     )}
                     {faceMatch.pair_sources && (
-                      <div className="mt-1 font-mono">
+                      <div className="mt-1 font-mono text-[11px]">
                         live↔doc: {faceMatch.pair_sources.live_vs_doc || 'n/a'} · doc↔db: {faceMatch.pair_sources.doc_vs_db || 'n/a'} · live↔db: {faceMatch.pair_sources.live_vs_db || 'n/a'}
                       </div>
                     )}
@@ -465,143 +524,141 @@ export default function CaseReport() {
           </div>
 
           {/* Biometric Verification — one person capture: face + iris + liveness */}
-          <div className="glass-panel p-4 sm:p-6">
-            <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-slate-700/50 pb-4">
-              <Eye className="text-cyan-400" size={20} />
-              <h2 className="text-lg font-semibold text-white">Biometric Verification</h2>
-              <span className={`sm:ml-auto text-xs px-2 py-1 rounded border font-medium ${biometricOverall === 'PASS' ? 'bg-success/10 text-success border-success/30' : biometricOverall === 'FAIL' ? 'bg-danger/10 text-danger border-danger/30' : 'bg-warning/10 text-warning border-warning/30'}`}>
+          <div className="gov-card-padded">
+            <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-[#D9DEE7] pb-3">
+              <Eye className="text-[#1769AA]" size={18} aria-hidden="true" />
+              <h2 className="gov-card-title">Biometric Verification</h2>
+              <span className={`gov-badge ml-auto ${biometricOverall === 'PASS' ? 'gov-badge-green' : biometricOverall === 'FAIL' ? 'gov-badge-red' : 'gov-badge-amber'}`}>
                 {biometricOverall}
               </span>
             </div>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-              <div className="rounded-lg border border-slate-700/50 bg-black/30 p-4">
-                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Face</h3>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div className="rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] p-3">
+                <h3 className="mb-2 text-xs font-bold uppercase tracking-[0.06em] text-[#667085]">Face</h3>
                 <div className="space-y-1 text-xs">
-                  <div className="flex justify-between"><span className="text-slate-500">Captured</span><span className="text-slate-300">{faceMatch.similarity_score != null || faceMatch.live_vs_doc_match != null ? 'Yes' : 'No'}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Match</span><span className={faceMatch.live_vs_doc_match === true ? 'text-success' : faceMatch.live_vs_doc_match === false ? 'text-danger' : 'text-slate-500'}>{faceMatch.live_vs_doc_match === true ? 'Match' : faceMatch.live_vs_doc_match === false ? 'Mismatch' : 'N/A'}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Similarity</span><span className="text-slate-300 font-mono">{faceMatch.similarity_score != null ? `${(faceMatch.similarity_score * 100).toFixed(1)}%` : 'N/A'}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Quality</span><span className="text-slate-300">{faceMatch.face_quality?.gate || 'N/A'}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Liveness</span><span className={faceLive === true ? 'text-success' : faceLive === false ? 'text-danger' : 'text-slate-500'}>{faceLive === true ? 'Passed' : faceLive === false ? 'Failed' : 'N/A'}</span></div>
+                  <div className="flex justify-between"><span className="text-[#667085]">Captured</span><span className="font-medium text-[#172033]">{faceMatch.similarity_score != null || faceMatch.live_vs_doc_match != null ? 'Yes' : 'No'}</span></div>
+                  <div className="flex justify-between"><span className="text-[#667085]">Match</span><span className={faceMatch.live_vs_doc_match === true ? 'font-semibold text-[#16803C]' : faceMatch.live_vs_doc_match === false ? 'font-semibold text-[#C62828]' : 'text-[#98A2B3]'}>{faceMatch.live_vs_doc_match === true ? 'Match' : faceMatch.live_vs_doc_match === false ? 'Mismatch' : 'N/A'}</span></div>
+                  <div className="flex justify-between"><span className="text-[#667085]">Similarity</span><span className="font-mono text-[#172033]">{faceMatch.similarity_score != null ? `${(faceMatch.similarity_score * 100).toFixed(1)}%` : 'N/A'}</span></div>
+                  <div className="flex justify-between"><span className="text-[#667085]">Quality</span><span className="text-[#172033]">{faceMatch.face_quality?.gate || 'N/A'}</span></div>
+                  <div className="flex justify-between"><span className="text-[#667085]">Liveness</span><span className={faceLive === true ? 'font-semibold text-[#16803C]' : faceLive === false ? 'font-semibold text-[#C62828]' : 'text-[#98A2B3]'}>{faceLive === true ? 'Passed' : faceLive === false ? 'Failed' : 'N/A'}</span></div>
                 </div>
               </div>
-              <div className="rounded-lg border border-slate-700/50 bg-black/30 p-4">
-                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Iris</h3>
+              <div className="rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] p-3">
+                <h3 className="mb-2 text-xs font-bold uppercase tracking-[0.06em] text-[#667085]">Iris</h3>
                 {!irisData?.captured ? (
-                  <p className="text-xs text-slate-500">Not captured — single person capture includes iris when eyes are visible.</p>
+                  <p className="text-xs text-[#667085]">Not captured — single person capture includes iris when eyes are visible.</p>
                 ) : (
                   <div className="space-y-1 text-xs">
-                    <div className="flex justify-between"><span className="text-slate-500">Captured</span><span className="text-slate-300">Yes{irisData.source === 'unified_burst_derived' ? ' (same capture)' : ''}</span></div>
-                    <div className="flex justify-between"><span className="text-slate-500">Eye</span><span className="text-slate-300">{irisData.eye || 'N/A'}</span></div>
-                    <div className="flex justify-between"><span className="text-slate-500">Match</span><span className={irisData.match === true ? 'text-success' : irisData.match === false ? 'text-danger' : 'text-slate-500'}>{irisData.match === true ? 'Match' : irisData.match === false ? 'Mismatch' : 'N/A'}</span></div>
-                    <div className="flex justify-between"><span className="text-slate-500">Distance</span><span className="text-slate-300 font-mono">{irisData.distance != null ? Number(irisData.distance).toFixed(3) : 'N/A'}</span></div>
-                    <div className="flex justify-between"><span className="text-slate-500">Quality</span><span className="text-slate-300">{irisData.quality != null ? Number(irisData.quality).toFixed(2) : 'N/A'}{irisData.quality_usable === false ? ' (low)' : ''}</span></div>
-                    <div className="flex justify-between"><span className="text-slate-500">PAD</span><span className={irisData.liveness_passed === true ? 'text-success' : irisData.liveness_passed === false ? 'text-danger' : 'text-slate-500'}>{irisData.liveness_passed === true ? 'Passed' : irisData.liveness_passed === false ? 'Failed' : 'N/A'}</span></div>
-                    {irisData.reason && <p className="text-[11px] text-slate-500 pt-1">{irisData.reason}</p>}
+                    <div className="flex justify-between"><span className="text-[#667085]">Captured</span><span className="text-[#172033]">Yes{irisData.source === 'unified_burst_derived' ? ' (same capture)' : ''}</span></div>
+                    <div className="flex justify-between"><span className="text-[#667085]">Eye</span><span className="text-[#172033]">{irisData.eye || 'N/A'}</span></div>
+                    <div className="flex justify-between"><span className="text-[#667085]">Match</span><span className={irisData.match === true ? 'font-semibold text-[#16803C]' : irisData.match === false ? 'font-semibold text-[#C62828]' : 'text-[#98A2B3]'}>{irisData.match === true ? 'Match' : irisData.match === false ? 'Mismatch' : 'N/A'}</span></div>
+                    <div className="flex justify-between"><span className="text-[#667085]">Distance</span><span className="font-mono text-[#172033]">{irisData.distance != null ? Number(irisData.distance).toFixed(3) : 'N/A'}</span></div>
+                    <div className="flex justify-between"><span className="text-[#667085]">Quality</span><span className="text-[#172033]">{irisData.quality != null ? Number(irisData.quality).toFixed(2) : 'N/A'}{irisData.quality_usable === false ? ' (low)' : ''}</span></div>
+                    <div className="flex justify-between"><span className="text-[#667085]">PAD</span><span className={irisData.liveness_passed === true ? 'font-semibold text-[#16803C]' : irisData.liveness_passed === false ? 'font-semibold text-[#C62828]' : 'text-[#98A2B3]'}>{irisData.liveness_passed === true ? 'Passed' : irisData.liveness_passed === false ? 'Failed' : 'N/A'}</span></div>
+                    {irisData.reason && <p className="pt-1 text-[11px] text-[#667085]">{irisData.reason}</p>}
                   </div>
                 )}
-                <p className="text-[11px] text-slate-600 mt-2">Iris is RGB-prototype (not NIR).</p>
+                <p className="mt-2 text-[11px] text-[#98A2B3]">Iris is RGB-prototype (not NIR).</p>
               </div>
-              <div className="rounded-lg border border-slate-700/50 bg-black/30 p-4">
-                <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Liveness</h3>
+              <div className="rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] p-3">
+                <h3 className="mb-2 text-xs font-bold uppercase tracking-[0.06em] text-[#667085]">Liveness</h3>
                 <div className="space-y-1 text-xs">
-                  <div className="flex justify-between"><span className="text-slate-500">Status</span><span className="text-slate-300">{livenessModule?.status || 'N/A'}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Score</span><span className="text-slate-300 font-mono">{livenessModule?.score != null ? Number(livenessModule.score).toFixed(2) : 'N/A'}</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Challenge</span><span className="text-slate-300">{c.challenge_type || livenessModule?.raw_output?.challenge_type || 'N/A'}</span></div>
+                  <div className="flex justify-between"><span className="text-[#667085]">Status</span><span className="text-[#172033]">{livenessModule?.status || 'N/A'}</span></div>
+                  <div className="flex justify-between"><span className="text-[#667085]">Score</span><span className="font-mono text-[#172033]">{livenessModule?.score != null ? Number(livenessModule.score).toFixed(2) : 'N/A'}</span></div>
+                  <div className="flex justify-between"><span className="text-[#667085]">Challenge</span><span className="text-[#172033]">{c.challenge_type || livenessModule?.raw_output?.challenge_type || 'N/A'}</span></div>
                 </div>
               </div>
             </div>
           </div>
 
           {/* Tamper Detection */}
-          <div className="glass-panel p-4 sm:p-6">
-            <div className="mb-4 flex flex-col gap-3 border-b border-slate-700/50 pb-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="gov-card-padded">
+            <div className="mb-3 flex flex-col gap-2 border-b border-[#D9DEE7] pb-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-2">
-                <Activity className="text-warning" size={20} />
-                <h2 className="text-lg font-semibold text-white">Tamper Detection</h2>
+                <Activity className="text-[#B7791F]" size={18} aria-hidden="true" />
+                <h2 className="gov-card-title">Tamper Detection</h2>
               </div>
-              {tamperModule && <StatusBadge status={tamperModule.status} score={tamperModule.score} />}
+              {tamperModule && <StatusBadgeLocal status={tamperModule.status} score={tamperModule.score} />}
             </div>
             {tamperModule?.evidence_uri ? (
-              <div className="relative rounded-lg overflow-hidden border border-slate-700 group">
+              <div className="overflow-hidden rounded-lg border border-[#D9DEE7]">
                 <EvidenceImage
                   evidenceUri={tamperModule.evidence_uri}
                   alt="Error Level Analysis heatmap overlay highlighting suspected tampered regions of the submitted identity document"
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none flex items-end p-4">
-                   <p className="text-xs text-white">ELA Heatmap Overlay</p>
-                </div>
+                <p className="border-t border-[#D9DEE7] bg-[#F7F8FA] px-3 py-1.5 text-xs font-medium text-[#667085]">ELA Heatmap Overlay</p>
               </div>
             ) : (
-              <div className="bg-black/20 rounded-lg p-8 flex flex-col items-center justify-center text-slate-500 border border-slate-700 border-dashed">
-                <ImageIcon size={32} className="mb-2 opacity-50" />
+              <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-[#D9DEE7] bg-[#F7F8FA] p-8 text-[#98A2B3]">
+                <ImageIcon size={30} className="mb-2 opacity-60" aria-hidden="true" />
                 <p className="text-sm">{tamperModule?.status === 'inconclusive' ? 'Tamper analysis was inconclusive.' : 'No visual evidence generated.'}</p>
               </div>
             )}
           </div>
 
           {/* Physical Forgery — layout/font/photo-frame/print-scan/QR/security print */}
-          <div className="glass-panel p-4 sm:p-6">
-            <div className="mb-4 flex flex-col gap-3 border-b border-slate-700/50 pb-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="gov-card-padded">
+            <div className="mb-3 flex flex-col gap-2 border-b border-[#D9DEE7] pb-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-2">
-                <Fingerprint className="text-teal-400" size={20} />
-                <h2 className="text-lg font-semibold text-white">Physical Forgery</h2>
+                <Fingerprint className="text-[#1769AA]" size={18} aria-hidden="true" />
+                <h2 className="gov-card-title">Physical Forgery</h2>
               </div>
-              {physicalModule && <StatusBadge status={physicalModule.status} score={physicalModule.score} />}
+              {physicalModule && <StatusBadgeLocal status={physicalModule.status} score={physicalModule.score} />}
             </div>
             {!physicalModule ? (
-              <div className="bg-black/20 rounded-lg p-8 flex flex-col items-center justify-center text-slate-500 border border-slate-700 border-dashed">
-                <ImageIcon size={32} className="mb-2 opacity-50" />
+              <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-[#D9DEE7] bg-[#F7F8FA] p-8 text-[#98A2B3]">
+                <ImageIcon size={30} className="mb-2 opacity-60" aria-hidden="true" />
                 <p className="text-sm">Physical-forgery analysis not available for this case (screened before this check shipped).</p>
               </div>
             ) : physicalModule.status === 'inconclusive' ? (
-              <div className="bg-warning/5 border border-warning/20 p-4 rounded-lg text-sm text-warning">
-                <AlertTriangle size={16} className="inline mr-2" />
+              <div className="gov-notice gov-notice-amber">
+                <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
                 Physical-forgery analysis was inconclusive. Inspect the document physically.
               </div>
             ) : (
               <div className="space-y-2">
-                {Object.entries(physicalChecks).map(([name, c]) => (
-                  <div key={name} className="rounded-lg border border-slate-700/50 bg-black/30 p-3">
+                {Object.entries(physicalChecks).map(([name, chk]) => (
+                  <div key={name} className="rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] p-3">
                     <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm text-slate-300">{name.replace(/_/g, ' ')}</span>
-                      <span className={`text-xs font-mono ${c.status !== 'ok' ? 'text-slate-500' : c.score >= 0.5 ? 'text-danger' : c.score >= 0.25 ? 'text-warning' : 'text-success'}`}>
-                        {c.status !== 'ok' ? c.status.replace(/_/g, ' ') : `${(c.score * 100).toFixed(0)}%`}
+                      <span className="text-sm font-medium text-[#172033]">{name.replace(/_/g, ' ')}</span>
+                      <span className={`font-mono text-xs font-semibold ${chk.status !== 'ok' ? 'text-[#98A2B3]' : chk.score >= 0.5 ? 'text-[#C62828]' : chk.score >= 0.25 ? 'text-[#B7791F]' : 'text-[#16803C]'}`}>
+                        {chk.status !== 'ok' ? chk.status.replace(/_/g, ' ') : `${(chk.score * 100).toFixed(0)}%`}
                       </span>
                     </div>
-                    <div className="mt-2 h-1.5 rounded-full bg-slate-700/50">
-                      <div className={`h-1.5 rounded-full ${c.status !== 'ok' ? 'bg-slate-600' : c.score >= 0.5 ? 'bg-danger' : c.score >= 0.25 ? 'bg-warning' : 'bg-success'}`} style={{ width: `${c.status === 'ok' ? Math.round(c.score * 100) : 0}%` }} />
+                    <div className="mt-2 h-1.5 rounded-full bg-[#E4E9F1]">
+                      <div className={`h-1.5 rounded-full ${chk.status !== 'ok' ? 'bg-[#BEC6D5]' : chk.score >= 0.5 ? 'bg-[#C62828]' : chk.score >= 0.25 ? 'bg-[#B7791F]' : 'bg-[#16803C]'}`} style={{ width: `${chk.status === 'ok' ? Math.round(chk.score * 100) : 0}%` }} />
                     </div>
-                    {(c.details?.findings?.length > 0) && (
-                      <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-slate-400">
-                        {c.details.findings.map((f, i) => <li key={i}>{f}</li>)}
+                    {(chk.details?.findings?.length > 0) && (
+                      <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-[#667085]">
+                        {chk.details.findings.map((f, i) => <li key={i}>{f}</li>)}
                       </ul>
                     )}
                   </div>
                 ))}
                 {(physicalData.checks_fired?.length > 0) && (
-                  <p className="text-xs text-slate-500">Fired: {physicalData.checks_fired.join(', ').replace(/_/g, ' ')}</p>
+                  <p className="text-xs text-[#98A2B3]">Fired: {physicalData.checks_fired.join(', ').replace(/_/g, ' ')}</p>
                 )}
                 {(() => {
                   const qr = physicalChecks.qr_barcode;
                   const codes = qr?.details?.codes || [];
                   if (!qr || qr.status !== 'ok' || codes.length === 0) return null;
                   return (
-                    <div className="rounded-lg border border-teal-500/30 bg-teal-500/5 p-3">
-                      <p className="text-sm font-medium text-teal-300">
+                    <div className="rounded-lg border border-[#1769AA]/25 bg-[#EAF2FA] p-3">
+                      <p className="text-sm font-semibold text-[#123B66]">
                         QR / Barcode — {qr.details.codes_found} decoded ({(qr.details.formats || []).join(', ')})
                       </p>
                       <div className="mt-2 space-y-2">
-                        {codes.map((c, i) => (
-                          <div key={i} className="rounded bg-black/30 p-2">
+                        {codes.map((cd, i) => (
+                          <div key={i} className="rounded border border-[#D9DEE7] bg-white p-2">
                             <div className="flex items-center justify-between gap-2">
-                              <span className="text-xs text-slate-400">{c.format}</span>
-                              <span className={`text-[11px] font-medium ${c.cross_check === 'consistent_with_document_number' ? 'text-success' : c.cross_check === 'payload_differs_from_document_number' ? 'text-danger' : 'text-slate-500'}`}>
-                                {c.cross_check === 'consistent_with_document_number' ? '✓ matches document number'
-                                  : c.cross_check === 'payload_differs_from_document_number' ? '✗ differs from document number — possible swapped code'
+                              <span className="text-xs text-[#667085]">{cd.format}</span>
+                              <span className={`text-[11px] font-semibold ${cd.cross_check === 'consistent_with_document_number' ? 'text-[#16803C]' : cd.cross_check === 'payload_differs_from_document_number' ? 'text-[#C62828]' : 'text-[#98A2B3]'}`}>
+                                {cd.cross_check === 'consistent_with_document_number' ? '✓ matches document number'
+                                  : cd.cross_check === 'payload_differs_from_document_number' ? '✕ differs from document number — possible swapped code'
                                   : 'no document link asserted'}
                               </span>
                             </div>
-                            <p className="mt-1 break-all font-mono text-[11px] text-slate-300">{c.payload}</p>
+                            <p className="mt-1 break-all font-mono text-[11px] text-[#172033]">{cd.payload}</p>
                           </div>
                         ))}
                       </div>
@@ -611,248 +668,195 @@ export default function CaseReport() {
               </div>
             )}
             {physicalModule?.evidence_uri && (
-              <div className="relative rounded-lg overflow-hidden border border-slate-700 group mt-4">
+              <div className="mt-3 overflow-hidden rounded-lg border border-[#D9DEE7]">
                 <EvidenceImage
                   evidenceUri={physicalModule.evidence_uri}
                   alt="Physical-forgery zone overlay marking the MRZ band and portrait frame examined for layout, font and frame anomalies"
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none flex items-end p-4">
-                   <p className="text-xs text-white">Forgery Zone Overlay</p>
-                </div>
+                <p className="border-t border-[#D9DEE7] bg-[#F7F8FA] px-3 py-1.5 text-xs font-medium text-[#667085]">Forgery Zone Overlay</p>
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* Additional Module Panels — Deepfake, Liveness, Checksum (audit P2 §5) */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-
-        {/* Deepfake Detection */}
-        <div className="glass-panel p-4 sm:p-6">
-          <div className="flex items-center gap-2 mb-4 border-b border-slate-700/50 pb-4">
-            <Fingerprint className="text-purple-400" size={20} />
-            <h2 className="text-base font-semibold text-white">Deepfake Detection</h2>
-          </div>
-          {deepfakeModule ? (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-slate-400">Status</span>
-                <StatusBadge status={deepfakeModule.status} score={deepfakeModule.score} />
-              </div>
-              {deepfakeModule.raw_output?.method && (
-                <div className="text-xs text-slate-500">
-                  Method: {deepfakeModule.raw_output.method}
-                </div>
-              )}
-              {deepfakeModule.raw_output?.metrics && (
-                <div className="bg-black/20 rounded p-3 space-y-1">
-                  <div className="flex justify-between gap-3 text-xs">
-                    <span className="text-slate-400">HF Fraction</span>
-                    <span className="text-slate-300 font-mono">{deepfakeModule.raw_output.metrics.high_frequency_fraction?.toFixed(4)}</span>
-                  </div>
-                  <div className="flex justify-between gap-3 text-xs">
-                    <span className="text-slate-400">Spectral Peakedness</span>
-                    <span className="text-slate-300 font-mono">{deepfakeModule.raw_output.metrics.spectral_peakedness?.toFixed(4)}</span>
-                  </div>
-                  <div className="flex justify-between gap-3 text-xs">
-                    <span className="text-slate-400">Rolloff Ratio</span>
-                    <span className="text-slate-300 font-mono">{deepfakeModule.raw_output.metrics.rolloff_ratio?.toFixed(4)}</span>
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : (
-            <p className="text-sm text-slate-500">No deepfake analysis available.</p>
-          )}
-        </div>
-
-        {/* Liveness Detection */}
-        <div className="glass-panel p-4 sm:p-6">
-          <div className="flex items-center gap-2 mb-4 border-b border-slate-700/50 pb-4">
-            <Eye className="text-cyan-400" size={20} />
-            <h2 className="text-base font-semibold text-white">Liveness Detection</h2>
-          </div>
-          {livenessModule ? (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-slate-400">Status</span>
-                <StatusBadge status={livenessModule.status} score={livenessModule.score} />
-              </div>
-              {livenessModule.raw_output?.live !== undefined && (
+      {/* Analysis Details (expandable) — Deepfake, Liveness, Checksum, Security Zones */}
+      <section aria-label="Analysis details" className="space-y-3">
+        <h2 className="gov-section-title">Analysis Details</h2>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <Details title="Deepfake Detection">
+            {deepfakeModule ? (
+              <div className="space-y-2 text-sm">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm text-slate-400">Result</span>
-                  {livenessModule.raw_output.live ? (
-                    <span className="text-success flex items-center gap-1 text-sm font-medium"><Radio size={14}/> Live</span>
-                  ) : (
-                    <span className="text-danger flex items-center gap-1 text-sm font-medium"><X size={14}/> Spoof Suspected</span>
-                  )}
+                  <span className="text-[#667085]">Status</span>
+                  <StatusBadgeLocal status={deepfakeModule.status} score={deepfakeModule.score} />
                 </div>
-              )}
-              {livenessModule.raw_output?.blink_count !== undefined && (
-                <div className="bg-black/20 rounded p-3 space-y-1">
-                  <div className="flex justify-between gap-3 text-xs">
-                    <span className="text-slate-400">Blink Count</span>
-                    <span className="text-slate-300 font-mono">{livenessModule.raw_output.blink_count}</span>
+                {deepfakeModule.raw_output?.method && (
+                  <p className="text-xs text-[#667085]">Method: {deepfakeModule.raw_output.method}</p>
+                )}
+                {deepfakeModule.raw_output?.metrics && (
+                  <div className="space-y-1 rounded-lg bg-[#F7F8FA] p-3 text-xs">
+                    <div className="flex justify-between gap-3"><span className="text-[#667085]">HF Fraction</span><span className="font-mono text-[#172033]">{deepfakeModule.raw_output.metrics.high_frequency_fraction?.toFixed(4)}</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-[#667085]">Spectral Peakedness</span><span className="font-mono text-[#172033]">{deepfakeModule.raw_output.metrics.spectral_peakedness?.toFixed(4)}</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-[#667085]">Rolloff Ratio</span><span className="font-mono text-[#172033]">{deepfakeModule.raw_output.metrics.rolloff_ratio?.toFixed(4)}</span></div>
                   </div>
-                  <div className="flex justify-between gap-3 text-xs">
-                    <span className="text-slate-400">Frames Analysed</span>
-                    <span className="text-slate-300 font-mono">{livenessModule.raw_output.frames_analysed}</span>
-                  </div>
-                  {livenessModule.raw_output?.ear_stats && (
-                    <div className="flex justify-between gap-3 text-xs">
-                      <span className="text-slate-400">EAR Swing</span>
-                      <span className="text-slate-300 font-mono">{livenessModule.raw_output.ear_stats.swing?.toFixed(4)}</span>
-                    </div>
-                  )}
-                </div>
-              )}
-              {livenessModule.status === 'inconclusive' && (
-                <div className="text-xs text-warning bg-warning/5 border border-warning/20 p-2 rounded">
-                  {livenessModule.raw_output?.reason || 'Liveness check was inconclusive. A multi-frame burst is required for reliable detection.'}
-                </div>
-              )}
-            </div>
-          ) : (
-            <p className="text-sm text-slate-500">No liveness data available.</p>
-          )}
-        </div>
-
-        {/* Checksum Validation */}
-        <div className="glass-panel p-4 sm:p-6">
-          <div className="flex items-center gap-2 mb-4 border-b border-slate-700/50 pb-4">
-            <Hash className="text-emerald-400" size={20} />
-            <h2 className="text-base font-semibold text-white">Checksum Validation</h2>
-          </div>
-          {checksumModule ? (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-slate-400">Document Type</span>
-                <span className="text-sm text-slate-300">{checksumModule.raw_output?.document_type?.toUpperCase() || '-'}</span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-slate-400">Valid</span>
-                {checksumModule.raw_output?.valid === true ? (
-                  <span className="text-success flex items-center gap-1 text-sm font-medium"><Check size={16}/> Pass</span>
-                ) : checksumModule.raw_output?.valid === false ? (
-                  <span className="text-danger flex items-center gap-1 text-sm font-medium"><X size={16}/> Fail</span>
-                ) : (
-                  <span className="text-xs px-2 py-1 bg-slate-700/40 text-slate-300 rounded border border-slate-600">N/A — not digitally verifiable</span>
                 )}
               </div>
-              {checksumModule.raw_output?.algorithm && (
-                <div className="text-xs text-slate-500">
-                  Algorithm: {checksumModule.raw_output.algorithm}
+            ) : <p className="text-sm text-[#667085]">No deepfake analysis available.</p>}
+          </Details>
+          <Details title="Liveness Detection">
+            {livenessModule ? (
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[#667085]">Status</span>
+                  <StatusBadgeLocal status={livenessModule.status} score={livenessModule.score} />
                 </div>
-              )}
-            </div>
-          ) : (
-            <p className="text-sm text-slate-500">No checksum data available.</p>
-          )}
+                {livenessModule.raw_output?.live !== undefined && (
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[#667085]">Result</span>
+                    {livenessModule.raw_output.live ? (
+                      <span className="gov-badge gov-badge-green"><Radio size={13} aria-hidden="true" /> Live</span>
+                    ) : (
+                      <span className="gov-badge gov-badge-red"><X size={13} aria-hidden="true" /> Spoof Suspected</span>
+                    )}
+                  </div>
+                )}
+                {livenessModule.raw_output?.blink_count !== undefined && (
+                  <div className="space-y-1 rounded-lg bg-[#F7F8FA] p-3 text-xs">
+                    <div className="flex justify-between gap-3"><span className="text-[#667085]">Blink Count</span><span className="font-mono text-[#172033]">{livenessModule.raw_output.blink_count}</span></div>
+                    <div className="flex justify-between gap-3"><span className="text-[#667085]">Frames Analysed</span><span className="font-mono text-[#172033]">{livenessModule.raw_output.frames_analysed}</span></div>
+                    {livenessModule.raw_output?.ear_stats && (
+                      <div className="flex justify-between gap-3"><span className="text-[#667085]">EAR Swing</span><span className="font-mono text-[#172033]">{livenessModule.raw_output.ear_stats.swing?.toFixed(4)}</span></div>
+                    )}
+                  </div>
+                )}
+                {livenessModule.status === 'inconclusive' && (
+                  <div className="gov-notice gov-notice-amber !p-2.5 !text-xs">
+                    {livenessModule.raw_output?.reason || 'Liveness check was inconclusive. A multi-frame burst is required for reliable detection.'}
+                  </div>
+                )}
+              </div>
+            ) : <p className="text-sm text-[#667085]">No liveness data available.</p>}
+          </Details>
+          <Details title="Checksum Validation">
+            {checksumModule ? (
+              <div className="space-y-2 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[#667085]">Document Type</span>
+                  <span className="font-medium text-[#172033]">{checksumModule.raw_output?.document_type?.toUpperCase() || '-'}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-[#667085]">Valid</span>
+                  {checksumModule.raw_output?.valid === true ? (
+                    <span className="gov-badge gov-badge-green"><Check size={13} aria-hidden="true" /> Pass</span>
+                  ) : checksumModule.raw_output?.valid === false ? (
+                    <span className="gov-badge gov-badge-red"><X size={13} aria-hidden="true" /> Fail</span>
+                  ) : (
+                    <span className="gov-badge gov-badge-grey">N/A — not digitally verifiable</span>
+                  )}
+                </div>
+                {checksumModule.raw_output?.algorithm && (
+                  <p className="text-xs text-[#667085]">Algorithm: {checksumModule.raw_output.algorithm}</p>
+                )}
+              </div>
+            ) : <p className="text-sm text-[#667085]">No checksum data available.</p>}
+          </Details>
         </div>
-        {/* Security Zones */}
-        <div className="glass-panel p-4 sm:p-6">
-          <div className="flex items-center gap-2 mb-4 border-b border-slate-700/50 pb-4">
-            <ShieldAlert size={20} className="text-amber-400" />
-            <h2 className="text-base font-semibold text-white">Security Zones</h2>
-          </div>
+        <Details title="Security Zones — legacy zone analysis">
           {(() => {
             const sz = module_results.find(m => m.module_name === 'security_zones');
-            if (!sz) return <p className="text-sm text-slate-500">No security zone analysis available.</p>;
+            if (!sz) return <p className="text-sm text-[#667085]">No security zone analysis available.</p>;
             return (
-              <div className="space-y-3">
+              <div className="space-y-2 text-sm">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm text-slate-400">Status</span>
-                  <StatusBadge status={sz.status} score={sz.score} />
+                  <span className="text-[#667085]">Status</span>
+                  <StatusBadgeLocal status={sz.status} score={sz.score} />
                 </div>
                 {sz.raw_output?.checks && (
-                  <div className="bg-black/20 rounded p-3 space-y-1 text-xs">
-                    {Object.entries(sz.raw_output.checks).map(([k,v]) => (
+                  <div className="space-y-1 rounded-lg bg-[#F7F8FA] p-3 text-xs">
+                    {Object.entries(sz.raw_output.checks).map(([k, v]) => (
                       <div key={k} className="flex justify-between gap-3">
-                        <span className="text-slate-400">{k.replace(/_/g,' ')}</span>
-                        <span className="text-slate-300 font-mono text-[11px]">{String(v).slice(0,40)}</span>
+                        <span className="text-[#667085]">{k.replace(/_/g, ' ')}</span>
+                        <span className="font-mono text-[11px] text-[#172033]">{String(v).slice(0, 40)}</span>
                       </div>
                     ))}
                   </div>
                 )}
-                {sz.evidence_uri && <p className="text-xs text-slate-500">Zone overlay: {sz.evidence_uri.split('/').pop()}</p>}
+                {sz.evidence_uri && <p className="text-xs text-[#667085]">Zone overlay: {sz.evidence_uri.split('/').pop()}</p>}
               </div>
             );
           })()}
-        </div>
-      </div>
+        </Details>
+      </section>
 
       {/* Watchlist Panel — always shown, even on clear (audit P2 §6) */}
-      <div className={`glass-panel p-4 sm:p-6 ${!watchlistModule?.is_mocked && watchlistModule?.raw_output?.is_hit ? 'border-danger/50 bg-danger/5' : 'bg-black/5'}`}>
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <ShieldAlert className={!watchlistModule?.is_mocked && watchlistModule?.raw_output?.is_hit ? 'text-danger' : 'text-slate-400'} size={24} />
-          <h2 className="text-lg font-semibold text-white">
-            Watchlist Lookup
-          </h2>
+      <section aria-label="Watchlist lookup" className={`gov-card-padded ${!watchlistModule?.is_mocked && watchlistModule?.raw_output?.is_hit ? 'border-l-4 !border-l-[#C62828]' : ''}`}>
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <ShieldAlert className={!watchlistModule?.is_mocked && watchlistModule?.raw_output?.is_hit ? 'text-[#C62828]' : 'text-[#667085]'} size={20} aria-hidden="true" />
+          <h2 className="gov-card-title">Watchlist Lookup</h2>
           {watchlistModule?.is_mocked && <MockedDataBadge />}
           {!watchlistModule?.is_mocked && (watchlistModule?.raw_output?.is_hit ? (
-            <span className="ml-2 bg-danger/20 text-danger px-2 py-1 rounded text-xs font-medium border border-danger/30">HIT</span>
+            <span className="gov-badge gov-badge-red">HIT</span>
           ) : (
-            <span className="ml-2 bg-success/20 text-success px-2 py-1 rounded text-xs font-medium border border-success/30">CLEAR</span>
+            <span className="gov-badge gov-badge-green"><Check size={13} aria-hidden="true" /> CLEAR</span>
           ))}
         </div>
         {watchlistModule?.is_mocked ? (
-          <p className="text-sm text-slate-400">
+          <p className="text-sm text-[#667085]">
             Watchlist registry is not connected. Lookout results are unavailable and were not used in this screening.
           </p>
         ) : watchlistModule?.raw_output?.is_hit ? (
           <div className="space-y-2">
             {watchlistModule.raw_output.hits.map((hit, i) => (
-              <div key={i} className="bg-black/40 p-4 rounded-lg border border-danger/20">
-                <p className="text-sm font-medium text-white">{hit.name} <span className="ml-0 block text-slate-500 sm:ml-2 sm:inline">ID: {hit.id_number}</span></p>
-                <p className="text-sm text-danger mt-1">{hit.source}</p>
+              <div key={i} className="rounded-lg border border-[#C62828]/30 bg-[#FBEAEA] p-3">
+                <p className="text-sm font-semibold text-[#172033]">{hit.name} <span className="ml-0 block font-normal text-[#667085] sm:ml-2 sm:inline">ID: {hit.id_number}</span></p>
+                <p className="mt-1 text-sm font-medium text-[#C62828]">{hit.source}</p>
               </div>
             ))}
           </div>
         ) : (
-          <p className="text-sm text-slate-400">No watchlist matches found for this traveler.</p>
+          <p className="text-sm text-[#667085]">No watchlist matches found for this traveler.</p>
         )}
-      </div>
+      </section>
 
       {/* Officer Action — state machine: pending_review -> escalated -> decided; deny requires supervisor */}
       {(() => {
         const myRole = (localStorage.getItem('role') || 'officer').toLowerCase();
         const isAuditor = myRole === 'auditor';
         const isOfficer = myRole === 'officer';
-        const isSupervisor = myRole === 'supervisor';
         if (c.status === 'decided') {
           return (
-            <div className="glass-panel mt-6 flex flex-col gap-4 bg-white/5 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
-              <div className="flex items-center gap-3 text-slate-300">
-                <Shield size={20} className="text-slate-500"/>
-                <span className="font-medium">Case Adjudicated</span>
+            <div className="gov-card-padded mt-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-3 text-[#172033]">
+                <ShieldCheck size={20} className="text-[#667085]" aria-hidden="true" />
+                <span className="font-semibold">Case Adjudicated</span>
               </div>
-              <span className="uppercase text-sm tracking-wider bg-slate-800 px-3 py-1 rounded text-white border border-slate-700">Status: decided (v{c.version ?? 0})</span>
+              <span className="gov-badge gov-badge-grey w-fit uppercase">Status: decided (v{c.version ?? 0})</span>
             </div>
           );
         }
         if (c.status === 'escalated') {
           return (
-            <div className="glass-panel mt-6 border-t-4 border-t-warning p-4 sm:p-6">
-              <div className="flex items-center gap-2 mb-4 text-warning">
-                <AlertTriangle size={20} />
-                <h2 className="text-lg font-semibold">Escalated — Awaiting Supervisor Decision</h2>
+            <div className="gov-card-padded mt-6 border-t-4 !border-t-[#B7791F]">
+              <div className="mb-3 flex items-center gap-2 text-[#B7791F]">
+                <AlertTriangle size={18} aria-hidden="true" />
+                <h2 className="gov-card-title !text-[#7A5410]">Escalated — Awaiting Supervisor Decision</h2>
               </div>
-              <p className="text-sm text-slate-400 mb-4">This case was escalated for supervisor review. Only a supervisor can clear or deny it.</p>
+              <p className="mb-4 text-sm text-[#667085]">This case was escalated for supervisor review. Only a supervisor can clear or deny it.</p>
               {isAuditor ? (
-                <p className="text-sm text-slate-500">Auditor role is read-only.</p>
+                <p className="text-sm text-[#667085]">Auditor role is read-only.</p>
               ) : isOfficer ? (
-                <p className="text-sm text-slate-500">Your role cannot decide escalated cases.</p>
+                <p className="text-sm text-[#667085]">Your role cannot decide escalated cases.</p>
               ) : (
                 <div className="space-y-4">
-                  <label htmlFor="adjudication-reason" className="block text-sm font-medium text-slate-300">
-                    Decision justification <span className="text-slate-500">(required, minimum 3 characters)</span>
+                  <label htmlFor="adjudication-reason" className="gov-label">
+                    Decision justification <span className="font-normal text-[#667085]">(required, minimum 3 characters)</span>
                   </label>
-                  <textarea id="adjudication-reason" value={reason} onChange={(e) => setReason(e.target.value)} className="w-full bg-black/20 border border-slate-700 rounded-lg p-4 text-white focus:outline-none focus:border-primary transition-colors text-sm min-h-[100px]" placeholder="Record the grounds for this decision..." />
-                  {actionError && (<div role="alert" className="bg-danger/10 border border-danger/50 text-danger rounded-lg p-3 text-sm">{actionError}</div>)}
-                  <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
-                    <button onClick={() => handleAction('clear')} disabled={actionLoading} className="flex-1 bg-success/10 hover:bg-success/20 text-success border border-success/30 py-3 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"><CheckCircle size={18} /> Clear Traveler</button>
-                    <button onClick={() => handleAction('deny')} disabled={actionLoading} className="flex-1 bg-danger/10 hover:bg-danger/20 text-danger border border-danger/30 py-3 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"><X size={18} /> Deny Entry</button>
+                  <textarea id="adjudication-reason" value={reason} onChange={(e) => setReason(e.target.value)} className="gov-textarea" placeholder="Record the grounds for this decision…" />
+                  {actionError && (<div role="alert" className="gov-notice gov-notice-red">{actionError}</div>)}
+                  <div className="flex flex-col gap-3 sm:flex-row sm:gap-3">
+                    <button onClick={() => handleAction('clear')} disabled={actionLoading} className="gov-btn gov-btn-primary flex-1"><CheckCircle2 size={17} aria-hidden="true" /> Clear Traveler</button>
+                    <button onClick={() => handleAction('deny')} disabled={actionLoading} className="gov-btn gov-btn-danger flex-1"><X size={17} aria-hidden="true" /> Deny Entry</button>
                   </div>
                 </div>
               )}
@@ -861,58 +865,59 @@ export default function CaseReport() {
         }
         // pending_review
         return (
-          <div className="glass-panel mt-6 border-t-4 border-t-primary p-4 sm:p-6">
-            <h2 className="text-lg font-semibold text-white mb-4">Officer Adjudication <span className="text-xs font-normal text-slate-500">(v{c.version ?? 0})</span></h2>
+          <div className="gov-card-padded mt-6 border-t-4 !border-t-[#123B66]">
+            <h2 className="gov-card-title mb-3">Officer Adjudication <span className="text-xs font-normal text-[#98A2B3]">(v{c.version ?? 0})</span></h2>
             <div className="space-y-4">
-              <label htmlFor="adjudication-reason" className="block text-sm font-medium text-slate-300">
-                Decision justification <span className="text-slate-500">(required, minimum 3 characters)</span>
+              <label htmlFor="adjudication-reason" className="gov-label">
+                Decision justification <span className="font-normal text-[#667085]">(required, minimum 3 characters)</span>
               </label>
-              <textarea id="adjudication-reason" value={reason} onChange={(e) => setReason(e.target.value)} className="w-full bg-black/20 border border-slate-700 rounded-lg p-4 text-white focus:outline-none focus:border-primary transition-colors text-sm min-h-[100px]" placeholder="Record the grounds for this decision..." />
-              {actionError && (<div role="alert" className="bg-danger/10 border border-danger/50 text-danger rounded-lg p-3 text-sm">{actionError}</div>)}
-              <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
-                <button onClick={() => handleAction('clear')} disabled={actionLoading} className="flex-1 bg-success/10 hover:bg-success/20 text-success border border-success/30 py-3 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"><CheckCircle size={18} /> Clear Traveler</button>
+              <textarea id="adjudication-reason" value={reason} onChange={(e) => setReason(e.target.value)} className="gov-textarea" placeholder="Record the grounds for this decision…" />
+              {actionError && (<div role="alert" className="gov-notice gov-notice-red">{actionError}</div>)}
+              <div className="flex flex-col gap-3 sm:flex-row sm:gap-3">
+                <button onClick={() => handleAction('clear')} disabled={actionLoading} className="gov-btn gov-btn-primary flex-1"><CheckCircle2 size={17} aria-hidden="true" /> Clear Traveler</button>
                 {isOfficer ? (
-                  <button disabled className="flex-1 bg-slate-800 text-slate-500 border border-slate-700 py-3 rounded-lg font-medium flex items-center justify-center gap-2 cursor-not-allowed" title="Deny requires supervisor approval — use Escalate"><X size={18} /> Deny (Supervisor Only)</button>
+                  <button disabled className="gov-btn flex-1 cursor-not-allowed border border-[#D9DEE7] bg-[#F1F4F9] text-[#98A2B3]" title="Deny requires supervisor approval — use Escalate"><X size={17} aria-hidden="true" /> Deny (Supervisor Only)</button>
                 ) : (
-                  <button onClick={() => handleAction('deny')} disabled={actionLoading || isAuditor} className="flex-1 bg-danger/10 hover:bg-danger/20 text-danger border border-danger/30 py-3 rounded-lg font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50"><X size={18} /> Deny Entry</button>
+                  <button onClick={() => handleAction('deny')} disabled={actionLoading || isAuditor} className="gov-btn gov-btn-danger flex-1 disabled:opacity-50"><X size={17} aria-hidden="true" /> Deny Entry</button>
                 )}
-                <button onClick={() => handleAction('escalate')} disabled={actionLoading || isAuditor} className="flex-1 bg-warning/10 hover:bg-warning/20 text-warning border border-warning/30 py-3 rounded-lg font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50"><Shield size={18} /> Escalate to Supervisor</button>
+                <button onClick={() => handleAction('escalate')} disabled={actionLoading || isAuditor} className="gov-btn gov-btn-secondary flex-1 !border-[#B7791F] !text-[#7A5410] hover:!bg-[#FBF3E2] disabled:opacity-50"><ShieldCheck size={17} aria-hidden="true" /> Escalate to Supervisor</button>
               </div>
-              {isAuditor && <p className="text-xs text-slate-500">Auditor is read-only.</p>}
+              {isAuditor && <p className="text-xs text-[#667085]">Auditor is read-only.</p>}
             </div>
           </div>
         );
       })()}
 
-      {/* Provenance — immutable record for reproducibility */}
-      <div className="glass-panel p-4 sm:p-6">
-        <div className="flex items-center gap-2 mb-4 border-b border-slate-700/50 pb-4">
-          <Hash size={20} className="text-slate-400" />
-          <h2 className="text-base font-semibold text-white">Decision Provenance</h2>
-          {provVerified === true && <span className="ml-auto text-xs px-2 py-1 bg-success/10 text-success rounded border border-success/30">✓ Signed & Verified</span>}
-          {provVerified === false && <span className="ml-auto text-xs px-2 py-1 bg-danger/10 text-danger rounded border border-danger/30">✗ Signature Mismatch</span>}
-          {provenance && !provVerified && provenance.provenance && <span className="ml-auto text-xs px-2 py-1 bg-warning/10 text-warning rounded border border-warning/30">Unverified</span>}
-        </div>
-        {!provenance || !provenance.provenance ? (
-          <p className="text-sm text-slate-500">No provenance recorded for this case (created before provenance tracking).</p>
-        ) : (
-          <div className="space-y-3 text-xs font-mono">
-            <div className="grid grid-cols-2 gap-3 text-slate-300">
-              <div><span className="text-slate-500">Code:</span> {provenance.provenance.code_version?.slice(0,12) || '—'}</div>
-              <div><span className="text-slate-500">At:</span> {provenance.provenance.timestamp ? new Date(provenance.provenance.timestamp).toLocaleString() : '—'}</div>
-              <div><span className="text-slate-500">Face thr:</span> {provenance.provenance.thresholds?.face_match}</div>
-              <div><span className="text-slate-500">Tamper hi:</span> {provenance.provenance.thresholds?.tamper_high}</div>
-              <div className="col-span-2"><span className="text-slate-500">Input hashes:</span> {Object.entries(provenance.provenance.input_hashes || {}).map(([k,v]) => `${k}:${String(v).slice(0,8)}`).join(' ') || '—'}</div>
-              <div className="col-span-2"><span className="text-slate-500">Models:</span> {Object.entries(provenance.provenance.models || {}).map(([k,v]) => `${k}:${v.threshold || v.model || ''}`).join(' | ').slice(0,120) || '—'}</div>
-            </div>
-            <details className="bg-black/20 rounded p-3">
-              <summary className="cursor-pointer text-slate-400 hover:text-white">Full provenance JSON</summary>
-              <pre className="mt-2 text-[10px] leading-tight text-slate-300 overflow-auto max-h-64 whitespace-pre-wrap break-all">{JSON.stringify(provenance.provenance, null, 2)}</pre>
-              <p className="mt-2 text-[10px] text-slate-500">Signature: {provenance.provenance_signature?.slice(0,32) || '—'}...</p>
-            </details>
+      {/* Verification Evidence / Audit Details — provenance */}
+      <section aria-label="Verification evidence and audit details" className="space-y-3">
+        <h2 className="gov-section-title">Verification Evidence &amp; Audit Details</h2>
+        <Details title="Decision provenance — signed record for reproducibility">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <Hash size={16} className="text-[#667085]" aria-hidden="true" />
+            {provVerified === true && <span className="gov-badge gov-badge-green">✓ Signed &amp; Verified</span>}
+            {provVerified === false && <span className="gov-badge gov-badge-red">✕ Signature Mismatch</span>}
+            {provenance && !provVerified && provenance.provenance && <span className="gov-badge gov-badge-amber">Unverified</span>}
           </div>
-        )}
-      </div>
+          {!provenance || !provenance.provenance ? (
+            <p className="text-sm text-[#667085]">No provenance recorded for this case (created before provenance tracking).</p>
+          ) : (
+            <div className="space-y-3 font-mono text-xs">
+              <div className="grid grid-cols-2 gap-3 text-[#172033]">
+                <div><span className="text-[#667085]">Code:</span> {provenance.provenance.code_version?.slice(0, 12) || '—'}</div>
+                <div><span className="text-[#667085]">At:</span> {provenance.provenance.timestamp ? new Date(provenance.provenance.timestamp).toLocaleString('en-IN') : '—'}</div>
+                <div><span className="text-[#667085]">Face thr:</span> {provenance.provenance.thresholds?.face_match}</div>
+                <div><span className="text-[#667085]">Tamper hi:</span> {provenance.provenance.thresholds?.tamper_high}</div>
+                <div className="col-span-2"><span className="text-[#667085]">Input hashes:</span> {Object.entries(provenance.provenance.input_hashes || {}).map(([k, v]) => `${k}:${String(v).slice(0, 8)}`).join(' ') || '—'}</div>
+                <div className="col-span-2"><span className="text-[#667085]">Models:</span> {Object.entries(provenance.provenance.models || {}).map(([k, v]) => `${k}:${v.threshold || v.model || ''}`).join(' | ').slice(0, 120) || '—'}</div>
+              </div>
+              <Details title="Full provenance JSON">
+                <pre className="max-h-64 overflow-auto text-[11px] leading-snug whitespace-pre-wrap text-[#172033] break-all">{JSON.stringify(provenance.provenance, null, 2)}</pre>
+                <p className="mt-2 text-[11px] text-[#667085]">Signature: {provenance.provenance_signature?.slice(0, 32) || '—'}…</p>
+              </Details>
+            </div>
+          )}
+        </Details>
+      </section>
     </div>
   );
 }

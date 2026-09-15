@@ -44,42 +44,42 @@ export default function IrisCapture({ onCapture, onClear, file }) {
 
   if (file) {
     return (
-      <div className="glass-panel p-4">
-        <p className="text-sm text-slate-200">Iris ({eye}) captured: {file.name}</p>
-        {previewUrl && <img src={previewUrl} alt="iris" className="mt-2 max-h-[120px] rounded border border-slate-700" />}
-        <button onClick={onClear} className="mt-3 text-xs px-3 py-1 bg-slate-800 border border-slate-700 rounded text-slate-300">Clear</button>
+      <div className="gov-card-padded">
+        <p className="text-sm font-medium text-[#172033]">Iris ({eye}) captured: {file.name}</p>
+        {previewUrl && <img src={previewUrl} alt="iris" className="mt-2 max-h-[120px] rounded-lg border border-[#D9DEE7]" />}
+        <button onClick={onClear} className="gov-btn gov-btn-secondary mt-3 !min-h-[34px] !px-3 !py-1.5 !text-xs">Clear</button>
       </div>
     );
   }
   return (
-    <div className="glass-panel p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <span className="text-sm font-medium text-slate-300">Iris Capture (RGB prototype — not NIR)</span>
-        <select value={eye} onChange={e=>setEye(e.target.value)} className="ml-auto bg-black/30 border border-slate-700 rounded px-2 py-1 text-xs text-white">
+    <div className="gov-card-padded">
+      <div className="mb-3 flex items-center gap-2">
+        <span className="text-sm font-semibold text-[#172033]">Iris Capture (RGB prototype — not NIR)</span>
+        <select value={eye} onChange={e=>setEye(e.target.value)} className="gov-input ml-auto !h-9 !w-auto !text-xs">
           <option value="left">Left eye</option>
           <option value="right">Right eye</option>
         </select>
       </div>
       {!previewing ? (
-        <button onClick={startCamera} className="w-full py-2 bg-primary/20 hover:bg-primary/30 text-primary border border-primary/30 rounded-lg text-sm">Open Eye Camera</button>
+        <button onClick={startCamera} className="gov-btn gov-btn-secondary w-full">Open Eye Camera</button>
       ) : (
         <div className="space-y-3">
           <div className="relative">
-            <video ref={videoRef} autoPlay playsInline muted className="w-full h-[180px] bg-black rounded-lg object-contain border border-slate-700" />
+            <video ref={videoRef} autoPlay playsInline muted className="h-[180px] w-full rounded-lg border border-[#D9DEE7] bg-[#172033] object-contain" />
             {/* Eye guide overlay */}
-            <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-              <div className="w-24 h-12 border-2 border-primary/60 rounded-full" />
-              <div className="absolute w-16 h-16 border border-white/20 rounded-full" />
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center" aria-hidden="true">
+              <div className="h-12 w-24 rounded-full border-2 border-[#1769AA]/70" />
+              <div className="absolute h-16 w-16 rounded-full border border-white/40" />
             </div>
           </div>
-          <p className="text-xs text-slate-400">Align eye in the oval, good light, no glare. Capture a short burst — multiple frames improve PAD.</p>
+          <p className="text-xs text-[#667085]">Align eye in the oval, good light, no glare. Capture a short burst — multiple frames improve PAD.</p>
           <div className="flex gap-2">
-            <button onClick={stopStream} className="flex-1 py-2 bg-slate-800 border border-slate-700 rounded text-xs text-slate-300">Cancel</button>
-            <button onClick={capture} className="flex-1 py-2 bg-primary text-white rounded text-xs font-medium">Capture Eye</button>
+            <button onClick={stopStream} className="gov-btn gov-btn-secondary flex-1 !text-xs">Cancel</button>
+            <button onClick={capture} className="gov-btn gov-btn-primary flex-1 !text-xs">Capture Eye</button>
           </div>
         </div>
       )}
-      <p className="text-[11px] text-slate-500 mt-2">RGB iris is prototype/research; NIR hardware (850nm) is the production path. See docs/iris_architecture.md</p>
+      <p className="mt-2 text-[11px] text-[#98A2B3]">RGB iris is prototype/research; NIR hardware (850nm) is the production path. See docs/iris_architecture.md</p>
     </div>
   );
 }

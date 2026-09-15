@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Loader2, ScrollText, Search, ChevronLeft, ChevronRight, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { Loader2, Search, ChevronLeft, ChevronRight, ShieldCheck, AlertTriangle } from 'lucide-react';
 import api from '../api';
 import SEO from '../components/SEO';
 import Breadcrumbs from '../components/Breadcrumbs';
