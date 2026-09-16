@@ -1,7 +1,9 @@
 """Gemini AI Multi-Task Scanner — single-call document analysis.
 
-Sends a single multi-image request to Google Gemini 3.6 Flash (see
-GEMINI_MODEL, default `gemini-3.6-flash`) containing:
+Sends a single multi-image request to a configured Google Gemini model
+(see GEMINI_MODELS / GEMINI_MODEL, default cascade:
+  gemini-3.7-flash → gemini-3.6-flash → gemini-1.5-flash)
+containing:
   1. Uploaded Document Image
   2. Live Webcam Capture Still
   3. Database Reference Photo (optional)
@@ -10,17 +12,17 @@ In a single ~1.4-second roundtrip, Gemini returns a structured JSON payload
 with document classification, OCR demographics, 3-way face verification,
 and photo tamper anomaly detection.
 
-Includes a resilient **offline simulation fallback engine** so the system
-executes smoothly even if an API key is not configured or during network
-timeouts. The fallback produces realistic demo output marked with
-`is_simulated: true`.
+Includes a **cascading multi-model fallback**: if the primary model fails
+(overloaded, unavailable, or misconfigured), the scanner automatically
+retries with the next model in the list before falling back to the
+**offline simulation engine** (marked `is_simulated: true`).
 
 Misconfiguration note: a non-Google key (valid Google keys start with
-`AIza`) or an unknown model name fails exactly like a network outage —
+`AIza`) or all models failing fails exactly like a network outage —
 `is_simulated=True` + `cloud_unavailable=True` — and the case is floored
-at Yellow. Check the `[gemini_scanner]` log line and `.env` (`GEMINI_API_KEY`,
-`GEMINI_MODEL=gemini-3.6-flash`) first when the UI shows
-"CLOUD UNAVAILABLE — Local Checks Only".
+at Yellow. Check the `[gemini_scanner]` log line and `.env`
+(`GEMINI_API_KEY`, `GEMINI_MODELS=gemini-3.7-flash,gemini-3.6-flash`)
+first when the UI shows "CLOUD UNAVAILABLE — Local Checks Only".
 """
 
 from __future__ import annotations
@@ -42,7 +44,10 @@ load_dotenv()
 # Gemini API integration
 # ---------------------------------------------------------------------------
 
-DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
+# Default cascade: newest → stable → legacy flash
+DEFAULT_GEMINI_MODELS = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-1.5-flash"]
+# Legacy single-model default for backwards compatibility
+DEFAULT_GEMINI_MODEL = DEFAULT_GEMINI_MODELS[0]
 
 
 def _get_api_key() -> str:
@@ -50,9 +55,35 @@ def _get_api_key() -> str:
     return os.environ.get("GEMINI_API_KEY", "")
 
 
+def _get_models() -> list[str]:
+    """Return the ordered list of models to try, from most to least preferred.
+
+    Resolution order:
+      1. GEMINI_MODELS (comma-separated list, e.g. "gemini-3.7-flash,gemini-3.6-flash")
+      2. GEMINI_MODEL  (single model name — backwards compatibility)
+      3. DEFAULT_GEMINI_MODELS hardcoded cascade
+    """
+    multi = os.environ.get("GEMINI_MODELS", "").strip()
+    if multi:
+        return [m.strip() for m in multi.split(",") if m.strip()]
+    single = os.environ.get("GEMINI_MODEL", "").strip()
+    if single:
+        # If operator only set GEMINI_MODEL, still build a safe cascade
+        # by appending the stable defaults that weren't already listed.
+        cascade = [single]
+        for fallback in DEFAULT_GEMINI_MODELS:
+            if fallback not in cascade:
+                cascade.append(fallback)
+        return cascade
+    return list(DEFAULT_GEMINI_MODELS)
+
+
 def _get_model() -> str:
-    """Read the model name lazily; fall back to the supported default."""
-    return os.environ.get("GEMINI_MODEL", "") or DEFAULT_GEMINI_MODEL
+    """Legacy single-model getter — returns the first model in the cascade.
+
+    Kept for backwards compatibility; new call-sites should use _get_models().
+    """
+    return _get_models()[0]
 
 
 # Kept for backwards compatibility (import-time snapshot); new code must use
@@ -154,78 +185,127 @@ def scan_document(
     db_reference_path: Optional[str | Path] = None,
     timeout: float = 10.0,
 ) -> dict:
-    """Execute the single-call multi-task AI scan.
+    """Execute the single-call multi-task AI scan with cascading model fallback.
 
-    Tries Google Gemini first; falls back to offline simulation if
-    the API key is missing, the SDK isn't installed, or the call fails.
+    Iterates through the model list from GEMINI_MODELS (or GEMINI_MODEL for
+    backwards compatibility, or the built-in default cascade) and tries each
+    in order. The first model to succeed returns its result immediately.
+    Only when every model in the list has been exhausted does the system fall
+    back to the offline simulation engine.
 
     Returns:
         A dict matching the structured JSON schema above, plus metadata fields:
           - `is_simulated`: bool — True if the fallback engine was used
           - `latency_ms`: float — roundtrip time in milliseconds
           - `model_used`: str — the model identifier or "offline_simulation"
+          - `models_attempted`: list[str] — models tried before success/failure
     """
     start = time.perf_counter()
     has_live = bool(live_capture_path and _load_image_bytes(live_capture_path))
     api_key = _get_api_key()
-    model = _get_model()
+    models = _get_models()
 
-    # Attempt real Gemini call
+    # Cascading model attempt loop — try each model in priority order
     fallback_reason: Optional[str] = None
+    models_attempted: list[str] = []
+
     if api_key:
-        try:
-            result = _call_gemini(
-                document_image_path,
-                live_capture_path,
-                db_reference_path,
-                timeout,
-                api_key=api_key,
-                model=model,
-            )
-            elapsed = (time.perf_counter() - start) * 1000
-            result["is_simulated"] = False
-            result["latency_ms"] = round(elapsed, 1)
-            result["model_used"] = model
-            return _normalize_no_live_face_match(result, has_live)
-        except Exception as exc:
-            # Cloud failure → controlled fallback, not a halt. Distinguish
-            # auth/config errors (wrong key, unknown model) from transient
-            # network outages so the operator knows what to fix.
-            err_text = f"{type(exc).__name__}: {exc}".lower()
-            is_auth = any(s in err_text for s in [
-                "api_key", "api key", "invalid key", "unauthenticated",
-                "permission_denied", "permission denied", "401", "403",
-                "not found", "404", "is not found", "unsupported",
-                "does not exist", "unknown model", "publisher model",
-            ])
-            is_network = any(s in err_text for s in [
-                "timeout", "connection", "network", "unavailable",
-                "dns", "socket", "503", "502", "504", "deadline",
-            ])
-            kind = "auth/config" if is_auth else ("network" if is_network else "other")
-            fallback_reason = "auth_or_config_error" if is_auth else "network_or_api_failure"
-            key_hint = ""
-            if is_auth:
-                key_hint = (
-                    " Check .env: GEMINI_API_KEY must be a valid Google key "
-                    "(starts with 'AIza'), GEMINI_MODEL must be a supported "
-                    f"model (default '{DEFAULT_GEMINI_MODEL}')."
+        for model in models:
+            models_attempted.append(model)
+            try:
+                result = _call_gemini(
+                    document_image_path,
+                    live_capture_path,
+                    db_reference_path,
+                    timeout,
+                    api_key=api_key,
+                    model=model,
                 )
-            print(f"[gemini_scanner] Gemini API call failed ({kind}): {type(exc).__name__}: {exc} — falling back to local checks, final verdict will be Yellow/Manual Review.{key_hint}")
-            # Fall through to simulation with cloud_unavailable flag
+                elapsed = (time.perf_counter() - start) * 1000
+                result["is_simulated"] = False
+                result["latency_ms"] = round(elapsed, 1)
+                result["model_used"] = model
+                result["models_attempted"] = models_attempted
+                return _normalize_no_live_face_match(result, has_live)
+            except Exception as exc:
+                # Classify the failure so we can decide whether to keep trying
+                # the cascade or abort early (auth errors won't fix themselves
+                # by switching models, but model-not-found or overload will).
+                err_text = f"{type(exc).__name__}: {exc}".lower()
+                is_auth = any(s in err_text for s in [
+                    "api_key", "api key", "invalid key", "unauthenticated",
+                    "permission_denied", "permission denied", "401", "403",
+                ])
+                is_model_error = any(s in err_text for s in [
+                    "not found", "404", "is not found", "unsupported",
+                    "does not exist", "unknown model", "publisher model",
+                ])
+                is_network = any(s in err_text for s in [
+                    "timeout", "connection", "network", "unavailable",
+                    "dns", "socket", "503", "502", "504", "deadline",
+                    "resource_exhausted", "quota", "rate",
+                ])
+
+                if is_auth:
+                    # Auth errors are key-level failures — no point trying
+                    # other models with the same key.
+                    fallback_reason = "auth_or_config_error"
+                    print(
+                        f"[gemini_scanner] Auth/config error on model '{model}': "
+                        f"{type(exc).__name__}: {exc} — aborting cascade. "
+                        "Check .env: GEMINI_API_KEY must be a valid Google key "
+                        "(starts with 'AIza')."
+                    )
+                    break  # No point trying remaining models
+                elif is_model_error:
+                    kind = "model-not-found"
+                    fallback_reason = "network_or_api_failure"
+                    print(
+                        f"[gemini_scanner] Model '{model}' not found/unsupported "
+                        f"({type(exc).__name__}: {exc}) — trying next model in cascade."
+                    )
+                    # Continue to next model
+                elif is_network:
+                    fallback_reason = "network_or_api_failure"
+                    print(
+                        f"[gemini_scanner] Network/quota error on model '{model}' "
+                        f"({type(exc).__name__}: {exc}) — trying next model in cascade."
+                    )
+                    # Continue to next model
+                else:
+                    fallback_reason = "network_or_api_failure"
+                    print(
+                        f"[gemini_scanner] Unexpected error on model '{model}' "
+                        f"({type(exc).__name__}: {exc}) — trying next model in cascade."
+                    )
+                    # Continue to next model
+
+        if models_attempted:
+            print(
+                f"[gemini_scanner] All {len(models_attempted)} model(s) failed "
+                f"({', '.join(models_attempted)}) — falling back to offline simulation. "
+                "Final verdict will be Yellow/Manual Review."
+            )
 
     # Offline simulation fallback — controlled, not a halt
     result = _simulate_scan(document_image_path, live_capture_path, db_reference_path)
     elapsed = (time.perf_counter() - start) * 1000
     result["is_simulated"] = True
     # Distinguish demo (no/placeholder key) vs cloud failure (key present but call failed)
-    _has_real_key = bool(api_key and api_key.strip() not in ("", "your_gemini_api_key_here", "your_gemini_api_key_here\n") and len(api_key.strip()) > 20)
+    _has_real_key = bool(
+        api_key
+        and api_key.strip() not in ("", "your_gemini_api_key_here", "your_gemini_api_key_here\n")
+        and len(api_key.strip()) > 20
+    )
     result["cloud_unavailable"] = bool(_has_real_key and fallback_reason is not None)
     if not _has_real_key:
         result["cloud_unavailable"] = False
     result["latency_ms"] = round(elapsed, 1)
     result["model_used"] = "offline_simulation"
-    result["cloud_fallback_reason"] = (fallback_reason or "network_or_api_failure") if _has_real_key else "no_api_key"
+    result["models_attempted"] = models_attempted
+    result["cloud_fallback_reason"] = (
+        (fallback_reason or "network_or_api_failure") if _has_real_key else "no_api_key"
+    )
     return _normalize_no_live_face_match(result, has_live)
 
 
