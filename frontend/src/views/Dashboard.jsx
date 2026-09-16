@@ -27,12 +27,9 @@ export default function Dashboard() {
     setLoading(true);
     try {
       const res = await api.get('/cases');
-      const payload = res.data;
-      const list = Array.isArray(payload?.cases) ? payload.cases : Array.isArray(payload) ? payload : [];
-      setCases(list);
+      setCases(res.data.cases);
     } catch (e) {
       if (import.meta.env.DEV) console.error(e);
-      // keep existing cases on error; don't set undefined
     } finally {
       setLoading(false);
     }
@@ -42,26 +39,24 @@ export default function Dashboard() {
     fetchCases();
   }, []);
 
-  const safeCases = Array.isArray(cases) ? cases : [];
-
   const filteredCases = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return safeCases;
-    return safeCases.filter((c) => {
-      const id = (c?.id ?? 0).toString().padStart(4, '0');
+    if (!q) return cases;
+    return cases.filter((c) => {
+      const id = c.id.toString().padStart(4, '0');
       const type = (c.document_type || '').toLowerCase();
       return id.includes(q.replace(/^#/, '')) || type.includes(q);
     });
-  }, [safeCases, query]);
+  }, [cases, query]);
 
   const stats = useMemo(() => {
-    const total = safeCases.length;
-    const verified = safeCases.filter((c) => c.verdict === 'Green').length;
-    const review = safeCases.filter((c) => c.verdict === 'Yellow').length;
-    const flagged = safeCases.filter((c) => c.verdict === 'Red').length;
-    const pending = safeCases.filter((c) => c.status !== 'decided').length;
+    const total = cases.length;
+    const verified = cases.filter((c) => c.verdict === 'Green').length;
+    const review = cases.filter((c) => c.verdict === 'Yellow').length;
+    const flagged = cases.filter((c) => c.verdict === 'Red').length;
+    const pending = cases.filter((c) => c.status !== 'decided').length;
     return { total, verified, review, flagged, pending };
-  }, [safeCases]);
+  }, [cases]);
 
   return (
     <div className="animate-fade-in space-y-6">
@@ -123,7 +118,7 @@ export default function Dashboard() {
           <div>
             <h2 className="gov-card-title">Case Queue</h2>
             <p className="gov-meta mt-0.5">
-              {filteredCases.length} of {safeCases.length} cases · select a row to open the full report
+              {filteredCases.length} of {cases.length} cases · select a row to open the full report
             </p>
           </div>
           <div className="relative w-full sm:max-w-[320px]">
@@ -152,14 +147,14 @@ export default function Dashboard() {
               </tr>
             </thead>
             <tbody>
-              {loading && safeCases.length === 0 ? (
+              {loading && cases.length === 0 ? (
                 <tr>
                   <td colSpan="6" className="!py-12 text-center text-[#667085]">Loading cases…</td>
                 </tr>
               ) : filteredCases.length === 0 ? (
                 <tr>
                   <td colSpan="6" className="!py-12 text-center text-[#667085]">
-                    {safeCases.length === 0 ? (
+                    {cases.length === 0 ? (
                       <>No cases yet. <Link to="/scan" className="font-semibold text-[#1769AA] hover:underline">Start a screening</Link> from New Verification.</>
                     ) : (
                       'No cases match your search.'

@@ -18,24 +18,18 @@ function resolveBaseURL() {
   }
 
   // Deployed (e.g. Vercel): use the configured absolute backend URL.
-  // Guard: if envBase doesn't start with http, it's a relative path which
-  // would silently resolve against the frontend origin — treat as unset.
-  if (envBase && (envBase.startsWith('http://') || envBase.startsWith('https://'))) {
+  if (envBase) {
     return envBase.endsWith('/api') ? envBase : `${envBase}/api`;
   }
 
   // Production split-deploy convention: the app is served from
-  // netraksha.xyz (or www) while the API lives on Railway.
+  // netraksha.xyz (or www) while the API lives on the api subdomain.
   // Without this, an unset VITE_API_BASE_URL silently falls back to
   // same-origin /api (the frontend-only host) and every screening fails
   // with a network error. VITE_API_BASE_URL always wins when set.
   const host = window.location.hostname.toLowerCase();
   if (host === 'netraksha.xyz' || host === 'www.netraksha.xyz' || host === 'sih-weld-psi.vercel.app') {
-    return 'https://web-production-ab06a.up.railway.app/api';
-  }
-  // Railway preview / direct backend access — keep same-origin.
-  if (host.endsWith('.up.railway.app')) {
-    return '/api';
+    return 'https://api.netraksha.xyz/api';
   }
   return '/api';
 }
