@@ -1,0 +1,31 @@
+# Keep the Docker build context small, but NEVER exclude files the runtime needs:
+# pipeline/vendor/models/face_landmarker.task (committed MediaPipe model) and
+# pipeline/thresholds.json must stay included.
+
+.git/
+.gitignore
+.pytest_cache/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite3
+node_modules/
+frontend/node_modules/
+frontend/dist/
+dist/
+build/
+*.log
+.DS_Store
+.vscode/
+.idea/
+samples/evidence/
+tests/evidence/
+# Vendored InsightFace pack is gitignored (~300MB) and re-provisioned inside
+# the image by scripts/setup_vendor.sh — don't send the local copy.
+pipeline/vendor/models/models/

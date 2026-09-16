@@ -282,6 +282,7 @@ _CORS_DEFAULTS = [
     "https://netraksha.xyz",
     "https://www.netraksha.xyz",
     "https://api.netraksha.xyz",
+    "https://web-production-ab06a.up.railway.app",
 ]
 _CORS_EXTRA = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
 app.add_middleware(
