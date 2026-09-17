@@ -54,7 +54,7 @@ const VerdictCard = ({ verdict, riskScore, anomalyCount, similarity }) => {
         <dl className="grid w-full shrink-0 grid-cols-1 gap-2 min-[480px]:grid-cols-3 sm:w-auto sm:grid-cols-1 sm:min-w-[190px] lg:grid-cols-3 lg:min-w-[320px]">
           <div className="rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] px-3 py-2 text-center">
             <dt className="text-[11px] font-semibold uppercase tracking-wide text-[#667085]">Risk Score</dt>
-            <dd className="text-lg font-bold text-[#172033]">{riskScore != null ? `${Math.round(Number(riskScore))} / 100` : '—'}</dd>
+            <dd className="text-lg font-bold text-[#172033]">{riskScore != null ? `${Math.round(Number(riskScore) > 1 ? Number(riskScore) : Number(riskScore) * 100)} / 100` : '—'}</dd>
           </div>
           <div className="rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] px-3 py-2 text-center">
             <dt className="text-[11px] font-semibold uppercase tracking-wide text-[#667085]">Face Match</dt>
