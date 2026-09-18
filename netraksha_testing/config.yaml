@@ -1,0 +1,58 @@
+# Netraksha Testing Framework Configuration
+
+# Target application settings
+api:
+  base_url: "http://127.0.0.1:8000"
+  timeout: 30
+  auth:
+    username: "officer1"
+    password_env: "TEST_PASSWORD"  # Read from this env var, do not store password here!
+  endpoints:
+    health: "/api/health"
+    login: "/api/auth/login"
+    screen: "/api/screen"
+    cases: "/api/cases"
+  iterations: 10
+
+# Direct pipeline module benchmarking
+pipeline:
+  iterations: 5
+  project_root: ".."  # Auto-detected if null/missing
+
+# Load testing
+concurrency:
+  levels: [1, 2, 5, 10, 20]
+  requests_per_level: 20
+  target_endpoint: "/api/health"
+
+# Long-running stability/soak tests
+stability:
+  iterations: 100
+  checkpoint_interval: 10
+
+# Paths to sample data (relative to testing root or absolute)
+datasets:
+  documents_genuine: "../samples"  # Using existing Netraksha samples
+  documents_tampered: "../samples"
+  faces_dir: "../samples/faces"
+
+# Alert thresholds
+thresholds:
+  face_match: 0.55
+  cpu_bottleneck_pct: 80.0
+  ram_bottleneck_pct: 85.0
+  memory_leak_slope_mb_per_100req: 0.5
+
+# Resource monitor settings
+monitoring:
+  sampling_interval_s: 0.5
+  process_name: "uvicorn"
+
+# Output and reporting
+output:
+  directory: "output"
+
+reporting:
+  formats: ["html", "json", "csv"]
+  charts_dpi: 150
+  embed_charts_in_html: true
