@@ -45,7 +45,8 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 
 # Default cascade: newest → stable → legacy flash
-DEFAULT_GEMINI_MODELS = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-1.5-flash"]
+# gemini-3.8-flash reached GA on Sep 2, 2026 and is the recommended workhorse model.
+DEFAULT_GEMINI_MODELS = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-1.5-flash"]
 # Legacy single-model default for backwards compatibility
 DEFAULT_GEMINI_MODEL = DEFAULT_GEMINI_MODELS[0]
 
