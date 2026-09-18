@@ -1766,6 +1766,27 @@ async def _run_screening_pipeline(
             gemini_result["face_is_real_via_local"] = True
             face_is_real_via_local = True
         else:
+            # Simulated live_vs_doc is a hardcoded demo PASS (similarity
+            # 0.88-0.96) with no verification behind it. If the local engine
+            # also produced no verdict, surfacing it would be a false
+            # positive — clear it so the panel reads N/A / inconclusive.
+            # (Risk already nulls simulated inputs and forces Yellow; this
+            # makes the displayed 3-way consistent with the scoring.)
+            # Real (non-simulated) cloud verdicts never reach this branch —
+            # they are handled above — so only simulated values are cleared.
+            if is_simulated:
+                face_match_data = {
+                    **face_match_data,
+                    "live_vs_doc_match": None,
+                    "live_vs_doc_similarity": None,
+                    "similarity_score": None,
+                    "visual_reasoning": (
+                        "Face verification unavailable — cloud AI was offline "
+                        "and the local biometric produced no verdict. "
+                        "Manual officer comparison required."
+                    ),
+                }
+                gemini_result["three_way_face_match"] = face_match_data
             pair_sources["live_vs_doc"] = "none"
     gemini_result["three_way_face_match"] = face_match_data
 
