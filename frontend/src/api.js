@@ -17,19 +17,20 @@ function resolveBaseURL() {
     return '/api';
   }
 
-  // Deployed (e.g. Vercel): use the configured absolute backend URL.
-  // Guard: if envBase doesn't start with http, it's a relative path which
-  // would silently resolve against the frontend origin — treat as unset.
-  if (envBase && (envBase.startsWith('http://') || envBase.startsWith('https://'))) {
-    return envBase.endsWith('/api') ? envBase : `${envBase}/api`;
-  }
-
-  // Production: frontend on Vercel (netraksha.xyz) proxies /api to Railway via
-  // vercel.json rewrites. Same-origin avoids CORS + mobile-carrier blocking of
-  // Railway. VITE_API_BASE_URL (if set to https://...) still wins above.
+  // Production: Vercel (netraksha.xyz) MUST use same-origin /api via vercel.json
+  // rewrites proxy to Railway. This avoids CORS (www vs non-www) and mobile-carrier
+  // blocking of *.up.railway.app (screenshot: CORS No Access-Control-Allow-Origin).
+  // Takes precedence over VITE_API_BASE_URL so a stale env var can't force cross-origin.
   const host = window.location.hostname.toLowerCase();
   if (host === 'netraksha.xyz' || host === 'www.netraksha.xyz' || host === 'sih-weld-psi.vercel.app') {
     return '/api';
+  }
+
+  // Deployed (e.g. Vercel): use the configured absolute backend URL for other hosts.
+  // Guard: if envBase doesn't start with http, it's a relative path which would
+  // silently resolve against the frontend origin — treat as unset.
+  if (envBase && (envBase.startsWith('http://') || envBase.startsWith('https://'))) {
+    return envBase.endsWith('/api') ? envBase : `${envBase}/api`;
   }
   // Railway preview / direct backend access — keep same-origin.
   if (host.endsWith('.up.railway.app')) {
@@ -40,7 +41,7 @@ function resolveBaseURL() {
 
 const api = axios.create({
   baseURL: resolveBaseURL(), // FastAPI backend
-  timeout: 20000,
+  timeout: 90000, // cold start + OCR + Gemini + 3-way can exceed 30s on free tier
 });
 
 api.interceptors.request.use((config) => {
