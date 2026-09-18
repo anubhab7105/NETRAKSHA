@@ -156,7 +156,7 @@ export default defineConfig({
             return 'router';
           }
           if (id.includes('node_modules/lucide-react/')) {
-            return 'icons';
+            return 'lucide-icons';
           }
           if (id.includes('node_modules/axios/')) {
             return 'http-client';
