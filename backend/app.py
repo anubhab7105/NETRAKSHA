@@ -1948,26 +1948,11 @@ async def _run_screening_pipeline(
                     db_photo_path = _late_resolved
                     db_photo_late = True
                 elif _late_reason:
+                    # Photo download failed — record the reason; the late-Gemini
+                    # fallback below cannot help without the file, so leave legs N/A
+                    # with an honest reason instead of running local match with None.
                     _db_photo_unavailable_reason = _late_reason
-                    try:
-                        from pipeline.face_match import run_three_way_match as _late_three_way
-                        _late = await loop.run_in_executor(
-                            None, _late_three_way, str(doc_path), live_str, db_photo_path, False
-                        )
-                        _late_pairs = (_late or {}).get("pairs") or {}
-                        for _key, _mkey, _skey in (
-                            ("doc_vs_db", "doc_vs_db_match", "doc_vs_db_similarity"),
-                            ("live_vs_db", "live_vs_db_match", "live_vs_db_similarity"),
-                        ):
-                            _p = _late_pairs.get(_key) or {}
-                            if _p.get("status") == "ok":
-                                face_match_data[_mkey] = bool(_p["match"]) if _p.get("match") is not None else None
-                                face_match_data[_skey] = float(_p["similarity"]) if _p.get("similarity") is not None else None
-                                pair_sources[_key] = "local_late"
-                        tw_pairs.update({k: v for k, v in _late_pairs.items() if (v or {}).get("status") == "ok"})
-                        gemini_result["three_way_face_match"] = face_match_data
-                    except Exception as e:
-                        print(f"[three-way] late DB-pair exception {e}")
+                    print(f"[three-way] late photo download failed: {_late_reason} — skipping local DB legs")
 
     # Late-Gemini fallback: the registry record arrived after the parallel
     # phase (or the local engine is down) but the cloud is real and a
@@ -1981,20 +1966,47 @@ async def _run_screening_pipeline(
         try:
             _late_gem = await loop.run_in_executor(
                 None, scan_document, str(doc_path), live_str, db_photo_path)
-            if isinstance(_late_gem, dict) and not _late_gem.get("is_simulated"):
-                _lg = _late_gem.get("three_way_face_match") or {}
-                for _key, _mkey, _skey in (
-                    ("doc_vs_db", "doc_vs_db_match", "doc_vs_db_similarity"),
-                    ("live_vs_db", "live_vs_db_match", "live_vs_db_similarity"),
+            _late_gem_simulated = _late_gem.get("is_simulated") if isinstance(_late_gem, dict) else True
+            _lg = (_late_gem.get("three_way_face_match") or {}) if isinstance(_late_gem, dict) else {}
+            print(
+                f"[three-way] late Gemini result: simulated={_late_gem_simulated} "
+                f"doc_vs_db_match={_lg.get('doc_vs_db_match')!r} "
+                f"live_vs_db_match={_lg.get('live_vs_db_match')!r} "
+                f"doc_vs_db_sim={_lg.get('doc_vs_db_similarity')!r} "
+                f"live_vs_db_sim={_lg.get('live_vs_db_similarity')!r}"
+            )
+            if isinstance(_late_gem, dict) and not _late_gem_simulated:
+                # Threshold for deriving a match boolean from similarity when
+                # Gemini returns null (uncertain). Matches pipeline/face_match.py MATCH_THRESHOLD.
+                _LATE_MATCH_THRESHOLD = 0.55
+                for _key, _mkey, _skey, _sim_key in (
+                    ("doc_vs_db", "doc_vs_db_match", "doc_vs_db_similarity", "doc_vs_db_similarity"),
+                    ("live_vs_db", "live_vs_db_match", "live_vs_db_similarity", "live_vs_db_similarity"),
                 ):
-                    if face_match_data.get(_mkey) is None and _lg.get(_mkey) is not None:
-                        face_match_data[_mkey] = _lg[_mkey]
-                        if _lg.get(_skey) is not None:
-                            face_match_data[_skey] = _lg[_skey]
+                    if face_match_data.get(_mkey) is not None:
+                        continue  # already filled by local engine — don't overwrite
+                    # Try the explicit match boolean from the new prompt schema
+                    _gem_match = _lg.get(_mkey)
+                    _gem_sim = _lg.get(_sim_key)  # new per-pair similarity field
+                    if _gem_sim is None:
+                        # Older schema: fall back to primary similarity_score for doc_vs_db only
+                        if _key == "doc_vs_db":
+                            _gem_sim = _lg.get("similarity_score")
+                    # Derive match from similarity if Gemini returned null for the boolean
+                    if _gem_match is None and isinstance(_gem_sim, (int, float)):
+                        _gem_match = bool(_gem_sim >= _LATE_MATCH_THRESHOLD)
+                        print(
+                            f"[three-way] late Gemini: derived {_key}_match={_gem_match} "
+                            f"from similarity {_gem_sim:.3f} >= threshold {_LATE_MATCH_THRESHOLD}"
+                        )
+                    if _gem_match is not None:
+                        face_match_data[_mkey] = _gem_match
+                        if isinstance(_gem_sim, (int, float)):
+                            face_match_data[_skey] = float(_gem_sim)
                         pair_sources[_key] = "gemini_late"
                 gemini_result["three_way_face_match"] = face_match_data
         except Exception as e:
-            print(f"[three-way] late Gemini fallback exception {type(e).__name__}")
+            print(f"[three-way] late Gemini fallback exception {type(e).__name__}: {e}")
 
     # --- Three-way completeness: honest partial/complete reporting ---
     # Every advertised pair must be traceable to evidence (local), a real

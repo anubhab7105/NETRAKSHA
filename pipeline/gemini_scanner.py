@@ -108,22 +108,27 @@ Analyse the provided images and return ONLY a JSON object with this exact schema
     "father_or_spouse_name": "<if visible, else null>"
   },
   "three_way_face_match": {
-    "live_vs_doc_match": <bool>,
-    "doc_vs_db_match": <bool or null if no DB photo>,
-    "live_vs_db_match": <bool or null if no DB photo>,
-    "similarity_score": <float 0.0-1.0>,
-    "visual_reasoning": "<2-3 sentence forensic explanation>"
+    "live_vs_doc_match": <bool — true if live face matches document photo, false if not>,
+    "doc_vs_db_match": <bool — REQUIRED true/false when Image 3 present; null ONLY if Image 3 absent>,
+    "live_vs_db_match": <bool — REQUIRED true/false when Image 2 AND Image 3 present; null otherwise>,
+    "similarity_score": <float 0.0-1.0 — live-vs-doc facial similarity>,
+    "doc_vs_db_similarity": <float 0.0-1.0 — document photo vs DB reference; null if no Image 3>,
+    "live_vs_db_similarity": <float 0.0-1.0 — live capture vs DB reference; null if no Image 2 or 3>,
+    "visual_reasoning": "<2-3 sentence forensic explanation covering all compared pairs>"
   },
   "photo_tamper_anomaly": <bool>
 }
 
 Rules:
 - Image 1 is always the document image.
-- Image 2 is the live webcam capture.
-- Image 3 (if provided) is the database reference photo.
+- Image 2 is the live webcam capture (may be absent — if absent set live_vs_doc_match=null, live_vs_db_match=null).
+- Image 3 (if provided) is the database reference photo for identity verification.
+- CRITICAL: When Image 3 IS provided, doc_vs_db_match MUST be true or false — NEVER null. Compare the face in Image 1 (document photo) to the face in Image 3 (DB reference) using facial geometry: jawline, interpupillary distance, nasal bridge, ear shape. Similarity >= 0.55 = match.
+- CRITICAL: When both Image 2 AND Image 3 are provided, live_vs_db_match MUST be true or false — NEVER null. Compare the live face (Image 2) to the DB reference (Image 3).
+- Each pair (live_vs_doc, doc_vs_db, live_vs_db) is independent — do NOT infer one from another.
 - For face matching, compare facial structure, jawline, ear geometry, interpupillary distance.
 - For photo_tamper_anomaly, look for pasted/spliced/cut photo borders, inconsistent lighting around the photo region.
-- If any field is unreadable, set it to null.
+- If any demographic field is unreadable, set it to null.
 - Return ONLY valid JSON, no markdown fences, no commentary.
 """
 
@@ -173,6 +178,7 @@ def _normalize_no_live_face_match(result: dict, has_live: bool) -> dict:
         **fm,
         "live_vs_doc_match": None,
         "live_vs_db_match": None,
+        "live_vs_db_similarity": None,
         "similarity_score": None,
         "visual_reasoning": _NO_LIVE_FACE_REASON,
     }
