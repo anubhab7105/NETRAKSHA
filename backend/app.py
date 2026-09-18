@@ -1619,9 +1619,29 @@ async def _run_screening_pipeline(
     # Gemini AI call (also in thread pool) — now WITH the registry photo as
     # Image 3 whenever Step 1 found one, so its doc_vs_db / live_vs_db
     # verdicts are grounded instead of guessed-or-null.
-    gemini_task = loop.run_in_executor(
-        None, scan_document, str(doc_path), live_str, db_photo_path
-    )
+    # Bounded: _call_gemini enforces a per-model timeout, and this wrapper
+    # caps the whole cascade (~4 models) well under the frontend 90s axios
+    # timeout so a stalled cloud call degrades to simulation instead of
+    # hanging /screen with no response (reported as "could not reach backend").
+    async def _gemini_bounded():
+        try:
+            coro = loop.run_in_executor(
+                None, lambda: scan_document(str(doc_path), live_str, db_photo_path, timeout=12.0)
+            )
+            return await asyncio.wait_for(asyncio.ensure_future(coro), timeout=60.0)
+        except asyncio.TimeoutError:
+            print("[gemini] backend timeout 60s — using offline simulation fallback")
+            from pipeline.gemini_scanner import _simulate_scan as _gemini_sim_fallback
+
+            _sim = _gemini_sim_fallback(str(doc_path), live_str, db_photo_path)
+            _sim["is_simulated"] = True
+            _sim["cloud_unavailable"] = True
+            _sim["model_used"] = "offline_simulation"
+            _sim["models_attempted"] = []
+            _sim["cloud_fallback_reason"] = "backend_timeout_60s"
+            return _sim
+
+    gemini_task = asyncio.ensure_future(_gemini_bounded())
 
     # Local three-way face match (InsightFace, evidence-backed) — all three
     # pairs in one worker: doc↔live, doc↔registry, live↔registry. Runs in
@@ -1964,8 +1984,9 @@ async def _run_screening_pipeline(
     if _needs_late_gemini_face(is_simulated, live_str, db_photo_path, face_match_data):
         print("[three-way] attempting late Gemini 3-image fallback for registry legs")
         try:
-            _late_gem = await loop.run_in_executor(
-                None, scan_document, str(doc_path), live_str, db_photo_path)
+            _late_coro = loop.run_in_executor(
+                None, lambda: scan_document(str(doc_path), live_str, db_photo_path, timeout=12.0))
+            _late_gem = await asyncio.wait_for(asyncio.ensure_future(_late_coro), timeout=40.0)
             _late_gem_simulated = _late_gem.get("is_simulated") if isinstance(_late_gem, dict) else True
             _lg = (_late_gem.get("three_way_face_match") or {}) if isinstance(_late_gem, dict) else {}
             print(

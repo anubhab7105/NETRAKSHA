@@ -2,7 +2,7 @@
 
 Sends a single multi-image request to a configured Google Gemini model
 (see GEMINI_MODELS / GEMINI_MODEL, default cascade:
-  gemini-3.7-flash → gemini-3.6-flash → gemini-1.5-flash)
+  gemini-flash-lite-latest → gemini-3.5-flash → gemini-3-flash-preview)
 containing:
   1. Uploaded Document Image
   2. Live Webcam Capture Still
@@ -21,7 +21,7 @@ Misconfiguration note: a non-Google key (valid Google keys start with
 `AIza`) or all models failing fails exactly like a network outage —
 `is_simulated=True` + `cloud_unavailable=True` — and the case is floored
 at Yellow. Check the `[gemini_scanner]` log line and `.env`
-(`GEMINI_API_KEY`, `GEMINI_MODELS=gemini-3.7-flash,gemini-3.6-flash`)
+(`GEMINI_API_KEY`, `GEMINI_MODELS=gemini-flash-lite-latest,gemini-3.5-flash`)
 first when the UI shows "CLOUD UNAVAILABLE — Local Checks Only".
 """
 
@@ -44,9 +44,12 @@ load_dotenv()
 # Gemini API integration
 # ---------------------------------------------------------------------------
 
-# Default cascade: newest → stable → legacy flash
-# gemini-3.8-flash reached GA on Sep 2, 2026 and is the recommended workhorse model.
-DEFAULT_GEMINI_MODELS = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-1.5-flash"]
+# Default cascade: verified-working models first (Sep 2026 probe).
+# flash-lite-latest responds in ~5s, 3.5-flash in ~13s, 3-flash-preview in ~16s.
+# gemini-3.8/3.7-flash hang until timeout, 3.6-flash is quota-429 and
+# 1.5/2.5-flash are 404-removed — all excluded so screening fails fast to
+# the next working model instead of burning ~24s on hung attempts.
+DEFAULT_GEMINI_MODELS = ["gemini-flash-lite-latest", "gemini-3.5-flash", "gemini-3-flash-preview"]
 # Legacy single-model default for backwards compatibility
 DEFAULT_GEMINI_MODEL = DEFAULT_GEMINI_MODELS[0]
 
@@ -60,7 +63,7 @@ def _get_models() -> list[str]:
     """Return the ordered list of models to try, from most to least preferred.
 
     Resolution order:
-      1. GEMINI_MODELS (comma-separated list, e.g. "gemini-3.7-flash,gemini-3.6-flash")
+      1. GEMINI_MODELS (comma-separated list, e.g. "gemini-flash-lite-latest,gemini-3.5-flash")
       2. GEMINI_MODEL  (single model name — backwards compatibility)
       3. DEFAULT_GEMINI_MODELS hardcoded cascade
     """
@@ -316,6 +319,58 @@ def scan_document(
     return _normalize_no_live_face_match(result, has_live)
 
 
+def _generate_with_timeout(client, model: str, parts, timeout: float):
+    """Run the blocking Gemini call with a hard timeout.
+
+    The google-genai SDK call has no timeout parameter, so without this a
+    stalled network/model hangs screening forever (frontend 90s axios timeout
+    then reports "could not reach the backend"). Each model in the cascade
+    gets at most `timeout` seconds before we raise TimeoutError and try the
+    next model / offline simulation.
+    """
+    import concurrent.futures
+
+    try:
+        timeout = float(timeout or 10.0)
+    except (TypeError, ValueError):
+        timeout = 10.0
+    timeout = max(2.0, min(timeout, 60.0))
+
+    def _do_call():
+        from google.genai import types as _types
+
+        return client.models.generate_content(
+            model=model,
+            contents=parts,
+            config=_types.GenerateContentConfig(
+                response_mime_type="application/json",
+                temperature=0.1,
+            ),
+        )
+
+    ex = concurrent.futures.ThreadPoolExecutor(
+        max_workers=1, thread_name_prefix="gemini-timeout"
+    )
+    try:
+        fut = ex.submit(_do_call)
+        try:
+            return fut.result(timeout=timeout)
+        except concurrent.futures.TimeoutError as exc:
+            # Don't block on the hung SDK thread — leak it as a daemon and
+            # move on to the next model / simulation. (A `with` block here
+            # would shutdown(wait=True) and re-hang until the call returns.)
+            ex.shutdown(wait=False, cancel_futures=True)
+            raise TimeoutError(
+                f"Gemini call timed out after {timeout:.0f}s (model={model})"
+            ) from exc
+    finally:
+        # Fast path (success/fast error): no hung thread, safe to clean up.
+        try:
+            ex.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
+
+
 def _call_gemini(
     document_image_path: str | Path,
     live_capture_path: str | Path,
@@ -370,14 +425,7 @@ def _call_gemini(
         else:
             parts.append("Image 3 (database reference): Not available")
 
-    response = client.models.generate_content(
-        model=model,
-        contents=parts,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            temperature=0.1,
-        ),
-    )
+    response = _generate_with_timeout(client, model, parts, timeout)
 
     # Parse the JSON response
     text = response.text.strip()
