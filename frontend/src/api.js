@@ -24,14 +24,12 @@ function resolveBaseURL() {
     return envBase.endsWith('/api') ? envBase : `${envBase}/api`;
   }
 
-  // Production split-deploy convention: the app is served from
-  // netraksha.xyz (or www) while the API lives on Railway.
-  // Without this, an unset VITE_API_BASE_URL silently falls back to
-  // same-origin /api (the frontend-only host) and every screening fails
-  // with a network error. VITE_API_BASE_URL always wins when set.
+  // Production: frontend on Vercel (netraksha.xyz) proxies /api to Railway via
+  // vercel.json rewrites. Same-origin avoids CORS + mobile-carrier blocking of
+  // Railway. VITE_API_BASE_URL (if set to https://...) still wins above.
   const host = window.location.hostname.toLowerCase();
   if (host === 'netraksha.xyz' || host === 'www.netraksha.xyz' || host === 'sih-weld-psi.vercel.app') {
-    return 'https://web-production-ab06a.up.railway.app/api';
+    return '/api';
   }
   // Railway preview / direct backend access — keep same-origin.
   if (host.endsWith('.up.railway.app')) {
@@ -42,6 +40,7 @@ function resolveBaseURL() {
 
 const api = axios.create({
   baseURL: resolveBaseURL(), // FastAPI backend
+  timeout: 20000,
 });
 
 api.interceptors.request.use((config) => {
