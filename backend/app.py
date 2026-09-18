@@ -79,6 +79,7 @@ from backend.models import (
     OfficerAction,
     RegistryEnrollment,
     ScreeningCase,
+    WatchlistEntry,
 )
 
 # ---------------------------------------------------------------------------
@@ -423,6 +424,36 @@ async def startup():
                   "Storage refs like 'img/<object>' will NOT resolve; only local paths + public http(s) URLs work.")
     except Exception as e:
         print(f"[startup] Registry photo backend check warning: {e}")
+
+    # Watchlist: swap mock for Supabase-backed provider after seed.
+    # Controlled by WATCHLIST_USE_DB (default: true when DATABASE_URL is Postgres).
+    # Set WATCHLIST_USE_DB=false to force mock, or WATCHLIST_MOCKED=true to keep the violet badge on DB data.
+    try:
+        from pipeline.watchlist import load_db_watchlist_provider, set_watchlist_provider, MockWatchlistProvider
+        from backend.database import IS_SQLITE as _is_sqlite
+        _watchlist_use_db = os.environ.get("WATCHLIST_USE_DB", "").lower()
+        if _watchlist_use_db in ("0", "false", "no"):
+            _use_db = False
+        elif _watchlist_use_db in ("1", "true", "yes"):
+            _use_db = True
+        else:
+            _use_db = not _is_sqlite  # auto: use DB when on Supabase Postgres
+        if _use_db:
+            _is_mocked = os.environ.get("WATCHLIST_MOCKED", "").lower() in ("1", "true", "yes")
+            _db_provider = await load_db_watchlist_provider(is_mocked=_is_mocked)
+            if _db_provider._entries:
+                set_watchlist_provider(_db_provider)
+                print(f"[startup] Watchlist provider: DB-backed ({len(_db_provider._entries)} entries, is_mocked={_db_provider.is_mocked})")
+            else:
+                # Table empty or unreachable — keep mock but log clearly.
+                print(f"[startup] Watchlist provider: DB empty/unreachable, keeping MockWatchlistProvider (seed should have populated watchlist_entries)")
+                # Ensure mock is set explicitly so health shows correctly
+                set_watchlist_provider(MockWatchlistProvider())
+        else:
+            print(f"[startup] Watchlist provider: MockWatchlistProvider (WATCHLIST_USE_DB=false)")
+            set_watchlist_provider(MockWatchlistProvider())
+    except Exception as e:
+        print(f"[startup] Watchlist provider warning: {type(e).__name__}: {e}")
 
     # Background prewarm of the local InsightFace engine (non-blocking):
     # a first-use ~300MB buffalo_l download happens here — loudly — instead
@@ -4558,6 +4589,102 @@ async def cleanup_orphan_files(request: Request):
 
 
 # ---------------------------------------------------------------------------
+# 8b. Watchlist — Supabase-backed CRUD (supervisor) + reload
+# ---------------------------------------------------------------------------
+
+class WatchlistCreateRequest(BaseModel):
+    name: str
+    id_number: Optional[str] = None
+    flag_reason: str
+
+@app.get("/api/watchlist")
+async def list_watchlist(request: Request):
+    """List all watchlist entries (any authenticated officer can view)."""
+    await _auth(request)
+    from pipeline.watchlist import get_watchlist_provider
+    provider = get_watchlist_provider()
+    # DB entries if provider is DB-backed, else fall back to table query for truth
+    async with async_session() as session:
+        res = await session.execute(select(WatchlistEntry))
+        rows = res.scalars().all()
+        entries = [r.to_dict() for r in rows]
+    return {
+        "entries": entries,
+        "count": len(entries),
+        "provider": {
+            "is_mocked": provider.is_mocked,
+            "provider_type": type(provider).__name__,
+            "in_memory_count": len(getattr(provider, "_entries", [])),
+        }
+    }
+
+@app.post("/api/watchlist")
+async def create_watchlist_entry(req: WatchlistCreateRequest, request: Request):
+    """Create a watchlist entry — supervisor only. Hot-reloads provider."""
+    officer = await _auth(request)
+    _require_role(officer, "supervisor")
+    name = (req.name or "").strip()
+    if not name or len(name) < 2:
+        raise HTTPException(status_code=400, detail="name is required (min 2 chars)")
+    if not req.flag_reason or not req.flag_reason.strip():
+        raise HTTPException(status_code=400, detail="flag_reason is required")
+    async with async_session() as session:
+        # Prevent duplicate id_number
+        if req.id_number:
+            existing = await session.execute(select(WatchlistEntry).where(WatchlistEntry.id_number == req.id_number.strip()))
+            if existing.scalar_one_or_none():
+                raise HTTPException(status_code=409, detail="Watchlist entry with this id_number already exists")
+        entry = WatchlistEntry(name=name, id_number=(req.id_number or "").strip() or None, flag_reason=req.flag_reason.strip())
+        session.add(entry)
+        session.add(AuditLog(actor=officer.get("username","unknown"), action="watchlist_created", entity=f"watchlist:{name}", officer_id=int(officer["sub"])))
+        await session.commit()
+        await session.refresh(entry)
+        created = entry.to_dict()
+    # Hot-reload provider from DB so next screening sees it without restart
+    try:
+        from pipeline.watchlist import load_db_watchlist_provider, set_watchlist_provider
+        _is_mocked = os.environ.get("WATCHLIST_MOCKED", "").lower() in ("1","true","yes")
+        provider = await load_db_watchlist_provider(is_mocked=_is_mocked)
+        set_watchlist_provider(provider)
+    except Exception as e:
+        print(f"[watchlist] reload after create warning: {e}")
+    return {"status": "ok", "entry": created}
+
+@app.delete("/api/watchlist/{entry_id}")
+async def delete_watchlist_entry(entry_id: int, request: Request):
+    """Delete a watchlist entry — supervisor only."""
+    officer = await _auth(request)
+    _require_role(officer, "supervisor")
+    async with async_session() as session:
+        res = await session.execute(select(WatchlistEntry).where(WatchlistEntry.id == entry_id))
+        entry = res.scalar_one_or_none()
+        if not entry:
+            raise HTTPException(status_code=404, detail="Watchlist entry not found")
+        await session.delete(entry)
+        session.add(AuditLog(actor=officer.get("username","unknown"), action="watchlist_deleted", entity=f"watchlist:{entry_id}", officer_id=int(officer["sub"])))
+        await session.commit()
+    try:
+        from pipeline.watchlist import load_db_watchlist_provider, set_watchlist_provider
+        _is_mocked = os.environ.get("WATCHLIST_MOCKED", "").lower() in ("1","true","yes")
+        provider = await load_db_watchlist_provider(is_mocked=_is_mocked)
+        set_watchlist_provider(provider)
+    except Exception as e:
+        print(f"[watchlist] reload after delete warning: {e}")
+    return {"status": "ok", "deleted_id": entry_id}
+
+@app.post("/api/watchlist/reload")
+async def reload_watchlist(request: Request):
+    """Hot-reload watchlist provider from DB — supervisor only (use after bulk Supabase edits)."""
+    officer = await _auth(request)
+    _require_role(officer, "supervisor")
+    from pipeline.watchlist import load_db_watchlist_provider, set_watchlist_provider
+    _is_mocked = os.environ.get("WATCHLIST_MOCKED", "").lower() in ("1","true","yes")
+    provider = await load_db_watchlist_provider(is_mocked=_is_mocked)
+    set_watchlist_provider(provider)
+    return {"status": "ok", "count": len(provider._entries), "is_mocked": provider.is_mocked, "provider_type": type(provider).__name__}
+
+
+# ---------------------------------------------------------------------------
 # 9. Iris Biometric — enrollment / verification (RGB prototype, NIR stub)
 # ---------------------------------------------------------------------------
 
@@ -4887,12 +5014,19 @@ async def health():
     except Exception:
         registry_photos = {"mode": "unknown", "bucket": "img", "configured": False,
                            "private_reads": False}
+    try:
+        from pipeline.watchlist import get_watchlist_provider as _get_wl
+        _wl = _get_wl()
+        watchlist = {"provider": type(_wl).__name__, "is_mocked": _wl.is_mocked, "count": len(getattr(_wl, "_entries", []))}
+    except Exception as e:
+        watchlist = {"provider": "unknown", "error": f"{type(e).__name__}: {e}"}
     return {
         "status": "healthy",
         "version": "0.1.0",
         "database": get_engine_info(),
         "face_engine": face_engine,
         "registry_photos": registry_photos,
+        "watchlist": watchlist,
     }
 
 @app.get("/evidence/{path:path}")
