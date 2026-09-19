@@ -688,4 +688,3 @@ MIT — see `LICENSE`. This project was built for SIH 2026 Problem Statement 261
   <sub>Built for SIH 2026 · SIXTH SENSE01</sub>
 </p>
 
-..................................................
