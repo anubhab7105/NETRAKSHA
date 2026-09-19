@@ -1,6 +1,6 @@
 # NETRAKSHA — AI-Based Fake Identity & Document Screening System
 
-> **Smart India Hackathon (SIH) — Problem Statement 26188**
+> **Smart India Hackathon (SIH2026) — Problem Statement 188**
 > **Organization:** Ministry of Home Affairs (MHA) / Sashastra Seema Bal (SSB)
 > **Domain:** Smart Automation · Homeland Security · Border Checkpoint Screening
 
