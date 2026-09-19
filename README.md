@@ -702,3 +702,5 @@ MIT — see `LICENSE` (add one if missing). This project was built for SIH 2026 
   <sub>Sashastra Seema Bal · Ministry of Home Affairs · Government of India</sub><br/>
   <sub>Built for SIH 2026 · PRD §7 · Techspec §5 · Rules.md</sub>
 </p>
+
+..................................................
