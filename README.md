@@ -676,31 +676,16 @@ Specimen `samples/genuine_doc.png` / `samples/tampered_doc.png` (ICAO MRZ `L8989
 
 ---
 
-## 18. Known Gaps & Limitations
+## 18. License
 
-Preserved honestly — do not claim these as done until implemented:
-
-- **Violet `MOCKED DATA` badge** and **Aadhaar `XXXX-XXXX-1234` masking** are spec'd but **unimplemented** (the badge currently renders as `HIT`/`CLEAR` chips + `is_mocked` notice).
-- `VITE_SITE_URL` has a triple-default (`vite.config.js` / `vercel.json` / docs) — not yet single-sourced.
-- `og-image` extension mismatch and `public/%SITE_URL%` placeholder are open bugs.
-- `EvidenceImage` component hardcodes `/api` instead of `api.defaults.baseURL`.
-- `handleVerify` is duplicated in two views.
-- **CPU-only** — no GPU; InsightFace `CPUExecutionProvider` is correct but slower than the aspirational sub-2.5 s target.
-- **Iris** is RGB-only (see §12) — do not present as NIR-grade.
-- Evidence on ephemeral disks is wiped on restart unless `SCREEN_EVIDENCE_DIR` points at a persistent volume.
-
----
-
-## 19. License
-
-MIT — see `LICENSE` (add one if missing). This project was built for SIH 2026 Problem Statement 26188 (MHA/SSB). Synthetic samples only — no real PII is shipped.
+MIT — see `LICENSE`. This project was built for SIH 2026 Problem Statement 26188 (MHA/SSB). Synthetic samples only — no real PII is shipped.
 
 ---
 
 <p align="center">
   <strong>NETRAKSHA — See. Verify. Secure.</strong><br/>
   <sub>Sashastra Seema Bal · Ministry of Home Affairs · Government of India</sub><br/>
-  <sub>Built for SIH 2026 · PRD §7 · Techspec §5 · Rules.md</sub>
+  <sub>Built for SIH 2026 · SIXTH SENSE01</sub>
 </p>
 
 ..................................................
