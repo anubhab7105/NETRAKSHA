@@ -244,3 +244,5 @@ Auth notes: `POST /api/auth/login` → Bearer JWT. Supervisors complete TOTP (`/
 3. **Physical Tampering:** Copy-move/spliced image ➔ **RED / YELLOW** (ELA overlay + physical-forgery zones)
 4. **Identity Imposter:** Live face ≠ doc/DB (local InsightFace) ➔ **RED** (`FACE_MISMATCH`; simulated cloud alone never forces Red)
 5. **Watchlist Hit:** Flagged name/ID ➔ **RED (HIGH RISK)** (`WATCHLIST_HIT`, `is_mocked=True`; violet badge still TODO — currently HIT/CLEAR chips + notice)
+
+..................................................
