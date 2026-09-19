@@ -41,7 +41,7 @@
 
 ## 1. Overview
 
-At land border checkpoints, officers manually inspect passports, Aadhaar, PAN, Voter ID cards and the traveler's face to catch **forgeries, imposter substitution, and digitally altered documents**. Manual inspection is slow, subjective, and blind to modern physical and digital fabrication techniques (re-typeset MRZ, swapped portraits, print-scan recaptures, GAN faces, screen replay).
+At land border checkpoints, officers manually inspect passports, VISA, Aadhaar, PAN, Voter ID cards and the traveler's face to catch **forgeries, imposter substitution, and digitally altered documents**. Manual inspection is slow, subjective, and blind to modern physical and digital fabrication techniques (re-typeset MRZ, swapped portraits, print-scan recaptures, GAN faces, screen replay).
 
 **NETRAKSHA** is an **AI-assisted, explainable screening workstation**:
 
