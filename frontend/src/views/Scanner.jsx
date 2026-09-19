@@ -159,6 +159,7 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
             <p className="mt-1 text-xs text-[#98A2B3]">{(file.size / 1024).toFixed(1)} KB</p>
             <div className="mt-4 flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
               <button
+                type="button"
                 onClick={() => { stopStream(); onClear(); }}
                 className="gov-btn gov-btn-secondary !min-h-[36px] !px-3 !py-2 !text-[13px]"
               >
@@ -166,7 +167,8 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
                 Clear
               </button>
               <button
-                onClick={startCamera}
+                type="button"
+                onClick={() => { stopStream(); onClear(); setTimeout(() => startCamera(), 0); }}
                 className="gov-btn gov-btn-secondary !min-h-[36px] !px-3 !py-2 !text-[13px]"
               >
                 <RefreshCw size={14} aria-hidden="true" />
@@ -196,6 +198,7 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
             {error && <p className="mt-2 text-xs font-medium text-[#C62828]" role="alert">{error}</p>}
             <div className="mt-3 flex flex-col items-stretch justify-center gap-2 sm:flex-row sm:items-center">
               <button
+                type="button"
                 onClick={stopStream}
                 className="gov-btn gov-btn-secondary !min-h-[36px] !px-3 !py-2 !text-[13px]"
               >
@@ -203,6 +206,7 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
                 Cancel
               </button>
               <button
+                type="button"
                 onClick={capturePhoto}
                 disabled={!videoReady || bursting}
                 className="gov-btn gov-btn-primary !min-h-[36px] !px-4 !py-2 !text-[13px]"
@@ -213,7 +217,7 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
             </div>
           </>
         ) : (
-          <button onClick={startCamera} disabled={starting} className="group flex flex-1 cursor-pointer flex-col items-center justify-center disabled:opacity-60">
+          <button type="button" onClick={startCamera} disabled={starting} className="group flex flex-1 cursor-pointer flex-col items-center justify-center disabled:opacity-60">
             {starting ? (
               <Loader2 size={30} className="mb-3 animate-spin text-[#98A2B3]" aria-hidden="true" />
             ) : (
@@ -411,6 +415,7 @@ export default function Scanner() {
             Screening runs document validation → OCR/MRZ → registry check → vision analysis → face match → demographics → risk engine.
           </p>
           <button
+            type="button"
             onClick={handleScan}
             disabled={scanning || !docFile}
             className="gov-btn gov-btn-primary w-full sm:w-auto sm:min-w-[220px]"

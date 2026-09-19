@@ -207,8 +207,11 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
               <span>✓ Eye frames recorded (iris)</span>
             </div>
             <div className="mt-4 flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-              <button onClick={() => { stopStream(); onClear(); }} className="gov-btn gov-btn-secondary !min-h-[36px] !px-3 !py-2 !text-[13px]">
-                <RefreshCw size={14} aria-hidden="true" /> Retry Person Capture
+              <button type="button" onClick={() => { stopStream(); onClear(); }} className="gov-btn gov-btn-secondary !min-h-[36px] !px-3 !py-2 !text-[13px]">
+                <X size={14} aria-hidden="true" /> Clear
+              </button>
+              <button type="button" onClick={() => { stopStream(); onClear(); setTimeout(() => startCamera(), 0); }} className="gov-btn gov-btn-secondary !min-h-[36px] !px-3 !py-2 !text-[13px]">
+                <RefreshCw size={14} aria-hidden="true" /> Retake
               </button>
             </div>
           </div>
@@ -225,7 +228,7 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
       </p>
       <div className="flex min-h-[260px] flex-col rounded-lg border-2 border-dashed border-[#BEC6D5] bg-white p-4 text-center transition-colors hover:border-[#1769AA] sm:min-h-[280px] sm:p-5">
         {!previewing ? (
-          <button onClick={startCamera} disabled={starting} className="group flex flex-1 cursor-pointer flex-col items-center justify-center disabled:opacity-60">
+          <button type="button" onClick={startCamera} disabled={starting} className="group flex flex-1 cursor-pointer flex-col items-center justify-center disabled:opacity-60">
             {starting ? <Loader2 size={30} className="mb-3 animate-spin text-[#98A2B3]" aria-hidden="true" /> : (
               <div className="mb-3 rounded-full border border-[#D9DEE7] bg-[#F1F4F9] p-3 text-[#667085] group-hover:border-[#1769AA] group-hover:text-[#1769AA]" aria-hidden="true">
                 <Video size={28} />
@@ -282,10 +285,10 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
             </p>
             {error && <p className="mt-2 text-xs font-medium text-[#C62828]" role="alert">{error}</p>}
             <div className="mt-3 flex flex-col items-stretch justify-center gap-2 sm:flex-row sm:items-center">
-              <button onClick={stopStream} className="gov-btn gov-btn-secondary !min-h-[36px] !px-3 !py-2 !text-[13px]">
+              <button type="button" onClick={stopStream} className="gov-btn gov-btn-secondary !min-h-[36px] !px-3 !py-2 !text-[13px]">
                 <X size={14} aria-hidden="true" /> Cancel
               </button>
-              <button onClick={capturePerson} disabled={!videoReady || bursting} className="gov-btn gov-btn-primary !min-h-[36px] !px-4 !py-2 !text-[13px]">
+              <button type="button" onClick={capturePerson} disabled={!videoReady || bursting} className="gov-btn gov-btn-primary !min-h-[36px] !px-4 !py-2 !text-[13px]">
                 {bursting ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Camera size={14} aria-hidden="true" />}
                 {bursting ? 'Capturing…' : 'Capture Person'}
               </button>
