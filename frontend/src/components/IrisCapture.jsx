@@ -66,7 +66,7 @@ export default function IrisCapture({ onCapture, onClear, file }) {
         <div className="space-y-3">
           <div className="relative">
             <video ref={videoRef} autoPlay playsInline muted className="h-[180px] w-full rounded-lg border border-[#D9DEE7] bg-[#172033] object-contain" />
-            {/* Eye guide overlay */}
+            {}
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center" aria-hidden="true">
               <div className="h-12 w-24 rounded-full border-2 border-[#1769AA]/70" />
               <div className="absolute h-16 w-16 rounded-full border border-white/40" />

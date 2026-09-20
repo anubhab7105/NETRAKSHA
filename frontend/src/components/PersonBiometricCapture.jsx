@@ -13,18 +13,18 @@ const STATUS_MESSAGES = {
   complete: 'Capture complete',
 };
 
-// LITE BURST (free-tier Render): 5 frames ~0.9s as downscaled JPEGs.
-// Full 14-frame PNG bursts (~15-25MB multipart) OOM the 512MB instance and
-// surface as 502 Bad Gateway. 5 JPEGs (~0.5MB) pass reliably; liveness may
-// report partial on minimal motion, but face + registry legs still verify.
+
+
+
+
 const LITE_BURST_FRAMES = 5;
 const LITE_FRAME_GAP_MS = 180;
 const LITE_MAX_DIM = 640;
 const LITE_JPEG_QUALITY = 0.72;
 
-// Action prompts sequenced across the lite burst. Any one of these actions
-// certifies liveness server-side — the sequence just makes sure at least one
-// is clearly observed.
+
+
+
 const BURST_PROMPTS = [
   { until: 1, title: 'Look straight at the camera', sub: 'Keep your face inside the oval' },
   { until: 2, title: 'BLINK NOW — close and open your eyes', sub: 'One slow, clear blink' },
@@ -52,22 +52,22 @@ const FACE_GUIDE_STEPS = [
   { n: '4', title: 'Stay in frame', text: 'Keep still otherwise. Do not hold a photo or another screen to the camera.' },
 ];
 
-/**
- * PersonBiometricCapture — ONE camera session, ONE button, ONE burst.
- *
- * Reuses the burst pattern from Scanner's face capture (14 frames ~2.1s):
- * the same frame sequence feeds face detection/quality/matching/liveness
- * AND eye detection / iris localization / segmentation upstream.
- * No second camera, no separate iris capture.
- *
- * Returns via onCapture:
- * {
- *   burst: Blob[],            // all frames (face + iris source of truth)
- *   primaryFrame: Blob,       // middle frame (best for face matching)
- *   eyeHint: 'auto',          // server picks best eye by quality
- *   metadata: { frames, capturedAt, facing }
- * }
- */
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 export default function PersonBiometricCapture({ file, onCapture, onClear, facing = 'user' }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
@@ -82,7 +82,7 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
 
   useEffect(() => {
     return () => stopStream();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    
   }, []);
 
   useEffect(() => {
@@ -148,7 +148,7 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
     setBurstStep(0);
     try {
       setStatus('capturing');
-      // Brief settle so the officer sees the guide before motion starts
+      
       await new Promise((r) => setTimeout(r, 650));
       const totalFrames = LITE_BURST_FRAMES;
       const frames = [];
@@ -242,7 +242,7 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
           <>
             <div className="relative">
               <video ref={videoRef} autoPlay playsInline muted onLoadedMetadata={() => setVideoReady(true)} className="h-[180px] w-full rounded-lg border border-[#D9DEE7] bg-[#172033] object-contain sm:h-[220px] md:h-[180px]" />
-              {/* Face + eye guide overlay */}
+              {}
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center" aria-hidden="true">
                 <div className="h-52 w-40 rounded-2xl border-2 border-[#1769AA]/70" />
                 <div className="absolute top-[38%] flex gap-6">

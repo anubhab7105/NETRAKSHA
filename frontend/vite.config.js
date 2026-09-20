@@ -1,10 +1,10 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 
-// Single source of truth for the production origin. Custom domain switch:
- // set VITE_SITE_URL (e.g. https://sentinel.example.in) in the environment /
- // Vercel project settings and everything below follows automatically —
- // canonical tags, sitemap.xml, robots.txt, llms.txt and Open Graph URLs.
+
+ 
+ 
+ 
  const SITE_URL = (process.env.VITE_SITE_URL || 'https://netraksha.xyz').replace(/\/+$/, '')
 
 const BUILD_DATE = new Date().toISOString().slice(0, 10)
@@ -117,9 +117,9 @@ Base URL: ${SITE_URL.replace('netraksha.xyz', 'api.netraksha.xyz')}/
 - Website: https://ssb.gov.in/
 `
 
-// Emits robots.txt / sitemap.xml / llms.txt at build time and resolves the
-// %SITE_URL% token inside index.html, so the deployment origin lives in one
-// place (VITE_SITE_URL) instead of being hardcoded in a dozen spots.
+
+
+
 function seoFiles() {
   return {
     name: 'ssb-seo-files',
@@ -134,20 +134,20 @@ function seoFiles() {
   }
 }
 
-// https://vite.dev/config/
+
 export default defineConfig({
   plugins: [react(), seoFiles()],
   build: {
-    // Never ship source maps to production (prevents source reconstruction
-    // from the published bundle).
+    
+    
     sourcemap: false,
     cssCodeSplit: true,
     minify: true,
     chunkSizeWarningLimit: 500,
     rollupOptions: {
       output: {
-        // Split heavy vendors out of the app chunk for parallel download
-        // and long-term caching.
+        
+        
         manualChunks(id) {
           if (id.includes('node_modules/react/') || id.includes('node_modules/react-dom/') || id.includes('node_modules/scheduler/')) {
             return 'react-vendor';
@@ -162,7 +162,7 @@ export default defineConfig({
             return 'http-client';
           }
         },
-        // Optimize chunk naming for caching
+        
         chunkFileNames: 'assets/js/[name]-[hash].js',
         entryFileNames: 'assets/js/[name]-[hash].js',
         assetFileNames: (assetInfo) => {
@@ -183,8 +183,8 @@ export default defineConfig({
     },
   },
   server: {
-    // Proxy API calls to the FastAPI backend during local development so the
-    // browser talks same-origin (avoids CORS and localhost IPv4/IPv6 mixups).
+    
+    
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8000',

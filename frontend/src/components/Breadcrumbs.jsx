@@ -3,13 +3,13 @@ import { Link } from 'react-router-dom';
 import { ChevronRight, House } from 'lucide-react';
 import { SITE_URL } from '../config/site';
 
-/**
- * Breadcrumb trail for the authenticated layout. Renders accessible markup
- * (aria-label + ol) and injects a matching BreadcrumbList JSON-LD block so
- * crawlers see the same hierarchy users do.
- *
- * items: [{ label, to }] — the last item is the current page (no link).
- */
+
+
+
+
+
+
+
 export default function Breadcrumbs({ items }) {
   useEffect(() => {
     const id = 'breadcrumb-jsonld';

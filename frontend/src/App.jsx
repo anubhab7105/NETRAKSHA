@@ -3,8 +3,8 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Loader2, ShieldCheck } from 'lucide-react';
 import Sidebar from './components/Sidebar';
 
-// Route-level code splitting: each view ships as its own chunk and is only
-// fetched when its route is first visited (keeps the login bundle small).
+
+
 const Login = lazy(() => import('./views/Login'));
 const SecuritySetup = lazy(() => import('./views/SecuritySetup'));
 const Dashboard = lazy(() => import('./views/Dashboard'));
@@ -26,7 +26,7 @@ function GovTopBar() {
   const username = localStorage.getItem('username') || 'Officer';
   return (
     <header className="sticky top-0 z-30 border-b border-[#D9DEE7] bg-white/95 backdrop-blur">
-      {/* Restrained tricolour rule — the only saffron/green accent in the shell */}
+      {}
       <div className="flex h-1" aria-hidden="true">
         <div className="flex-1 bg-[#F59E0B]" />
         <div className="flex-1 bg-[#E8EDF3]" />
@@ -83,8 +83,8 @@ const ProtectedRoute = ({ children }) => {
   );
 };
 
-// Rotation/MFA gates are enforced server-side too (403); this keeps the
-// officer from landing on a dead dashboard before clearing them.
+
+
 const SecurityGate = ({ children }) => {
   const token = localStorage.getItem('token');
   if (!token) return <Navigate to="/login" replace />;

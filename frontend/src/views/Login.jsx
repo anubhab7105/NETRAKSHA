@@ -32,7 +32,7 @@ export default function Login() {
     try {
       const res = await api.post('/auth/login', { username, password });
       if (res.data.mfa_required) {
-        // Supervisor second factor — stay here and prompt for the code.
+        
         setMfaToken(res.data.mfa_token);
         if (res.data.must_change_password) localStorage.setItem('must_change_password', '1');
       } else {
@@ -71,7 +71,7 @@ export default function Login() {
         description="Secure sign-in for authorized Sashastra Seema Bal officers to the Netraksha identity document screening portal."
         path="/login"
       />
-      {/* Left — official identity panel (desktop) */}
+      {}
       <div className="hidden w-[44%] shrink-0 flex-col justify-between bg-[#123B66] p-10 text-white lg:flex">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-white/70">
@@ -98,7 +98,7 @@ export default function Login() {
         </p>
       </div>
 
-      {/* Right — sign-in form */}
+      {}
       <div className="flex min-w-0 flex-1 items-center justify-center px-4 py-10">
         <div className="w-full max-w-[420px]">
           <div className="mb-6 flex items-center gap-3 lg:hidden">
