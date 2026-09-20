@@ -63,7 +63,7 @@ def test_missing_local_path_reports_server_reason():
 def test_unreachable_url_degrades_with_reason():
     from backend.app import _resolve_db_photo
 
-    # Port 9 (discard) refuses connections on loopback — fast, no network.
+
     path, reason = _resolve_db_photo("http://127.0.0.1:9/missing.jpg", citizen_id=9003)
     assert path is None
     assert reason == "registry_photo_download_failed"
@@ -77,7 +77,7 @@ def test_remote_url_downloads_and_caches(file_server):
     assert reason is None
     assert path and pathlib.Path(path).is_file()
     assert pathlib.Path(path).read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
-    # Second call serves the disk cache (same stable path, no re-download).
+
     path2, reason2 = _resolve_db_photo(url, citizen_id=9004)
     assert (path2, reason2) == (path, None)
 

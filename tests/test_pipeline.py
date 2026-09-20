@@ -36,9 +36,9 @@ STATIC = sorted((SAMPLES / "live").glob("static_burst_*.png"))
 FACES = [FACE_A, FACE_A2, FACE_B]
 
 
-# ---------------------------------------------------------------------------
-# Contract helpers
-# ---------------------------------------------------------------------------
+
+
+
 
 def assert_contract(result):
     """Every module result must satisfy the shared contract (Shema.md)."""
@@ -60,9 +60,9 @@ def test_assets_present():
         assert p.exists(), f"missing sample asset: {p}"
 
 
-# ---------------------------------------------------------------------------
-# Original module tests (preserved from existing test_pipeline.py)
-# ---------------------------------------------------------------------------
+
+
+
 
 def test_case_1_genuine_match_modules_ok():
     r_ocr = ocr_mrz.run_ocr_mrz(GENUINE)
@@ -70,7 +70,7 @@ def test_case_1_genuine_match_modules_ok():
     assert r_ocr.status == "ok"
     assert r_ocr.raw_output["mrz"]["parsed"] is True
 
-    # every ICAO block that could be validated should actually check OK
+
     checks = r_ocr.raw_output["mrz"]["icao_checks"]
     validated = [v for v in checks.values() if isinstance(v, dict) and "ok" in v]
     assert validated, "expected at least one ICAO block to be validated"
@@ -95,14 +95,14 @@ def test_case_1_genuine_match_modules_ok():
 
 
 def test_case_2_tampered_doc_flagged():
-    # Get genuine baseline first for comparison
+
     r_g = tamper.run_tamper(GENUINE)
     r_genuine_score = r_g.raw_output["tamper_score"]
 
     r = tamper.run_tamper(TAMPERED)
     assert_contract(r)
     assert r.status == "ok"
-    # tampered score should be clearly above genuine baseline
+
     assert r.raw_output["tamper_score"] > r_genuine_score, (
         f"tampered ({r.raw_output['tamper_score']}) should exceed genuine ({r_genuine_score})"
     )
@@ -128,9 +128,9 @@ def test_deepfake_happy_path():
     assert 0.0 <= r.raw_output["deepfake_score"] <= 1.0
 
 
-# ---------------------------------------------------------------------------
-# Fault isolation (Techspec §5)
-# ---------------------------------------------------------------------------
+
+
+
 
 def test_fault_isolation_bad_path():
     assert_contract(ocr_mrz.run_ocr_mrz("does/not/exist.png"))
@@ -173,22 +173,22 @@ def test_evidence_images_written():
     assert tp.evidence_uri and pathlib.Path(tp.evidence_uri).exists()
 
 
-# ===========================================================================
-# NEW TESTS — Phase 4: Plan.md scenarios + new modules
-# ===========================================================================
 
 
-# ---------------------------------------------------------------------------
-# Checksums module tests
-# ---------------------------------------------------------------------------
+
+
+
+
+
+
 
 class TestChecksums:
     """Unit tests for all algorithmic checksum validators."""
 
     def test_verhoeff_valid_aadhaar(self):
         """Valid Aadhaar numbers should pass Verhoeff."""
-        # Use a known valid Verhoeff number
-        # Build one: compute check digit for 11 digits, then validate 12
+
+
         digit = checksums.compute_verhoeff_digit("12345678901")
         full = f"12345678901{digit}"
         assert checksums.validate_verhoeff(full) is True
@@ -196,8 +196,8 @@ class TestChecksums:
     def test_verhoeff_invalid_aadhaar(self):
         """Invalid Aadhaar should fail Verhoeff."""
         assert checksums.validate_verhoeff("123456789012") is False or \
-               checksums.validate_verhoeff("000000000000") is True  # 0s could be valid
-        # Definitely wrong: flip last digit of a valid number
+               checksums.validate_verhoeff("000000000000") is True
+
         digit = checksums.compute_verhoeff_digit("12345678901")
         bad_digit = (digit + 1) % 10
         bad_full = f"12345678901{bad_digit}"
@@ -240,8 +240,8 @@ class TestChecksums:
 
     def test_icao_9303_valid_mrz(self):
         """ICAO 9303 validation on correctly-checksummed MRZ lines."""
-        # Build a valid MRZ line2 with correct check digits
-        doc_num = "AB1234567"  # 9 chars
+
+        doc_num = "AB1234567"
         doc_check = str(checksums.icao_check_digit(doc_num))
 
         dob = "880412"
@@ -250,22 +250,22 @@ class TestChecksums:
         expiry = "280101"
         exp_check = str(checksums.icao_check_digit(expiry))
 
-        # Construct line2 per TD3 layout:
-        # [0:9]=doc_num, [9]=check, [10:13]=nationality, [13:19]=dob, [19]=check,
-        # [20]=sex, [21:27]=expiry, [27]=check, [28:42]=personal, [43]=composite
+
+
+
         line2_parts = (
-            doc_num + doc_check  # 0-9
-            + "IND"              # 10-12 nationality
-            + dob + dob_check    # 13-19
-            + "M"                # 20 sex
-            + expiry + exp_check # 21-27
-            + "<" * 14           # 28-41 personal number + check
-            + "0"                # 42 padding
+            doc_num + doc_check
+            + "IND"
+            + dob + dob_check
+            + "M"
+            + expiry + exp_check
+            + "<" * 14
+            + "0"
         )
-        # Pad to 44 chars
+
         line2 = line2_parts.ljust(44, "<")
 
-        # Compute composite check digit
+
         composite_block = line2[0:10] + line2[13:20] + line2[21:43]
         comp_check = str(checksums.icao_check_digit(composite_block))
         line2 = line2[:43] + comp_check
@@ -292,12 +292,12 @@ class TestChecksums:
         assert r["valid"] is True
 
         r = checksums.validate_document_number("passport", "J8369854")
-        assert r["valid"] is None  # needs MRZ lines
+        assert r["valid"] is None
 
 
-# ---------------------------------------------------------------------------
-# Demographic module tests
-# ---------------------------------------------------------------------------
+
+
+
 
 class TestDemographic:
     """Tests for demographic reconciliation."""
@@ -327,7 +327,7 @@ class TestDemographic:
         """Forged birthdate → critical mismatch (plan scenario 2)."""
         extracted = {
             "full_name": "Rajesh Kumar",
-            "date_of_birth": "1995-04-12",  # forged: 7 years younger
+            "date_of_birth": "1995-04-12",
             "document_number": "234567890123",
             "gender": "M",
         }
@@ -363,9 +363,9 @@ class TestDemographic:
         assert dob_comp["status"] == "match"
 
 
-# ---------------------------------------------------------------------------
-# Watchlist module tests
-# ---------------------------------------------------------------------------
+
+
+
 
 class TestWatchlist:
     """Tests for watchlist provider."""
@@ -400,9 +400,9 @@ class TestWatchlist:
         assert "is_mocked" in d
 
 
-# ---------------------------------------------------------------------------
-# Risk Engine tests
-# ---------------------------------------------------------------------------
+
+
+
 
 class TestRiskEngine:
     """Tests for the composite risk engine."""
@@ -508,9 +508,9 @@ class TestRiskEngine:
         assert "flags" in d
 
 
-# ---------------------------------------------------------------------------
-# Gemini scanner tests (offline simulation)
-# ---------------------------------------------------------------------------
+
+
+
 
 class TestGeminiScanner:
     """Tests for the Gemini AI scanner (offline simulation mode)."""
@@ -531,7 +531,7 @@ class TestGeminiScanner:
         assert "demographics" in result
         assert "three_way_face_match" in result
         assert "is_simulated" in result
-        assert result["is_simulated"] is True  # no API key in test
+        assert result["is_simulated"] is True
 
     def test_scan_demographics_populated(self):
         """Demographics should have key fields."""
@@ -557,9 +557,9 @@ class TestGeminiScanner:
         assert result["photo_tamper_anomaly"] is True
 
 
-# ---------------------------------------------------------------------------
-# Scenario 6: Sub-second tamper execution (plan: < 1.5s assertion)
-# ---------------------------------------------------------------------------
+
+
+
 
 def test_tamper_execution_speed():
     """Tamper detection must complete in < 1.5 seconds on CPU."""

@@ -53,29 +53,29 @@ from .common import (
 
 MODULE_NAME = "liveness"
 
-# Active challenge types — randomized per session
+
 CHALLENGE_TYPES = ["blink", "head_turn", "mouth_open"]
-# Minimum yaw (from face_quality yaw_proxy) for head_turn
-HEAD_YAW_THRESHOLD = 0.30  # ~25 degrees
-# Minimum mouth opening (normalized) for mouth_open
+
+HEAD_YAW_THRESHOLD = 0.30
+
 MOUTH_OPEN_THRESHOLD = 0.04
 
-# minimum number of frames required to be considered a real burst
+
 MIN_BURST_FRAMES = 3
-# minimum fraction of frames with a detected face before we trust analysis
+
 MIN_COVERAGE = 0.5
-# mean normalised landmark displacement below this => still / frozen sequence
+
 STATIC_MOTION = 0.002
-# reference motion used to normalise the motion signal (0 -> 1)
+
 MOTION_REF = 0.015
-# screen-artifact score above this => display replay suspected
+
 SCREEN_SPOOF = 0.60
-# final liveness score threshold for live=True
+
 LIVE_THRESHOLD = 0.45
-# minimum EAR drop (absolute) for a blink event to count (noise rejection)
+
 BLINK_DEPTH = 0.01
 
-# mediapipe FaceLandmarker task model (downloaded; see pipeline/vendor/models)
+
 _FACELANDMARKER_TASK = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "vendor",
@@ -83,14 +83,14 @@ _FACELANDMARKER_TASK = os.path.join(
     "face_landmarker.task",
 )
 
-# Standard 468-point eye landmark indices for the mediapipe face-mesh model.
+
 _LEFT_EYE = [33, 160, 158, 133, 153, 144]
 _RIGHT_EYE = [362, 385, 387, 263, 373, 380]
 
 
-# ---------------------------------------------------------------------------
-# Low-level helpers
-# ---------------------------------------------------------------------------
+
+
+
 
 def _ear(landmarks, indices) -> Optional[float]:
     """Compute eye aspect ratio from a mediapipe landmark list for one eye."""
@@ -140,20 +140,20 @@ def _collect_frames(burst_input) -> List[np.ndarray]:
         p = pathlib.Path(burst_input)
         if p.suffix.lower() in {".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"}:
             return _frames_from_video(p)
-        # single image path -> single frame (low burst)
+
         return [load_image(p)]
 
     if isinstance(burst_input, (list, tuple)) and len(burst_input) > 0:
-        # if it's a list of frames/paths
+
         if isinstance(burst_input[0], (str, pathlib.Path, os.PathLike)):
             return [load_image(x) for x in burst_input]
-        # list of ndarrays
+
         if isinstance(burst_input[0], np.ndarray):
             return [x.astype(np.uint8) for x in burst_input]
-        # list of PIL
+
         return [load_image(x) for x in burst_input]
 
-    # single ndarray / single PIL image
+
     return [load_image(burst_input)]
 
 
@@ -180,9 +180,9 @@ def _frames_from_video(path: pathlib.Path, max_frames: int = 12) -> List[np.ndar
     return frames
 
 
-# ---------------------------------------------------------------------------
-# Per-frame feature extraction
-# ---------------------------------------------------------------------------
+
+
+
 
 def _extract_frame_features(landmarker, mp, frame: np.ndarray):
     """Return (ear, landmarks_xy, bbox) for one frame, or None if no face."""
@@ -210,7 +210,7 @@ def _extract_frame_features(landmarker, mp, frame: np.ndarray):
 def _mouth_open_ratio(landmarks) -> Optional[float]:
     """Estimate mouth opening from landmarks (upper lip 13 vs lower lip 14)."""
     try:
-        # Use landmarks 13 (upper) and 14 (lower) and 78/308 for mouth corners for scale
+
         upper = np.array([landmarks[13].x, landmarks[13].y])
         lower = np.array([landmarks[14].x, landmarks[14].y])
         left = np.array([landmarks[78].x, landmarks[78].y])
@@ -226,10 +226,10 @@ def _head_yaw(landmarks) -> Optional[float]:
     """Estimate head yaw via face_quality helper."""
     try:
         from .face_quality import yaw_proxy_from_kps
-        kps = [(landmarks[i].x, landmarks[i].y) for i in [33, 263, 1, 61, 291]]  # eyes, nose, mouth
-        # Use the 5-point proxy
+        kps = [(landmarks[i].x, landmarks[i].y) for i in [33, 263, 1, 61, 291]]
+
         pts = [landmarks[33], landmarks[263], landmarks[1]]
-        # Reuse face_quality logic with 3 points
+
         import numpy as np
         left = np.array([landmarks[33].x, landmarks[33].y])
         right = np.array([landmarks[263].x, landmarks[263].y])
@@ -270,21 +270,21 @@ def _screen_artifact_score(frame: np.ndarray, bbox) -> float:
         gray = (gray - gray.mean()) * window_2d
 
         spectrum = np.abs(np.fft.fftshift(np.fft.fft2(gray)))
-        # log magnitude compresses dynamic range -> measurable peaks stand out
+
         mag = np.log1p(spectrum)
 
         cy, cx = 64, 64
         ys, xs = np.mgrid[0:128, 0:128]
-        r = np.sqrt((xs - cx) ** 2 + (ys - cy) ** 2) / 64.0  # normalized 0..~1.4
-        total_mask = r >= 3.0 / 64.0  # exclude DC core
+        r = np.sqrt((xs - cx) ** 2 + (ys - cy) ** 2) / 64.0
+        total_mask = r >= 3.0 / 64.0
 
-        # high-frequency fraction (ring power above r=0.35 vs above r>=3px)
+
         high_mask = (r >= 0.35) & (r <= 1.0)
         total_energy = float(mag[total_mask].sum()) + 1e-9
         high_energy = float(mag[high_mask].sum())
         high_fraction = high_energy / total_energy
 
-        # grid peakiness: how spiky the mid-to-high band is
+
         band = (r >= 0.20) & (r <= 0.80)
         band_vals = mag[band]
         if band_vals.size == 0:
@@ -295,13 +295,13 @@ def _screen_artifact_score(frame: np.ndarray, bbox) -> float:
         hf_signal = np.clip((high_fraction - 0.10) / 0.20, 0.0, 1.0)
         pk_signal = np.clip((peakiness - 2.0) / 5.0, 0.0, 1.0)
         return float(0.5 * hf_signal + 0.5 * pk_signal)
-    except Exception:  # noqa: BLE001  (feature is best-effort)
+    except Exception:
         return 0.0
 
 
-# ---------------------------------------------------------------------------
-# Burst analysis
-# ---------------------------------------------------------------------------
+
+
+
 
 def _analyse_burst(frames: List[np.ndarray]) -> dict:
     """Extract EAR, motion and screen-artifact signals across the burst."""
@@ -309,7 +309,7 @@ def _analyse_burst(frames: List[np.ndarray]) -> dict:
 
     landmarker = _face_mesh()
     try:
-        features = []  # (ear, pts, bbox) or None per frame
+        features = []
         ear_series = []
         for frame in frames:
             feat = _extract_frame_features(landmarker, mp, frame)
@@ -342,11 +342,11 @@ def _analyse_burst(frames: List[np.ndarray]) -> dict:
         if n_landmarks == 0:
             return stats
 
-        # --- adaptive blink detection ---
+
         arr = np.asarray([ear_series[i] for i in valid_idx], dtype=np.float64)
-        baseline = float(np.percentile(arr, 75))  # open-eye reference
-        # 0.72 * baseline reproduces the old fixed 0.21 threshold for a typical
-        # open-eye EAR of ~0.29 WITHOUT hard-coding it, so still adapts per face.
+        baseline = float(np.percentile(arr, 75))
+
+
         closed_thr = min(0.27, max(0.14, baseline * 0.72))
 
         blinks = 0
@@ -358,7 +358,7 @@ def _analyse_burst(frames: List[np.ndarray]) -> dict:
                 while j < len(arr) and arr[j] < closed_thr:
                     run_min = min(run_min, arr[j])
                     j += 1
-                # a genuine blink dips meaningfully below the open-eye baseline
+
                 rel_drop = baseline - run_min
                 if rel_drop >= baseline * 0.25:
                     blinks += 1
@@ -366,18 +366,18 @@ def _analyse_burst(frames: List[np.ndarray]) -> dict:
             else:
                 i += 1
 
-        # --- head yaw and mouth open (active challenge signals) ---
+
         head_yaws = []
         mouth_opens = []
         for idx in valid_idx:
             feat = features[idx]
-            # Re-extract landmarks for this frame to compute yaw/mouth
-            # Use the stored pts from feat[1] would be better, but we need landmarks
-            # For now, approximate from the stored features: we have bbox and pts already
-            # Head yaw: use the pts directly
+
+
+
+
             try:
                 pts = feat[1]
-                # pts is (468,2) array
+
                 left = pts[33]
                 right = pts[263]
                 nose = pts[1]
@@ -388,8 +388,8 @@ def _analyse_burst(frames: List[np.ndarray]) -> dict:
             except Exception:
                 pass
             try:
-                # Mouth open: use stored landmarks via _mouth_open_ratio logic on pts
-                # Approximate with pts[13],14,78,308
+
+
                 upper = pts[13]
                 lower = pts[14]
                 left_m = pts[78]
@@ -402,7 +402,7 @@ def _analyse_burst(frames: List[np.ndarray]) -> dict:
         head_yaw_max = float(max(head_yaws)) if head_yaws else 0.0
         mouth_open_max = float(max(mouth_opens)) if mouth_opens else 0.0
 
-        # --- motion (inter-frame landmark displacement / face width) ---
+
         displacements = []
         prev = features[valid_idx[0]]
         for idx in valid_idx[1:]:
@@ -414,7 +414,7 @@ def _analyse_burst(frames: List[np.ndarray]) -> dict:
             prev = cur
         motion_score = float(np.mean(displacements)) if displacements else 0.0
 
-        # --- screen artifact (best-effort, over face frames) ---
+
         screen_scores = [
             _screen_artifact_score(frames[idx], features[idx][2])
             for idx in valid_idx
@@ -439,13 +439,13 @@ def _analyse_burst(frames: List[np.ndarray]) -> dict:
     finally:
         try:
             landmarker.close()
-        except (RuntimeError, ValueError, IOError):  # noqa: BLE001
+        except (RuntimeError, ValueError, IOError):
             pass
 
 
-# ---------------------------------------------------------------------------
-# Public entry point
-# ---------------------------------------------------------------------------
+
+
+
 
 def run_liveness(frame_burst, challenge_type: str = "blink") -> ModuleResult:
     """Run multi-signal liveness on a short webcam frame burst.
@@ -464,11 +464,11 @@ def run_liveness(frame_burst, challenge_type: str = "blink") -> ModuleResult:
     """
     try:
         frames = _collect_frames(frame_burst)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return inconclusive_result(MODULE_NAME, exc)
 
     if len(frames) < MIN_BURST_FRAMES:
-        # not a real burst -> mark inconclusive (caller should supply a burst)
+
         return inconclusive_result(
             MODULE_NAME,
             f"expected a frame burst (>= {MIN_BURST_FRAMES} frames); got {len(frames)}",
@@ -484,7 +484,7 @@ def run_liveness(frame_burst, challenge_type: str = "blink") -> ModuleResult:
 
     try:
         stats = _analyse_burst(frames)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return inconclusive_result(MODULE_NAME, exc)
 
     if stats["n_landmarks"] == 0:
@@ -505,7 +505,7 @@ def run_liveness(frame_burst, challenge_type: str = "blink") -> ModuleResult:
     coverage = stats["coverage"]
     head_turn = stats.get("head_turn_detected", False)
     mouth_open = stats.get("mouth_open_detected", False)
-    # Normalize challenge type
+
     challenge = (challenge_type or "blink").strip().lower()
     if challenge not in CHALLENGE_TYPES:
         challenge = "blink"
@@ -513,14 +513,14 @@ def run_liveness(frame_burst, challenge_type: str = "blink") -> ModuleResult:
     spoof_signals = []
     reason = None
 
-    # --- must a score be computed from -> decision logic -------------------
+
     still = motion < STATIC_MOTION
 
-    # Challenge-specific check: if the requested challenge is not observed, fail fast
+
     challenge_ok = True
     challenge_reason = None
     if challenge == "blink" and blinks == 0:
-        # blink challenge requires at least one blink
+
         challenge_ok = False
         challenge_reason = "blink challenge not observed — no blink detected"
     elif challenge == "head_turn" and not head_turn:
@@ -530,7 +530,7 @@ def run_liveness(frame_burst, challenge_type: str = "blink") -> ModuleResult:
         challenge_ok = False
         challenge_reason = "mouth-open challenge not observed — mouth did not open sufficiently"
     elif challenge == "smile" and not mouth_open:
-        # smile uses mouth open as proxy
+
         challenge_ok = False
         challenge_reason = "smile challenge not observed"
 
@@ -558,19 +558,19 @@ def run_liveness(frame_burst, challenge_type: str = "blink") -> ModuleResult:
     else:
         blink_signal = min(blinks, 2) / 2.0
         motion_signal = float(np.clip(motion / MOTION_REF, 0.0, 1.0))
-        # Head/mouth signals as additional liveness cues
+
         challenge_signal = 1.0 if (blinks > 0 or head_turn or mouth_open) else 0.0
         if blinks == 0 and not head_turn and not mouth_open:
-            # motion alone can certify liveness, but require a higher bar
+
             score = 0.45 * motion_signal + 0.25 * (1.0 - screen) + 0.20 * coverage
         else:
             score = 0.55 * max(blink_signal, motion_signal, challenge_signal) \
                 + 0.25 * (1.0 - screen) + 0.20 * coverage
         live = bool(score >= LIVE_THRESHOLD)
         if live and not challenge_ok:
-            # The traveler is never shown the randomly assigned challenge, so
-            # performing a *different* genuine action must not fail liveness.
-            # Record the mismatch for audit instead of failing the person.
+
+
+
             spoof_signals.append(f"challenge_not_observed:{challenge}")
             reason = (f"LIVE via {', '.join(observed)} but the assigned "
                       f"'{challenge}' challenge was not performed")

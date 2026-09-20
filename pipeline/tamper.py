@@ -38,9 +38,9 @@ from .common import (
 
 MODULE_NAME = "tamper"
 
-# ---------------------------------------------------------------------------
-# Error Level Analysis
-# ---------------------------------------------------------------------------
+
+
+
 
 def _ela_residual(rgb_uint8: np.ndarray, quality: int = 90) -> np.ndarray:
     """Recompress an RGB image as JPEG and return the absolute diff (0-255)."""
@@ -77,7 +77,7 @@ def _render_ela_overlay(rgb_uint8: np.ndarray, residual: np.ndarray, out_path) -
     heat_bgr = cv2.applyColorMap(heat, cv2.COLORMAP_JET)
     over = cv2.addWeighted(rgb_uint8, 0.45, heat_bgr, 0.85, 0)
 
-    # annotate with a measure bar / title
+
     txt = f"ELA residual overlay - bright = tamper-suspicious (mean {np.mean(residual):.2f})"
     cv2.putText(
         over,
@@ -93,9 +93,9 @@ def _render_ela_overlay(rgb_uint8: np.ndarray, residual: np.ndarray, out_path) -
     return str(out_path)
 
 
-# ---------------------------------------------------------------------------
-# Copy-move detection
-# ---------------------------------------------------------------------------
+
+
+
 
 def _copy_move_detect(
     gray: np.ndarray,
@@ -128,7 +128,7 @@ def _copy_move_detect(
     for y in range(0, H - bs + 1, stride):
         for x in range(0, W - bs + 1, stride):
             tile = gray[y:y + bs, x:x + bs]
-            if tile.std() < min_std:  # skip flat/blank tiles
+            if tile.std() < min_std:
                 continue
             key = hashlib.sha1(tile.tobytes()).hexdigest()
             locs[key].append((x, y))
@@ -166,9 +166,9 @@ def _copy_move_detect(
     }
 
 
-# ---------------------------------------------------------------------------
-# Public entry point
-# ---------------------------------------------------------------------------
+
+
+
 
 def run_tamper(document_image, save_evidence: bool = True) -> ModuleResult:
     """Run ELA + SHA1 exact-duplicate copy-move tamper detection on a single document image.
@@ -190,29 +190,29 @@ def run_tamper(document_image, save_evidence: bool = True) -> ModuleResult:
             (0.299 * rgb[:, :, 2] + 0.587 * rgb[:, :, 1] + 0.114 * rgb[:, :, 0]),
             dtype=np.uint8,
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return inconclusive_result(MODULE_NAME, exc)
 
-    # --- ELA ----------------------------------------------------------------
+
     try:
         residual = _ela_residual(rgb, quality=90)
         ela = _ela_metrics(residual)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return inconclusive_result(MODULE_NAME, exc)
 
-    # --- copy-move detection -------------------------------------------------
+
     try:
         cm = _copy_move_detect(gray)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         cm = {"error": str(exc), "dominant_offset_count": 0, "regions": 0,
               "blocks_matched": 0, "offset_groups": []}
 
-    # --- Aggregate score ----------------------------------------------------
-    # Tamper score combines a dominant 2-D copy-move cluster with a secondary
-    # ELA signal, both in [0,1]. The copy-move component keys on the *strength
-    # of the dominant two-dimensional offset cluster*: a forged pasted region
-    # yields a large inlier count at one 2-D offset, while a genuine page only
-    # produces weak, scattered or purely-horizontal (text/band) repeats.
+
+
+
+
+
+
     COPY_FLOOR = 10
     COPY_SAT = 90
     ela_signal = np.clip((ela["mean_residual"] - 1.5) / 2.5, 0.0, 1.0)
@@ -223,14 +223,14 @@ def run_tamper(document_image, save_evidence: bool = True) -> ModuleResult:
     )
     tamper_score = round(0.60 * copy_signal + 0.40 * ela_signal, 4)
 
-    # --- Evidence image -----------------------------------------------------
+
     evidence_uri = None
     if save_evidence:
         try:
             evidence_uri = _render_ela_overlay(
                 rgb, residual, new_evidence_path(MODULE_NAME, "png")
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             single_log_warn(f"tamper: evidence write failed ({type(exc).__name__})")
 
     raw = {

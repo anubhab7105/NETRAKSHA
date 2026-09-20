@@ -24,9 +24,9 @@ import threading
 import time
 from collections import deque
 
-# ---------------------------------------------------------------------------
-# Environment / secret gates
-# ---------------------------------------------------------------------------
+
+
+
 
 DEV_JWT_DEFAULT = "sih-hackathon-dev-secret-change-in-prod"
 MIN_SECRET_CHARS = 32
@@ -61,9 +61,9 @@ def secret_error(secret: str, *, name: str = "JWT_SECRET") -> str | None:
     return None
 
 
-# ---------------------------------------------------------------------------
-# Password policy
-# ---------------------------------------------------------------------------
+
+
+
 
 MIN_PASSWORD_CHARS = 10
 
@@ -91,15 +91,15 @@ def validate_new_password(password: str) -> None:
             raise ValueError("Password is too guessable — avoid common words and sequences.")
 
 
-#: bcrypt hash of a random dummy password — used to verify unknown-user
-#: logins in constant-ish time so attackers cannot enumerate usernames by
-#: response timing. Generated once offline; it never matches a real login.
+
+
+
 DUMMY_HASH = "$2b$12$0cqFtMWkcZzA/0B/BAPssOaLTODk0OfimIdj/ergCYVzt4QuXCYwC"
 
 
-# ---------------------------------------------------------------------------
-# TOTP (RFC 6238, SHA-1, 30s step, 6 digits) — stdlib only
-# ---------------------------------------------------------------------------
+
+
+
 
 def generate_totp_secret() -> str:
     """Random 160-bit base32 secret for authenticator enrollment."""
@@ -160,9 +160,9 @@ def match_window(secret: str, code: str, *, max_window: int = 10,
     return None
 
 
-# ---------------------------------------------------------------------------
-# Sliding-window rate limiter (thread-safe, in-memory)
-# ---------------------------------------------------------------------------
+
+
+
 
 class RateLimiter:
     """Allow at most max_attempts events per window_s seconds per key."""

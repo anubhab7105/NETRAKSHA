@@ -36,21 +36,21 @@ from typing import Any, Optional
 
 from dotenv import load_dotenv
 
-# Load project .env so GEMINI_API_KEY / GEMINI_MODEL are available even
-# when the backend is started without exported environment variables.
+
+
 load_dotenv()
 
-# ---------------------------------------------------------------------------
-# Gemini API integration
-# ---------------------------------------------------------------------------
 
-# Default cascade: verified-working models first (Sep 2026 probe).
-# flash-lite-latest responds in ~5s, 3.5-flash in ~13s, 3-flash-preview in ~16s.
-# gemini-3.8/3.7-flash hang until timeout, 3.6-flash is quota-429 and
-# 1.5/2.5-flash are 404-removed — all excluded so screening fails fast to
-# the next working model instead of burning ~24s on hung attempts.
+
+
+
+
+
+
+
+
 DEFAULT_GEMINI_MODELS = ["gemini-flash-lite-latest", "gemini-3.5-flash", "gemini-3-flash-preview"]
-# Legacy single-model default for backwards compatibility
+
 DEFAULT_GEMINI_MODEL = DEFAULT_GEMINI_MODELS[0]
 
 
@@ -72,8 +72,8 @@ def _get_models() -> list[str]:
         return [m.strip() for m in multi.split(",") if m.strip()]
     single = os.environ.get("GEMINI_MODEL", "").strip()
     if single:
-        # If operator only set GEMINI_MODEL, still build a safe cascade
-        # by appending the stable defaults that weren't already listed.
+
+
         cascade = [single]
         for fallback in DEFAULT_GEMINI_MODELS:
             if fallback not in cascade:
@@ -90,12 +90,12 @@ def _get_model() -> str:
     return _get_models()[0]
 
 
-# Kept for backwards compatibility (import-time snapshot); new code must use
-# the lazy getters above so key/model edits take effect without a reimport.
+
+
 _GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 _GEMINI_MODEL = os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
 
-# The structured prompt for multi-task document analysis
+
 _SYSTEM_PROMPT = """You are an expert border security document forensics AI.
 Analyse the provided images and return ONLY a JSON object with this exact schema:
 
@@ -215,7 +215,7 @@ def scan_document(
     api_key = _get_api_key()
     models = _get_models()
 
-    # Cascading model attempt loop — try each model in priority order
+
     fallback_reason: Optional[str] = None
     models_attempted: list[str] = []
 
@@ -238,9 +238,9 @@ def scan_document(
                 result["models_attempted"] = models_attempted
                 return _normalize_no_live_face_match(result, has_live)
             except Exception as exc:
-                # Classify the failure so we can decide whether to keep trying
-                # the cascade or abort early (auth errors won't fix themselves
-                # by switching models, but model-not-found or overload will).
+
+
+
                 err_text = f"{type(exc).__name__}: {exc}".lower()
                 is_auth = any(s in err_text for s in [
                     "api_key", "api key", "invalid key", "unauthenticated",
@@ -257,8 +257,8 @@ def scan_document(
                 ])
 
                 if is_auth:
-                    # Auth errors are key-level failures — no point trying
-                    # other models with the same key.
+
+
                     fallback_reason = "auth_or_config_error"
                     print(
                         f"[gemini_scanner] Auth/config error on model '{model}': "
@@ -266,7 +266,7 @@ def scan_document(
                         "Check .env: GEMINI_API_KEY must be a valid Google key "
                         "(starts with 'AIza')."
                     )
-                    break  # No point trying remaining models
+                    break
                 elif is_model_error:
                     kind = "model-not-found"
                     fallback_reason = "network_or_api_failure"
@@ -274,21 +274,21 @@ def scan_document(
                         f"[gemini_scanner] Model '{model}' not found/unsupported "
                         f"({type(exc).__name__}: {exc}) — trying next model in cascade."
                     )
-                    # Continue to next model
+
                 elif is_network:
                     fallback_reason = "network_or_api_failure"
                     print(
                         f"[gemini_scanner] Network/quota error on model '{model}' "
                         f"({type(exc).__name__}: {exc}) — trying next model in cascade."
                     )
-                    # Continue to next model
+
                 else:
                     fallback_reason = "network_or_api_failure"
                     print(
                         f"[gemini_scanner] Unexpected error on model '{model}' "
                         f"({type(exc).__name__}: {exc}) — trying next model in cascade."
                     )
-                    # Continue to next model
+
 
         if models_attempted:
             print(
@@ -297,11 +297,11 @@ def scan_document(
                 "Final verdict will be Yellow/Manual Review."
             )
 
-    # Offline simulation fallback — controlled, not a halt
+
     result = _simulate_scan(document_image_path, live_capture_path, db_reference_path)
     elapsed = (time.perf_counter() - start) * 1000
     result["is_simulated"] = True
-    # Distinguish demo (no/placeholder key) vs cloud failure (key present but call failed)
+
     _has_real_key = bool(
         api_key
         and api_key.strip() not in ("", "your_gemini_api_key_here", "your_gemini_api_key_here\n")
@@ -356,15 +356,15 @@ def _generate_with_timeout(client, model: str, parts, timeout: float):
         try:
             return fut.result(timeout=timeout)
         except concurrent.futures.TimeoutError as exc:
-            # Don't block on the hung SDK thread — leak it as a daemon and
-            # move on to the next model / simulation. (A `with` block here
-            # would shutdown(wait=True) and re-hang until the call returns.)
+
+
+
             ex.shutdown(wait=False, cancel_futures=True)
             raise TimeoutError(
                 f"Gemini call timed out after {timeout:.0f}s (model={model})"
             ) from exc
     finally:
-        # Fast path (success/fast error): no hung thread, safe to clean up.
+
         try:
             ex.shutdown(wait=False, cancel_futures=True)
         except Exception:
@@ -388,10 +388,10 @@ def _call_gemini(
     model = model if model is not None else _get_model()
     client = genai.Client(api_key=api_key)
 
-    # Build content parts
+
     parts = [_SYSTEM_PROMPT]
 
-    # Image 1: Document
+
     doc_bytes = _load_image_bytes(document_image_path)
     if doc_bytes:
         parts.append(
@@ -402,7 +402,7 @@ def _call_gemini(
     else:
         parts.append("Image 1 (document): Not available")
 
-    # Image 2: Live capture (optional — no webcam → face match is inconclusive)
+
     live_bytes = _load_image_bytes(live_capture_path) if live_capture_path else b""
     if live_bytes:
         parts.append(
@@ -413,7 +413,7 @@ def _call_gemini(
     else:
         parts.append("Image 2 (live capture): Not available — do not compare faces")
 
-    # Image 3: DB reference (optional)
+
     if db_reference_path:
         db_bytes = _load_image_bytes(db_reference_path)
         if db_bytes:
@@ -427,9 +427,9 @@ def _call_gemini(
 
     response = _generate_with_timeout(client, model, parts, timeout)
 
-    # Parse the JSON response
+
     text = response.text.strip()
-    # Remove potential markdown fences
+
     if text.startswith("```"):
         text = text.split("\n", 1)[1]
         if text.endswith("```"):
@@ -437,11 +437,11 @@ def _call_gemini(
     return json.loads(text)
 
 
-# ---------------------------------------------------------------------------
-# Offline Simulation Fallback Engine
-# ---------------------------------------------------------------------------
 
-# Pre-configured demo profiles for realistic output
+
+
+
+
 _DEMO_PROFILES = {
     "aadhaar": {
         "document_type": "aadhaar",
@@ -504,12 +504,12 @@ def _simulate_scan(
     Randomly selects a demo profile and generates face match results
     with slight randomization for natural variance.
     """
-    # Pick a random profile
+
     profile_key = secrets.choice(list(_DEMO_PROFILES.keys()))
     profile = _DEMO_PROFILES[profile_key].copy()
     demographics = profile["demographics"].copy()
 
-    # Generate face match results
+
     has_db = db_reference_path is not None
     has_live = live_capture_path is not None
     similarity = round(secrets.SystemRandom().uniform(0.88, 0.96), 2)

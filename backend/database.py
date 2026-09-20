@@ -24,9 +24,9 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-# ---------------------------------------------------------------------------
-# Database URL resolution — Postgres in prod, SQLite fallback in dev
-# ---------------------------------------------------------------------------
+
+
+
 
 _APP_ENV = os.environ.get("APP_ENV", os.environ.get("ENVIRONMENT", "development")).lower()
 _IS_PROD = _APP_ENV == "production"
@@ -43,7 +43,7 @@ if not _RAW_URL or _RAW_URL.startswith("sqlite"):
             "Supabase connection string, e.g. "
             "postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres"
         )
-    # Dev fallback: explicit sqlite URL or local file when unset.
+
     if _RAW_URL.startswith("sqlite://") and not _RAW_URL.startswith("sqlite+aiosqlite://"):
         _RAW_URL = _RAW_URL.replace("sqlite://", "sqlite+aiosqlite://", 1)
     if _RAW_URL.startswith("sqlite+aiosqlite://"):
@@ -65,9 +65,9 @@ else:
             "or sqlite in non-production dev only."
         )
 
-# ---------------------------------------------------------------------------
-# Engine & session factory (PostgreSQL / asyncpg, or SQLite / aiosqlite)
-# ---------------------------------------------------------------------------
+
+
+
 
 if IS_SQLITE:
     _engine_kwargs = {
@@ -106,24 +106,24 @@ async def init_db() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    # create_all() never adds columns to PRE-EXISTING tables, so long-lived
-    # databases (e.g. production Supabase) silently miss columns added by
-    # later code changes (officers.unit, screening_cases.version, ...).
-    # The generic pass below self-heals any such drift on every startup.
+
+
+
+
     try:
         await ensure_model_columns()
     except Exception as e:
         print(f"[init_db] model-column migration warning: {e}")
-    # Legacy tables built with explicit IDs leave their SERIAL sequences
-    # behind max(id) → every autoincrement INSERT explodes with a duplicate
-    # pkey. Re-anchor sequences past max(id) on every startup (Postgres).
+
+
+
     try:
         await ensure_sequences()
     except Exception as e:
         print(f"[init_db] sequence repair warning: {e}")
-    # Post-fix columns on a pre-existing table are NOT added by create_all —
-    # backfill them so deployed Postgres DBs pick up trust metadata
-    # with just a restart (no manual migration).
+
+
+
     try:
         await ensure_registry_trust_columns()
     except Exception as e:
@@ -194,8 +194,8 @@ async def ensure_model_columns() -> dict:
                 except Exception:
                     default_sql = ""
                 if IS_SQLITE:
-                    # SQLite has no ADD COLUMN IF NOT EXISTS — we already
-                    # checked PRAGMA above, so plain ADD COLUMN suffices.
+
+
                     stmt = (f'ALTER TABLE "{table.name}" ADD COLUMN '
                             f'"{col.name}" {ddl_type}{default_sql}')
                 else:
@@ -205,8 +205,8 @@ async def ensure_model_columns() -> dict:
                     await conn.execute(_text(stmt))
                     added.setdefault(table.name, []).append(col.name)
                 except Exception:
-                    pass  # concurrent startup already added it
-    # Backfill NULLs on flag/counter columns so old rows behave sanely.
+                    pass
+
     _backfills = (
         ("officers", "must_change_password", "FALSE"),
         ("officers", "totp_enabled", "FALSE"),
@@ -226,8 +226,8 @@ async def ensure_model_columns() -> dict:
     return added
 
 
-# Trust columns added to citizens_registry after the enrollment audit.
-# (name, DDL fragment used for ALTER TABLE.)
+
+
 _REGISTRY_TRUST_COLUMNS: tuple[tuple[str, str], ...] = (
     ("source", "VARCHAR(30)"),
     ("source_ref", "TEXT"),
@@ -270,7 +270,7 @@ async def ensure_registry_trust_columns() -> dict:
     return {"added": added}
 
 
-# Auth-hardening columns added to officers after the secrets audit.
+
 _AUTH_COLUMNS: tuple[tuple[str, str], ...] = (
     ("must_change_password", "BOOLEAN DEFAULT FALSE"),
     ("totp_secret", "TEXT"),
@@ -301,7 +301,7 @@ async def ensure_auth_columns() -> dict:
                 added.append(name)
             except Exception:
                 pass
-    # Backfill NULLs left by ADD COLUMN on rows predating the default.
+
     if added:
         from sqlalchemy import text as _text
         try:
@@ -343,9 +343,9 @@ async def ensure_sequences() -> dict:
             if len(pk) != 1 or pk[0].name != "id":
                 continue
             try:
-                # 3-arg form (is_called=false): safe on EMPTY tables too —
-                # next nextval() returns exactly max(id)+1 (or 1 when empty).
-                # The 2-arg form errors on empty tables (setval 0 out of bounds).
+
+
+
                 res = await conn.execute(_text(
                     "SELECT setval(pg_get_serial_sequence(:t, 'id'), "
                     "(SELECT COALESCE(max(id), 0) FROM " + table.name + ") + 1, false"))
@@ -353,7 +353,7 @@ async def ensure_sequences() -> dict:
                 if row:
                     fixed[table.name] = int(row[0])
             except Exception:
-                pass  # non-serial PK or missing table — nothing to repair
+                pass
     if fixed:
         print(f"[init_db] sequences re-anchored: {fixed}")
     return fixed

@@ -14,8 +14,8 @@ from .common import load_image, inconclusive_result, ok_result, ModuleResult
 
 MODULE_NAME = "document_quality"
 
-MIN_DIM = 480  # min width/height for a readable document (webcam 640x480 is common)
-BLUR_THRESH = 35.0  # was 50, too strict for webcam
+MIN_DIM = 480
+BLUR_THRESH = 35.0
 DARK_THRESH = 35.0
 BRIGHT_THRESH = 225.0
 
@@ -50,5 +50,5 @@ def run_document_quality(document_image, save_evidence: bool = False) -> ModuleR
     if report["gate"] == "passed":
         return ok_result(MODULE_NAME, score, report, None)
     else:
-        # Use 0.85 score to trigger Yellow but not Red; gate failed is actionable
+
         return ok_result(MODULE_NAME, score, report, None)

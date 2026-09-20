@@ -46,7 +46,7 @@ def _load_secret(explicit: str | None) -> str:
     env = os.environ.get("REGISTRY_IMPORT_SECRET", "").strip()
     if env:
         return env
-    # Fall back to the repo .env (project root = parent of scripts/)
+
     dotenv = Path(__file__).resolve().parent.parent / ".env"
     if dotenv.is_file():
         for line in dotenv.read_text().splitlines():
@@ -71,7 +71,7 @@ def main() -> int:
     if not isinstance(payload, dict) or not payload.get("batch_ref") or not isinstance(payload.get("records"), list):
         raise SystemExit("Batch must be {batch_ref: str, records: [...]}")
 
-    # Canonical bytes: sorted keys, no whitespace drift — sign THESE bytes.
+
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     secret = _load_secret(args.secret)
     sig = hmac.new(secret.encode(), canonical, hashlib.sha256).hexdigest()

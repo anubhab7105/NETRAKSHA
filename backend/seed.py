@@ -18,7 +18,7 @@ import asyncio
 import os
 import sys
 
-# Add project root to path for imports
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import select
@@ -43,15 +43,15 @@ def _hash_password(plain: str) -> str:
     return ctx.hash(plain)
 
 
-# ---------------------------------------------------------------------------
-# Seed data definitions
-# ---------------------------------------------------------------------------
+
+
+
 
 OFFICERS = [
     {"username": os.environ.get("SEED_OFFICER_USER", "officer1"), "password": os.environ.get("SEED_OFFICER_PASS", "Officer@123"), "role": "officer", "unit": "BORDER_UNIT_1"},
     {"username": os.environ.get("SEED_SUPERVISOR_USER", "supervisor1"), "password": os.environ.get("SEED_SUPERVISOR_PASS", "Supervisor@123"), "role": "supervisor", "unit": "BORDER_UNIT_1"},
     {"username": os.environ.get("SEED_AUDITOR_USER", "auditor1"), "password": os.environ.get("SEED_AUDITOR_PASS", "Auditor@123"), "role": "auditor", "unit": "HQ"},
-    # Additional unit for scope testing
+
     {"username": "officer2", "password": "Officer@123", "role": "officer", "unit": "BORDER_UNIT_2"},
 ]
 
@@ -96,7 +96,7 @@ CITIZENS = [
         "father_or_spouse_name": None,
         "photo_uri": "samples/faces/person_a.png",
     },
-    # Second citizen for mismatch testing
+
     {
         "document_type": "aadhaar",
         "document_number": "987654321098",
@@ -107,10 +107,10 @@ CITIZENS = [
         "father_or_spouse_name": "Anil Sharma",
         "photo_uri": "samples/faces/person_b.png",
     },
-    # Specimen traveler — matches the shipped sample documents
-    # (samples/genuine_doc.png & samples/tampered_doc.png, ICAO MRZ L898902C3)
-    # so the flagship "clean traveler / tampered" demos hit a DB record and
-    # produce a real demographic cross-check instead of a dead-end.
+
+
+
+
     {
         "document_type": "passport",
         "document_number": "L898902C3",
@@ -169,9 +169,9 @@ async def seed_all() -> dict:
 
     production = is_production()
     if production:
-        # NEVER create default-credential accounts in production. The first
-        # supervisor comes from BOOTSTRAP_ADMIN_* env only (strong password
-        # enforced); they then rotate it at first login (must_change).
+
+
+
         boot_user = os.environ.get("BOOTSTRAP_ADMIN_USER", "").strip()
         boot_pass = os.environ.get("BOOTSTRAP_ADMIN_PASS", "")
         if not boot_user or not boot_pass:
@@ -193,7 +193,7 @@ async def seed_all() -> dict:
         officers_to_seed = [{**o, "must_change": True} for o in OFFICERS]
 
     async with async_session() as session:
-        # --- Officers ---
+
         for o in officers_to_seed:
             existing = await session.execute(
                 select(Officer).where(Officer.username == o["username"])
@@ -209,19 +209,19 @@ async def seed_all() -> dict:
                 ))
                 summary["officers_created"] += 1
             else:
-                # Update unit/role if changed (handles migration for new unit scoping)
+
                 expected_unit = o.get("unit", "BORDER_UNIT_1")
                 if getattr(officer, "unit", None) != expected_unit or officer.role != o["role"]:
                     officer.unit = expected_unit
                     officer.role = o["role"]
                 summary["officers_existed"] += 1
 
-        # --- Citizens Registry ---
-        # Seed rows predate the dual-approval control: they are marked
-        # source=legacy_seed so screening treats them as `legacy`
-        # (grandfathered, Green still possible) while the reconciliation
-        # report flags them for authority re-verification. New enrollments
-        # must go through the dual-approval queue or a signed import.
+
+
+
+
+
+
         for c in CITIZENS:
             existing = await session.execute(
                 select(CitizenRegistry).where(
@@ -237,8 +237,8 @@ async def seed_all() -> dict:
                 try:
                     session.add(CitizenRegistry(**row))
                 except TypeError:
-                    # Older DB without trust columns (migration runs in
-                    # init_db before seed, so this is belt-and-braces).
+
+
                     for k in ("source", "source_ref", "verification_method", "enrolled_by",
                               "approved_by", "photo_hash", "last_reconciled_at",
                               "reconciliation_status"):
@@ -248,7 +248,7 @@ async def seed_all() -> dict:
             else:
                 summary["citizens_existed"] += 1
 
-        # --- Watchlist ---
+
         for w in WATCHLIST:
             existing = await session.execute(
                 select(WatchlistEntry).where(
@@ -261,7 +261,7 @@ async def seed_all() -> dict:
             else:
                 summary["watchlist_existed"] += 1
 
-        # --- Audit log: seed event ---
+
         session.add(AuditLog(
             actor="system",
             action="database_seeded",
@@ -273,16 +273,16 @@ async def seed_all() -> dict:
     return summary
 
 
-# NOTE: there is intentionally no drop/reset helper. The backend is
-# Supabase-PostgreSQL-only and shares one production database — a
-# drop-all-tables helper is a data-loss footgun. Tests that need isolation
-# use their own in-memory engines (see test_auth_security.py), never this
-# module's engine.
 
 
-# ---------------------------------------------------------------------------
-# CLI entry point
-# ---------------------------------------------------------------------------
+
+
+
+
+
+
+
+
 
 if __name__ == "__main__":
     print("[seed] Seeding database...")

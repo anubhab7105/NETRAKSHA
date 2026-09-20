@@ -38,17 +38,17 @@ def _normalize_date(date_str: Optional[str]) -> str:
         return ""
     s = str(date_str).strip()
 
-    # Already YYYY-MM-DD
+
     m = re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})$", s)
     if m:
         return f"{int(m.group(1)):04d}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
 
-    # DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
+
     m = re.match(r"^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$", s)
     if m:
         return f"{int(m.group(3)):04d}-{int(m.group(2)):02d}-{int(m.group(1)):02d}"
 
-    # Compact / MRZ YYMMDD (6 digits, plausible month/day)
+
     m = re.match(r"^(\d{2})(\d{2})(\d{2})$", s)
     if m and 1 <= int(m.group(2)) <= 12 and 1 <= int(m.group(3)) <= 31:
         yy = int(m.group(1))
@@ -88,14 +88,14 @@ def _token_sort_similarity(a: str, b: str) -> float:
     if not a or not b:
         return 0.0
 
-    # Token-sort: split, sort alphabetically, rejoin
+
     tokens_a = " ".join(sorted(a.lower().split()))
     tokens_b = " ".join(sorted(b.lower().split()))
 
     if tokens_a == tokens_b:
         return 1.0
 
-    # Levenshtein distance
+
     dist = _levenshtein(tokens_a, tokens_b)
     max_len = max(len(tokens_a), len(tokens_b))
     return round(1.0 - (dist / max_len), 4) if max_len > 0 else 1.0
@@ -115,9 +115,9 @@ def _levenshtein(s1: str, s2: str) -> int:
         for j, c2 in enumerate(s2):
             cost = 0 if c1 == c2 else 1
             curr.append(min(
-                curr[j] + 1,       # insert
-                prev[j + 1] + 1,   # delete
-                prev[j] + cost,    # substitute
+                curr[j] + 1,
+                prev[j + 1] + 1,
+                prev[j] + cost,
             ))
         prev = curr
     return prev[-1]
@@ -160,7 +160,7 @@ def reconcile_demographics(extracted: dict, db_record: dict) -> dict:
     """
     comparisons = []
 
-    # --- Full Name ---
+
     ext_name = extracted.get("full_name") or ""
     db_name = db_record.get("full_name") or ""
     name_sim = _token_sort_similarity(ext_name, db_name)
@@ -175,7 +175,7 @@ def reconcile_demographics(extracted: dict, db_record: dict) -> dict:
         "confidence": name_sim,
     })
 
-    # --- Date of Birth ---
+
     ext_dob = extracted.get("date_of_birth") or ""
     db_dob = db_record.get("date_of_birth") or ""
     norm_ext_dob = _normalize_date(ext_dob)
@@ -191,7 +191,7 @@ def reconcile_demographics(extracted: dict, db_record: dict) -> dict:
         "confidence": 1.0 if dob_match is True else (0.0 if dob_match is False else None),
     })
 
-    # --- Document Number ---
+
     ext_doc = extracted.get("document_number") or ""
     db_doc = db_record.get("document_number") or ""
     norm_ext_doc = _normalize_doc_number(ext_doc)
@@ -207,7 +207,7 @@ def reconcile_demographics(extracted: dict, db_record: dict) -> dict:
         "confidence": 1.0 if doc_match is True else (0.0 if doc_match is False else None),
     })
 
-    # --- Gender ---
+
     ext_gen = _normalize_gender(extracted.get("gender"))
     db_gen = _normalize_gender(db_record.get("gender"))
     gen_match = ext_gen == db_gen if (ext_gen and db_gen) else None
@@ -221,17 +221,17 @@ def reconcile_demographics(extracted: dict, db_record: dict) -> dict:
         "confidence": 1.0 if gen_match is True else (0.0 if gen_match is False else None),
     })
 
-    # --- Address (fuzzy + PIN code) ---
+
     ext_addr = extracted.get("address") or ""
     db_addr = db_record.get("address") or ""
     addr_sim = _token_sort_similarity(ext_addr, db_addr) if (ext_addr and db_addr) else None
 
-    # Also check PIN code match separately (more reliable than full address)
+
     ext_pin = _extract_pin_code(ext_addr)
     db_pin = _extract_pin_code(db_addr)
     pin_match = ext_pin == db_pin if (ext_pin and db_pin) else None
 
-    ADDR_THRESHOLD = 0.60  # addresses can vary significantly in formatting
+    ADDR_THRESHOLD = 0.60
     addr_status = "unverified"
     if addr_sim is not None:
         if addr_sim >= ADDR_THRESHOLD or pin_match is True:
@@ -248,7 +248,7 @@ def reconcile_demographics(extracted: dict, db_record: dict) -> dict:
         "pin_code_match": pin_match,
     })
 
-    # --- Father/Spouse Name ---
+
     ext_father = extracted.get("father_or_spouse_name") or ""
     db_father = db_record.get("father_or_spouse_name") or ""
     father_sim = _token_sort_similarity(ext_father, db_father) if (ext_father and db_father) else None
@@ -263,13 +263,13 @@ def reconcile_demographics(extracted: dict, db_record: dict) -> dict:
         "confidence": father_sim,
     })
 
-    # --- Aggregate ---
+
     match_count = sum(1 for c in comparisons if c["status"] == "match")
     mismatch_count = sum(1 for c in comparisons if c["status"] == "mismatch")
     unverified_count = sum(1 for c in comparisons if c["status"] == "unverified")
     mismatch_fields = [c["field"] for c in comparisons if c["status"] == "mismatch"]
 
-    # Critical fields: Name, DOB, Document Number — any mismatch here fails overall
+
     critical = ["Full Name", "Date of Birth", "Document Number"]
     critical_mismatches = [f for f in mismatch_fields if f in critical]
     overall_match = len(critical_mismatches) == 0 and mismatch_count == 0

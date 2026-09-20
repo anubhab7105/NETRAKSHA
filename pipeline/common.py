@@ -18,18 +18,18 @@ from typing import Any, Optional
 
 import numpy as np
 
-# ---------------------------------------------------------------------------
-# Paths
-# ---------------------------------------------------------------------------
+
+
+
 
 _ROOT = pathlib.Path(__file__).resolve().parent
 _VENDOR = _ROOT / "vendor"
 
-# Where module evidence images are written. Environment-overridable so tests
-# and deployers can point at real object storage / app storage.
-# Treat a blank SCREEN_EVIDENCE_DIR the same as unset — an empty value would
-# otherwise resolve to "." (the process working directory) and litter the
-# project root with evidence PNGs (audit P1 §6).
+
+
+
+
+
 _evidence_env = os.environ.get("SCREEN_EVIDENCE_DIR", "").strip()
 EVIDENCE_DIR = pathlib.Path(
     _evidence_env
@@ -37,13 +37,13 @@ EVIDENCE_DIR = pathlib.Path(
     else str(_ROOT.parent / "samples" / "evidence")
 )
 
-# InsightFace model root (buffalo_l pack). insightface appends `/models` to
-# this root, so the pack must live at <root>/models/buffalo_l/.
+
+
 INSIGHTFACE_MODEL_ROOT = (_VENDOR / "models").resolve()
 
-# Vendored Tesseract runtime (binary + shared libs + tessdata). If the vendored
-# runtime is missing, fall back to a system-wide tesseract install so OCR still
-# works locally (audit P1 §6).
+
+
+
 _TESS_DIR = _VENDOR / "tesseract"
 
 _SYSTEM_TESSDATA = None
@@ -57,9 +57,9 @@ for _cand in (
         _SYSTEM_TESSDATA = pathlib.Path(_cand)
         break
 
-# Windows (UB-Mannheim installer, `winget install UB-Mannheim.TesseractOCR`):
-# tessdata ships beside the binary and the binary is often NOT on PATH, so
-# probe the well-known install locations directly.
+
+
+
 _SYSTEM_TESSBIN = None
 if _SYSTEM_TESSDATA is None:
     _win_candidates = [shutil.which("tesseract")]
@@ -100,9 +100,9 @@ def new_evidence_path(module: str, ext: str = "png") -> pathlib.Path:
     return EVIDENCE_DIR / name
 
 
-# ---------------------------------------------------------------------------
-# Result contract
-# ---------------------------------------------------------------------------
+
+
+
 
 
 @dataclass
@@ -121,7 +121,7 @@ class ModuleResult:
 
     module_name: str
     score: Optional[float]
-    status: str  # "ok" | "inconclusive"
+    status: str
     raw_output: dict = field(default_factory=dict)
     evidence_uri: Optional[str] = None
 
@@ -134,7 +134,7 @@ class ModuleResult:
             "evidence_uri": self.evidence_uri,
         }
 
-    def __repr__(self) -> str:  # compact, PII-free repr for logs
+    def __repr__(self) -> str:
         return (
             f"ModuleResult({self.module_name!r}, score={self.score!r}, "
             f"status={self.status!r})"
@@ -204,14 +204,14 @@ def _json_safe(obj: Any) -> Any:
 
 def single_log(msg: str) -> None:
     """Placeholder structured logger. Extend with the team's logging lib later."""
-    # Intentionally low-noise: modules should not emit PII. This no-op keeps
-    # the boundary clean and swappable for a real logger.
+
+
     print(f"[pipeline] {msg}")
 
 
-# ---------------------------------------------------------------------------
-# Image helpers
-# ---------------------------------------------------------------------------
+
+
+
 
 
 def load_image(src: Any) -> np.ndarray:
@@ -223,7 +223,7 @@ def load_image(src: Any) -> np.ndarray:
     if isinstance(src, np.ndarray):
         return src.astype(np.uint8)
 
-    if hasattr(src, "read"):  # file-like
+    if hasattr(src, "read"):
         from PIL import Image as PILImage
 
         data = src.read()
@@ -235,7 +235,7 @@ def load_image(src: Any) -> np.ndarray:
             raise ValueError("could not decode image from buffer")
         return img
 
-    if hasattr(src, "mode") and hasattr(src, "convert"):  # PIL Image
+    if hasattr(src, "mode") and hasattr(src, "convert"):
         import cv2
 
         rgb = np.asarray(src.convert("RGB"))

@@ -22,12 +22,12 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 HERE = os.path.dirname(os.path.abspath(__file__))
 PUBLIC = os.path.normpath(os.path.join(HERE, "..", "public"))
 
-# Brand tokens (mirrors src/index.css @theme)
-BACKGROUND = (15, 23, 42)    # #0F172A
-PRIMARY = (59, 130, 246)     # #3B82F6
-ACCENT = (139, 92, 246)      # #8B5CF6
-TEXT = (241, 245, 249)       # slate-100
-MUTED = (148, 163, 184)      # slate-400
+
+BACKGROUND = (15, 23, 42)
+PRIMARY = (59, 130, 246)
+ACCENT = (139, 92, 246)
+TEXT = (241, 245, 249)
+MUTED = (148, 163, 184)
 
 FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Netraksha">
   <defs>
@@ -55,13 +55,13 @@ def shield_geometry(size):
     bot = px(32 / 64, 53.5 / 64)
     join_y = px(0, 28 / 64)[1]
 
-    # Build the shield outline: apex -> left edge curve -> bottom -> right.
+
     pts = [apex, top_l]
     steps = 40
     for i in range(steps + 1):
         t = i / steps
         y = join_y + (bot[1] - join_y) * t
-        # horizontal inset eases from 0 (at join) to full taper at bottom
+
         x_left = top_l[0] + (bot[0] - top_l[0]) * (t * t)
         pts.append((x_left, y))
     pts.append(bot)
@@ -97,7 +97,7 @@ def draw_mark(size, pad_ratio=0.0):
     radius = round(size * (14 / 64))
     d.rounded_rectangle([0, 0, size - 1, size - 1], radius=radius, fill=BACKGROUND + (255,))
 
-    # Shield mask
+
     inner = size - 2 * round(size * pad_ratio)
     shield_mask = Image.new("L", (size, size), 0)
     md = ImageDraw.Draw(shield_mask)
@@ -107,7 +107,7 @@ def draw_mark(size, pad_ratio=0.0):
     grad = vertical_gradient((size, size), PRIMARY, ACCENT).convert("RGBA")
     img.paste(grad, (0, 0), shield_mask)
 
-    # White check mark
+
     stroke = max(round(size * 4.5 / 64), 1)
     d = ImageDraw.Draw(img)
     d.line(check, fill=(255, 255, 255, 255), width=stroke, joint="curve")
@@ -146,7 +146,7 @@ def generate_og_image(path):
 
     d = ImageDraw.Draw(img)
 
-    # Logo tile
+
     tile = draw_mark(120)
     img.alpha_composite(tile, (96, 88))
 

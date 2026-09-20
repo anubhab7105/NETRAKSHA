@@ -56,9 +56,9 @@ def _frontal_kps(cx: float = 200.0, cy: float = 200.0, eye: float = 60.0):
     ])
 
 
-# ---------------------------------------------------------------------------
-# Measurements
-# ---------------------------------------------------------------------------
+
+
+
 
 def test_sharpness_separates_blur():
     sharp = _checkerboard()
@@ -91,9 +91,9 @@ def test_occlusion_hint_smoke():
     assert "edge_ratio_lower_upper" in metrics
 
 
-# ---------------------------------------------------------------------------
-# Stage 1 — capture hygiene
-# ---------------------------------------------------------------------------
+
+
+
 
 def test_capture_reference_mode_for_thumbnails():
     rep = assess_capture(np.zeros((96, 96, 3), np.uint8), "live")
@@ -112,13 +112,13 @@ def test_capture_passes_normal_frame():
     assert rep.passed, rep.failed
 
 
-# ---------------------------------------------------------------------------
-# Stage 2 — face usability
-# ---------------------------------------------------------------------------
+
+
+
 
 def test_face_rejects_blurry_crop():
-    # Natural face window (blink_05): sharp lap≈121, k31-blurred lap≈7,
-    # so the BLUR_MIN=45 gate separates them with wide margin either way.
+
+
     live = cv2.imread("samples/live/blink_burst_05.png")
     region = live[0:700, 150:850]
     blurred = cv2.GaussianBlur(region, (31, 31), 0)
@@ -149,15 +149,15 @@ def test_face_rejects_side_angle_and_live_multiface():
     rep = assess_face(img, _face([50, 50, 350, 350], _frontal_kps()), 2, "live")
     assert "multi_face" in rep.failed
 
-    # Document prints with several faces warn (largest used), not hard-fail.
+
     rep = assess_face(img, _face([50, 50, 350, 350], _frontal_kps()), 2, "document")
     assert rep.passed and "multi_face" in rep.warnings
 
 
 def test_reference_mode_downgrades_measurement_gates():
-    tiny = np.full((96, 96, 3), 140, np.uint8)  # smooth thumb: would fail blur
+    tiny = np.full((96, 96, 3), 140, np.uint8)
     rep = assess_face(tiny, _face([2, 2, 90, 90], _frontal_kps(48, 48, 30)), 1, "live")
-    assert not rep.passed  # full-mode gates fire on raw call
+    assert not rep.passed
     cap = assess_capture(tiny, "live")
     assert cap.reference_mode
 
@@ -172,9 +172,9 @@ def test_combine_reports_recapture_shape():
     assert all("live capture" in r for r in q["recapture_reasons"])
 
 
-# ---------------------------------------------------------------------------
-# Wiring — matcher degrades to recapture, never a fake verdict
-# ---------------------------------------------------------------------------
+
+
+
 
 def test_matcher_requests_recapture_on_blurred_live():
     from pipeline.face_match import run_face_match
@@ -187,7 +187,7 @@ def test_matcher_requests_recapture_on_blurred_live():
     raw = res.raw_output
     assert raw["quality_gate"] == "failed" and raw["recapture_requested"] is True
     assert raw["recapture_target"] == "live"
-    assert "reason" in raw  # module contract
+    assert "reason" in raw
 
 
 def test_matcher_still_matches_good_pair():

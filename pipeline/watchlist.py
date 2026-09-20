@@ -25,8 +25,8 @@ class WatchlistHit:
     name: str
     id_number: Optional[str]
     flag_reason: str
-    source: str  # e.g. "Lookout Circular", "Interpol Red Notice"
-    match_confidence: float  # 0.0 to 1.0
+    source: str
+    match_confidence: float
 
 
 @dataclass
@@ -201,7 +201,7 @@ class MockWatchlistProvider(DBWatchlistProvider):
         ], is_mocked=True)
 
 
-# Module-level default provider instance
+
 _default_provider: Optional[WatchlistProvider] = None
 
 
@@ -243,7 +243,7 @@ async def load_db_watchlist_provider(is_mocked: bool = False) -> DBWatchlistProv
     empty or unreachable — caller should then keep the mock for demo.
     """
     try:
-        # Lazy import to avoid circular deps — backend imports pipeline, not vice versa at import time.
+
         from backend.database import async_session as _async_session
         from backend.models import WatchlistEntry as _WatchlistEntry
         from sqlalchemy import select as _select
@@ -261,6 +261,6 @@ async def load_db_watchlist_provider(is_mocked: bool = False) -> DBWatchlistProv
             ]
             return DBWatchlistProvider(entries, is_mocked=is_mocked)
     except Exception as e:
-        # Never crash screening if DB is down — surface empty provider and let caller decide fallback.
+
         print(f"[watchlist] DB load failed, using empty provider: {type(e).__name__}: {e}")
         return DBWatchlistProvider([], is_mocked=is_mocked)

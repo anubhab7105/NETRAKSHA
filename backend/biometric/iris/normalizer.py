@@ -11,12 +11,12 @@ def normalize_iris(eye_bgr: np.ndarray, pupil: tuple, iris: tuple, mask=None) ->
         px, py, pr = pupil
         ix, iy, ir = iris
         h, w = eye_bgr.shape[:2]
-        # Polar unwrapping: 64 radial x 512 angular
+
         R, T = 64, 512
         normalized = np.zeros((R, T, 3), dtype=np.uint8)
         norm_mask = np.zeros((R, T), dtype=np.uint8)
         for r in range(R):
-            # radius from pupil to iris
+
             rad = pr + (r / R) * (ir - pr)
             for t in range(T):
                 theta = 2 * np.pi * t / T
@@ -24,7 +24,7 @@ def normalize_iris(eye_bgr: np.ndarray, pupil: tuple, iris: tuple, mask=None) ->
                 y = int(iy + rad * np.sin(theta))
                 if 0 <= x < w and 0 <= y < h:
                     normalized[r, t] = eye_bgr[y, x]
-                    # Check mask if provided
+
                     if mask is not None:
                         if 0 <= y < mask.shape[0] and 0 <= x < mask.shape[1]:
                             norm_mask[r, t] = mask[y, x]

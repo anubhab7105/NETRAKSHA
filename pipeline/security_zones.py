@@ -20,7 +20,7 @@ from .common import ModuleResult, ok_result, inconclusive_result, new_evidence_p
 
 MODULE_NAME = "security_zones"
 
-# Per-type expected photo ROI as fraction of document (x0,y0,x1,y1)
+
 TEMPLATE_ZONES = {
     "aadhaar": {"photo": (0.02, 0.15, 0.28, 0.65), "qr": (0.75, 0.70, 0.98, 0.98)},
     "pan": {"photo": (0.02, 0.12, 0.30, 0.70), "qr": (0.70, 0.05, 0.98, 0.35)},
@@ -50,8 +50,8 @@ def _photo_zone_check(bgr: np.ndarray, doc_type: str) -> Dict[str, Any]:
         task_path = os.path.join(os.path.dirname(__file__), "vendor", "models", "face_landmarker.task")
         if not os.path.exists(task_path):
             return {"photo_zone": "unknown", "photo_in_zone": None}
-        # Use simple face detection via InsightFace if available, else heuristic
-        # For now, use a lightweight check: detect faces with mediapipe
+
+
         landmarker = vision.FaceLandmarker.create_from_options(
             vision.FaceLandmarkerOptions(
                 base_options=mp_py.BaseOptions(model_asset_path=task_path),
@@ -64,16 +64,16 @@ def _photo_zone_check(bgr: np.ndarray, doc_type: str) -> Dict[str, Any]:
         landmarker.close()
         if not res.face_landmarks:
             return {"photo_zone": "no_face", "photo_in_zone": False}
-        # Check if face bbox is inside expected photo zone
+
         zones = TEMPLATE_ZONES.get(doc_type, TEMPLATE_ZONES["unknown"])
         photo_roi = zones.get("photo", (0.02, 0.15, 0.35, 0.75))
         h, w = bgr.shape[:2]
-        # Get face bbox from landmarks
+
         lm = res.face_landmarks[0]
         xs = [p.x for p in lm]
         ys = [p.y for p in lm]
         fx, fy = min(xs), min(ys)
-        # Check if face center is within photo zone
+
         in_zone = (photo_roi[0] <= fx <= photo_roi[2]) and (photo_roi[1] <= fy <= photo_roi[3])
         return {"photo_zone": "found", "photo_in_zone": bool(in_zone), "face_x": round(fx,3), "face_y": round(fy,3)}
     except Exception as e:
@@ -93,28 +93,28 @@ def run_security_zones(document_image, document_type: str = "unknown", save_evid
     anomalies = 0
     total = 0
 
-    # Photo zone
+
     photo_res = _photo_zone_check(bgr, doc_type)
     checks.update(photo_res)
     total += 1
     if photo_res.get("photo_in_zone") is False:
         anomalies += 1
 
-    # QR/barcode for Aadhaar/PAN/Voter
+
     if doc_type in ("aadhaar", "pan", "voter_id"):
         qr_res = _detect_qr_barcode(bgr)
         checks.update(qr_res)
         total += 1
-        # For demo, not finding a QR is not an anomaly (synthetic docs may not have it)
-        # but we record it.
 
-    # MRZ zone for passport
+
+
+
     if doc_type == "passport":
-        # Check if bottom 18% has text-like structure (MRZ)
+
         h, w = bgr.shape[:2]
         mrz_crop = bgr[int(h*0.82):, :]
         gray = cv2.cvtColor(mrz_crop, cv2.COLOR_BGR2GRAY)
-        # MRZ should be high contrast text
+
         _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         white_frac = float((thresh == 255).mean())
         checks["mrz_contrast"] = round(white_frac, 3)
@@ -123,13 +123,13 @@ def run_security_zones(document_image, document_type: str = "unknown", save_evid
         if checks["mrz_zone"] == "weak":
             anomalies += 0.5
 
-    # Font check: MRZ should be monospace OCR-B
-    # Heuristic: check for consistent character spacing in MRZ
-    checks["font"] = "ok"  # placeholder for full OCR-B check
+
+
+    checks["font"] = "ok"
 
     security_score = min(1.0, anomalies / max(1, total))
 
-    # Evidence: draw zone overlay
+
     evidence_uri = None
     if save_evidence:
         try:

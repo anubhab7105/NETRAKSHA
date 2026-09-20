@@ -29,8 +29,8 @@ def check_iris_liveness(eye_frames) -> Dict[str, Any]:
         if len(frames) < 3:
             return {"passed": None, "confidence": 0.0, "reason": "insufficient frames for iris PAD", "status": "inconclusive"}
 
-        # Check for temporal changes (pupil should have micro-movements)
-        # Use mean frame difference
+
+
         diffs = []
         for i in range(1, len(frames)):
             try:
@@ -45,13 +45,13 @@ def check_iris_liveness(eye_frames) -> Dict[str, Any]:
         mean_diff = float(np.mean(diffs)) if diffs else 0.0
         has_movement = mean_diff > 1.5
 
-        # Check for screen replay via FFT (similar to face)
-        # Use first frame
+
+
         try:
             gray = cv2.cvtColor(frames[0], cv2.COLOR_BGR2GRAY)
             gray = cv2.resize(gray, (64, 64)).astype(float)
             spec = np.abs(np.fft.fftshift(np.fft.fft2(gray)))
-            # High freq energy
+
             high = float((spec[20:44, 20:44].mean()))
             low = float(spec.mean()) + 1e-6
             screen_score = float(high / low)
@@ -60,8 +60,8 @@ def check_iris_liveness(eye_frames) -> Dict[str, Any]:
             is_screen = False
             screen_score = 0.0
 
-        # Contact lens check (placeholder: check for circular edge inside iris)
-        # For prototype, just flag as not detected
+
+
         contact_lens_suspected = False
 
         passed = has_movement and not is_screen
