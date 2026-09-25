@@ -215,8 +215,8 @@ class ScreeningCase(Base):
     __tablename__ = "screening_cases"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    officer_id = Column(Integer, ForeignKey("officers.id"), nullable=False)
-    timestamp = Column(DateTime, server_default=func.now())
+    officer_id = Column(Integer, ForeignKey("officers.id"), nullable=False, index=True)
+    timestamp = Column(DateTime, server_default=func.now(), index=True)
     document_type = Column(String(20), nullable=True)
     citizen_id = Column(Integer, ForeignKey("citizens_registry.id"), nullable=True)
     demographic_match = Column(Boolean, nullable=True)
@@ -414,10 +414,10 @@ class AuditLog(Base):
     __tablename__ = "audit_log"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    actor = Column(String(100), nullable=False)  # officer username or "system"
+    actor = Column(String(100), nullable=False, index=True)  # officer username or "system"
     action = Column(Text, nullable=False)
     entity = Column(String(100), nullable=True)  # e.g. "case:42"
-    timestamp = Column(DateTime, server_default=func.now())
+    timestamp = Column(DateTime, server_default=func.now(), index=True)
     immutable = Column(Boolean, default=True)
     # Enriched attribution for screening events
     officer_id = Column(Integer, nullable=True)  # FK to officers.id when actor is an officer

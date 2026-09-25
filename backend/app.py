@@ -36,6 +36,7 @@ from fastapi import (
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -286,6 +287,7 @@ _CORS_DEFAULTS = [
     "https://web-production-ab06a.up.railway.app",
 ]
 _CORS_EXTRA = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_CORS_DEFAULTS + [o for o in _CORS_EXTRA if o not in _CORS_DEFAULTS],
