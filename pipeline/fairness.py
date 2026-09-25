@@ -24,13 +24,13 @@ import statistics
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
-# ---------------------------------------------------------------------------
-# In-memory fairness ledger (also persisted via audit log for durability)
-# ---------------------------------------------------------------------------
+
+
+
 
 _FAIRNESS_LEDGER: List[Dict[str, Any]] = []
 
-# Demographic buckets for reporting
+
 GENDER_BUCKETS = {"M", "F", "Other", "unknown"}
 AGE_BUCKETS = ["<25", "25-40", "40-60", "60+"]
 
@@ -40,7 +40,7 @@ def _age_bucket(dob: Optional[str]) -> str:
     if not dob:
         return "unknown"
     try:
-        # Try YYYY-MM-DD first
+
         if "-" in dob and len(dob.split("-")[0]) == 4:
             year = int(dob.split("-")[0])
         elif "-" in dob:
@@ -69,7 +69,7 @@ def _env_quality_bucket(quality_report: Optional[Dict[str, Any]]) -> str:
     gate = quality_report.get("gate", "unknown")
     if gate == "failed":
         return "poor"
-    # Check metrics
+
     metrics = quality_report.get("inputs", {}).get("live", {}).get("metrics", {}) if "inputs" in quality_report else {}
     if not metrics:
         metrics = quality_report.get("metrics", {})
@@ -97,7 +97,7 @@ def log_fairness_case(
         gender = (demographics or {}).get("gender") or (demographics or {}).get("Gender") or "unknown"
         gender = str(gender).strip().title() if gender else "unknown"
         if gender not in {"M", "F", "Other"}:
-            # Normalize Male/Female to M/F
+
             if gender.lower().startswith("m"):
                 gender = "M"
             elif gender.lower().startswith("f"):
@@ -119,7 +119,7 @@ def log_fairness_case(
             "low_confidence": low_confidence,
         }
         _FAIRNESS_LEDGER.append(entry)
-        # Keep ledger bounded
+
         if len(_FAIRNESS_LEDGER) > 5000:
             del _FAIRNESS_LEDGER[:1000]
         return entry
@@ -138,7 +138,7 @@ def get_fairness_report(limit: int = 200) -> Dict[str, Any]:
     total = len(_FAIRNESS_LEDGER)
     low_conf = sum(1 for e in _FAIRNESS_LEDGER if e.get("low_confidence"))
 
-    # Group by gender
+
     by_gender: Dict[str, List[float]] = defaultdict(list)
     by_age: Dict[str, List[float]] = defaultdict(list)
     by_env: Dict[str, List[float]] = defaultdict(list)

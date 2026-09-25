@@ -36,7 +36,7 @@ def _photo_swap() -> np.ndarray:
     base = cv2.imread(GENUINE)
     face = cv2.resize(cv2.imread("samples/faces/person_b.png"), (260, 240))
     out = base.copy()
-    out[80:320, 690:950] = face  # pasted over portrait + frame
+    out[80:320, 690:950] = face
     return out
 
 
@@ -96,8 +96,8 @@ def test_tampered_specimen_runs_layout_fires():
     r = _run(cv2.imread(TAMPERED))
     assert_contract(r)
     assert r.status == "ok"
-    # The tampered specimen's giveaway here is structural (extra printed
-    # line in the MRZ band); ELA/copy-move remain its primary catchers.
+
+
     assert "layout" in r.raw_output.get("checks_fired", [])
 
 
@@ -174,9 +174,9 @@ def test_module_fast_enough():
     assert elapsed < 5.0, f"physical forgery took {elapsed:.2f}s"
 
 
-# ---------------------------------------------------------------------------
-# Risk wiring
-# ---------------------------------------------------------------------------
+
+
+
 
 def _clean_base():
     return dict(

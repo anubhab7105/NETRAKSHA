@@ -81,7 +81,7 @@ export default function AuditTrail() {
         </div>
       )}
 
-      {/* Filters */}
+      {}
       <form onSubmit={handleSearch} className="gov-card-padded flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
         <div className="min-w-0 flex-1 sm:min-w-[200px]">
           <label htmlFor="audit-actor" className="gov-label !mb-1 !text-[13px]">Actor</label>
@@ -113,7 +113,7 @@ export default function AuditTrail() {
         </button>
       </form>
 
-      {/* Table */}
+      {}
       <div className="gov-table-wrap">
         {loading ? (
           <div className="flex items-center justify-center p-12 text-[#667085]">
@@ -157,7 +157,7 @@ export default function AuditTrail() {
           </div>
         )}
 
-        {/* Pagination */}
+        {}
         {!loading && count > 0 && (
           <div className="flex flex-col gap-3 border-t border-[#D9DEE7] bg-[#F7F8FA] px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
             <span className="text-xs text-[#667085]">

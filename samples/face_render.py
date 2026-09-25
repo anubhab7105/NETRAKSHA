@@ -34,7 +34,7 @@ class FaceParams:
         self.face_width = face_width
         self.eye_spacing = eye_spacing
         self.eye_size = eye_size
-        self.eye_open = eye_open   # 0.0 .. 1.0 (1 = fully open)
+        self.eye_open = eye_open
         self.iris = iris
         self.brow = brow
         self.nose_w = nose_w
@@ -49,13 +49,13 @@ def render_face(size=512, p: FaceParams = None) -> Image.Image:
     cx = size / 2
     cy = size / 2
 
-    # hair (behind face)
+
     hair_w = size * p.face_width * 1.25
     hair_h = size * 1.15
     d.ellipse([cx - hair_w / 2, cy - hair_h / 2, cx + hair_w / 2, cy + hair_h / 2],
               fill=p.hair)
 
-    # face oval
+
     fw = size * p.face_width
     fh = size * p.face_width * 1.32
     d.ellipse([cx - fw / 2, cy - fh / 2, cx + fw / 2, cy + fh / 2], fill=p.skin)
@@ -67,31 +67,31 @@ def render_face(size=512, p: FaceParams = None) -> Image.Image:
 
     for side in (-1, 1):
         ex = cx + side * spacing
-        # white of eye
+
         ew = eye_size
         eh = max(eye_open_h, size * 0.02)
         d.ellipse([ex - ew, eye_y - eh, ex + ew, eye_y + eh], fill=WHITE, outline=(0,0,0))
-        # iris + pupil (squash vertically as eye closes)
+
         ir_d = eye_size * 0.9
         squish = max(0.12, p.eye_open)
         ir_h = ir_d * (0.4 + 0.6 * p.eye_open)
         d.ellipse([ex - ir_d/2, eye_y - ir_h/2, ex + ir_d/2, eye_y + ir_h/2], fill=p.iris)
         d.ellipse([ex - ir_d*0.28, eye_y - ir_h*0.28, ex + ir_d*0.28, eye_y + ir_h*0.28],
                   fill=BLACK)
-        # eyebrow
+
         brow_y = eye_y - size * (0.10 + p.brow)
         dl = side * (spacing + eye_size)
         d.line([cx + dl - eye_size * 0.7, brow_y,
                 cx + dl + eye_size * 0.7, brow_y - size * 0.02],
                fill=BLACK, width=max(3, int(size * 0.018)))
 
-    # nose
+
     ny = cy + size * 0.10
     nw = size * p.nose_w
     d.line([cx, ny - size * 0.12, cx - nw, ny + size * 0.10], fill=BLACK, width=4)
     d.line([cx, ny - size * 0.12, cx + nw, ny + size * 0.10], fill=BLACK, width=4)
 
-    # mouth
+
     my = cy + size * 0.24
     mw = size * p.mouth_w
     d.arc([cx - mw, my, cx + mw, my + size * 0.10], 0, 180, fill=LIP, width=6)

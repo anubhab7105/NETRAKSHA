@@ -11,7 +11,7 @@ def test_challenge_types():
 def test_liveness_default_is_blink():
     from pipeline.liveness import run_liveness
     import numpy as np
-    # Single frame should be inconclusive (needs burst)
+
     img = np.zeros((100,100,3), dtype=np.uint8)
     res = run_liveness([img])
     assert res.status == "inconclusive"
@@ -19,7 +19,7 @@ def test_liveness_default_is_blink():
 def test_liveness_challenge_param():
     from pipeline.liveness import run_liveness
     import numpy as np
-    # Should accept challenge_type param without error
+
     img = np.zeros((100,100,3), dtype=np.uint8)
     for challenge in CHALLENGE_TYPES:
         res = run_liveness([img]*4, challenge_type=challenge)

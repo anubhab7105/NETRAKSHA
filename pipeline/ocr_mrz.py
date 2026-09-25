@@ -43,9 +43,9 @@ from .common import (
 
 MODULE_NAME = "ocr"
 
-# Expected machine-readable fields on a passport-style document + MRZ slots,
-# plus the Indian-ID fallback slots (document_type/sex) used when the cloud
-# AI is offline and there is no MRZ to read (Aadhaar/PAN/Voter ID).
+
+
+
 VISIBLE_FIELDS = [
     "document_number",
     "document_type",
@@ -71,9 +71,9 @@ MRZ_FIELDS = [
 ]
 
 
-# ---------------------------------------------------------------------------
-# Vendored Tesseract runtime resolution
-# ---------------------------------------------------------------------------
+
+
+
 
 def _tesseract_available() -> bool:
     """Return True if a working tesseract binary + tessdata can be located."""
@@ -109,16 +109,16 @@ def _ocr_frame_rgb(pil_rgb) -> str:
 
     return pytesseract.image_to_string(
         pil_rgb,
-        # NOTE: '/' '.' ':' are required for DOB (DD/MM/YYYY) and labelled
-        # fields; stripping them turns dates into bare digit runs the date
-        # regexes can no longer recognise.
+
+
+
         config="--psm 6 -c tessedit_char_whitelist='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789< >-/.:'",
     )
 
 
-# ---------------------------------------------------------------------------
-# Visible-field parsing (regex over raw OCR text)
-# ---------------------------------------------------------------------------
+
+
+
 
 def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", text)
@@ -175,8 +175,8 @@ def _parse_visible_fields(ocr_text: str) -> List[dict]:
             if m and m.group(1):
                 found[name] = m.group(1)
 
-    # --- Indian-ID fallback pass (only when passport patterns missed) -------
-    # Non-MRZ text only: MRZ lines are full of digit runs and '<' fillers.
+
+
     non_mrz_text = "\n".join(
         line for line in ocr_text.splitlines() if "<" not in line
     )
@@ -192,8 +192,8 @@ def _parse_visible_fields(ocr_text: str) -> List[dict]:
         if _sex:
             found["sex"] = _sex
     if "given_names" not in found:
-        # Per-line so a "Father/Spouse/Guardian Name" line is never mistaken
-        # for the holder's own name.
+
+
         for raw_line in non_mrz_text.splitlines():
             line = _clean(raw_line)
             if not line or re.search(
@@ -209,8 +209,8 @@ def _parse_visible_fields(ocr_text: str) -> List[dict]:
                 found["given_names"] = m.group(1).strip()
                 break
     if "date_of_birth" not in found:
-        # Unlabeled birthdate (Aadhaar style "12/04/1988"); requires a
-        # separator so MRZ-style bare digit runs never match.
+
+
         m = re.search(
             r"\b([0-9]{1,2}\s*[/\-\.]\s*[0-9]{1,2}\s*[/\-\.]\s*(?:19|20)[0-9]{2})\b",
             _clean(non_mrz_text),
@@ -261,7 +261,7 @@ def _detect_indian_document_number(text: str):
     if candidates:
         try:
             from .checksums import validate_verhoeff
-        except Exception:  # noqa: BLE001 — validator unavailable, accept raw
+        except Exception:
             validate_verhoeff = None
         fallback = None
         for cand in candidates:
@@ -271,7 +271,7 @@ def _detect_indian_document_number(text: str):
             try:
                 if validate_verhoeff(digits):
                     return digits, "aadhaar"
-            except Exception:  # noqa: BLE001 — keep scanning candidates
+            except Exception:
                 pass
             fallback = fallback or digits
         if fallback:
@@ -295,9 +295,9 @@ def _detect_indian_gender(text: str):
     return None
 
 
-# ---------------------------------------------------------------------------
-# ICAO 9303 check-digit algorithm (weight 7,3,1, mod 10)
-# ---------------------------------------------------------------------------
+
+
+
 
 _WEIGHTS = (7, 3, 1)
 
@@ -305,15 +305,15 @@ _WEIGHTS = (7, 3, 1)
 def _char_value(c: str) -> int:
     if c.isdigit():
         return int(c)
-    # '<' filler acts as a separator; treat as 0 to keep indexing simple,
-    # but '/' in MRZ is treated via the '0' value in a different seam.
+
+
     if c == "<":
         return 0
     if c =="/":
         return 0
     if "A" <= c.upper() <= "Z":
         return ord(c.upper()) - ord("A") + 10
-    return 0  # unexpected char -> treat as 0 (matches lenient ICAO behaviour)
+    return 0
 
 
 def check_digit(block: str) -> int:
@@ -336,9 +336,9 @@ def _mrz_segments(mrz_lines: List[str]) -> dict:
     return {"_raw": mrz_lines}
 
 
-# ---------------------------------------------------------------------------
-# PassportEye MRZ parsing + ICAO validation
-# ---------------------------------------------------------------------------
+
+
+
 
 def _parse_mrz_via_passporteye(img_bgr):
     """Return (mrz_dict, checks, lines) using PassportEye.
@@ -354,8 +354,8 @@ def _parse_mrz_via_passporteye(img_bgr):
 
     import cv2
 
-    # PassportEye shells out to pytesseract for the MRZ OCR — ensure the
-    # vendored runtime is configured regardless of call order.
+
+
     _configure_tesseract()
 
     fd, path = tempfile.mkstemp(suffix=".png", prefix="pipeline_mrz_")
@@ -375,9 +375,9 @@ def _parse_mrz_via_passporteye(img_bgr):
     if mrz is None:
         return None, {"status": "no_mrz_detected"}, []
 
-    # Split the two MRZ lines from passporteye's parsed object (best effort —
-    # PassportEye does not always expose them; ICAO validation uses its
-    # per-block check_* attributes instead, see _validate_icao_blocks).
+
+
+
     lines = []
     if hasattr(mrz, "lines"):
         if isinstance(mrz.lines, dict):
@@ -385,10 +385,10 @@ def _parse_mrz_via_passporteye(img_bgr):
         else:
             lines = [l.decode() if isinstance(l, bytes) else str(l) for l in mrz.lines]
 
-    # ICAO checksum validation per block, using our own 9303 implementation so
-    # it's independent of (and verifiable against) the parser's reported value.
-    # The GIVEN check digits come straight from PassportEye's per-block
-    # `check_*` attributes (its OCR of the seam chars), not from raw lines.
+
+
+
+
     fields = _extract_mrz_fields_from_attrs(mrz)
     checks = _validate_icao_blocks(fields, mrz)
     return fields, checks, lines
@@ -405,14 +405,14 @@ def _extract_mrz_fields_from_attrs(mrz) -> dict:
     for key, (attr, _) in scalar_map.items():
         v = getattr(mrz, attr, None)
         fields[key] = _as_str(v)
-    # document_number / expiry come from the block paths
+
     fields["document_number"] = _as_str(getattr(mrz, "number", None))
     fields["date_of_birth"] = _as_str(getattr(mrz, "date_of_birth", None))
     fields["date_of_expiry"] = _as_str(getattr(mrz, "expiration_date", None))
     fields["personal_number"] = _as_str(getattr(mrz, "personal_number", None))
     fields["country"] = _as_str(getattr(mrz, "country", None))
     fields["document_type"] = (_as_str(getattr(mrz, "type", None)) or "").rstrip("<") or None
-    # `names` is usually a surname,given string: split on the comma.
+
     names = fields.get("given_names") or ""
     if "," in names:
         surname, given = names.split(",", 1)
@@ -457,30 +457,30 @@ def _validate_icao_blocks(fields: dict, mrz) -> dict:
             "computed": computed,
         }
 
-    # 1) document number + its check digit
+
     dnum = fields.get("document_number")
     if dnum:
         _add("document_number", dnum.replace("<", ""), _given("check_number"))
 
-    # 2) date of birth
+
     dob = fields.get("date_of_birth")
     if dob:
         digits = re.sub(r"[^0-9]", "", dob)
         if len(digits) == 6:
             _add("date_of_birth", digits, _given("check_date_of_birth"))
 
-    # 3) date of expiry
+
     exp = fields.get("date_of_expiry")
     if exp:
         digits = re.sub(r"[^0-9]", "", exp)
         if len(digits) == 6:
             _add("date_of_expiry", digits, _given("check_expiration_date"))
 
-    # 4) composite check digit (validates line1 truncated at the given-name
-    #    separator, first 10 chars of a short-surname TD3 line). Only reported
-    #    when both the given seam digit and the reconstruction are available
-    #    AND the given digit is a real char (PassportEye may read the trailing
-    #    '<' fill as the seam, which would be a false mismatch).
+
+
+
+
+
     comp_raw = getattr(mrz, "check_composite", None)
     comp_raw = str(comp_raw) if comp_raw is not None else ""
     if re.fullmatch(r"[0-9]", comp_raw):
@@ -501,9 +501,9 @@ def _validate_icao_blocks(fields: dict, mrz) -> dict:
     return result
 
 
-# ---------------------------------------------------------------------------
-# Public entry point
-# ---------------------------------------------------------------------------
+
+
+
 
 def run_ocr_mrz(document_image) -> ModuleResult:
     """Run OCR/MRZ extraction on a single document image.
@@ -516,20 +516,20 @@ def run_ocr_mrz(document_image) -> ModuleResult:
     """
     try:
         img = load_image(document_image)
-    except Exception as exc:  # noqa: BLE001 — must never crash the pipeline
+    except Exception as exc:
         single_log(f"ocr: input load failed -> inconclusive ({type(exc).__name__})")
         return inconclusive_result(MODULE_NAME, exc)
 
     try:
         return _run_ocr_mrz_impl(img)
-    except Exception as exc:  # noqa: BLE001 — must never crash the pipeline
+    except Exception as exc:
         single_log(f"ocr: unexpected failure -> inconclusive ({type(exc).__name__})")
         return inconclusive_result(MODULE_NAME, exc)
 
 
 def _run_ocr_mrz_impl(img):
     """Processing body of run_ocr_mrz; kept separate for exception isolation."""
-    # --- Visible fields via Tesseract ---------------------------------------
+
     ocr_text = ""
     tesseract_ok = False
     if _tesseract_available():
@@ -540,7 +540,7 @@ def _run_ocr_mrz_impl(img):
             rgb = pil_bgr.convert("RGB")
             ocr_text = _ocr_frame_rgb(rgb)
             tesseract_ok = bool(ocr_text.strip())
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             single_log(f"ocr: tesseract run failed ({type(exc).__name__})")
     else:
         single_log("ocr: vendored tesseract runtime missing; visible fields inconclusive")
@@ -555,16 +555,16 @@ def _run_ocr_mrz_impl(img):
         for f in VISIBLE_FIELDS
     ]
 
-    # --- MRZ via PassportEye + ICAO 9303 ------------------------------------
+
     mrz_fields = None
     icao = {"status": "not_run"}
     mrz_lines = []
     try:
         mrz_fields, icao, mrz_lines = _parse_mrz_via_passporteye(img)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         single_log(f"ocr: passporteye MRZ parse failed ({type(exc).__name__})")
 
-    # --- Aggregate into the module contract --------------------------------
+
     readable_visible = sum(1 for f in visible_fields if f.get("readable"))
     readable_ratio = (
         readable_visible / len(visible_fields) if visible_fields else 0.0
@@ -576,8 +576,8 @@ def _run_ocr_mrz_impl(img):
     )
     icao_ratio = icao_passed / icao_total if icao_total else 0.0
 
-    # overall clarity score = mean of visible readability and (when parsed) ICAO
-    # conformance, weighted toward readable content. 0..1.
+
+
     parts = [readable_ratio]
     if mrz_fields:
         parts.append(icao_ratio if icao_total else 0.5)

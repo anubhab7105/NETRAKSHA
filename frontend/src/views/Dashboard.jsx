@@ -32,7 +32,7 @@ export default function Dashboard() {
       setCases(list);
     } catch (e) {
       if (import.meta.env.DEV) console.error(e);
-      // keep existing cases on error; don't set undefined
+      
     } finally {
       setLoading(false);
     }
@@ -85,7 +85,7 @@ export default function Dashboard() {
         }
       />
 
-      {/* KPI cards */}
+      {}
       <section aria-label="Verification summary" className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard
           label="Total Verifications"
@@ -117,7 +117,7 @@ export default function Dashboard() {
         />
       </section>
 
-      {/* Case queue */}
+      {}
       <section aria-label="Case queue" className="gov-table-wrap">
         <div className="flex flex-col gap-3 border-b border-[#D9DEE7] p-4 sm:flex-row sm:items-center sm:justify-between">
           <div>

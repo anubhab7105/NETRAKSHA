@@ -36,44 +36,44 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-# ---------------------------------------------------------------------------
-# Thresholds (calibrated on repo samples: good live crop lap≈158, doc face
-# crop lap≈743, V≈139-152; heavy Gaussian blur collapses lap below ~15).
-# Overridable via environment for site-specific cameras — no code change.
-# ---------------------------------------------------------------------------
 
-#: Below this full-image mean V, the lens is covered / room is dark.
+
+
+
+
+
+
 CAPTURE_DARK_MEAN_V = _env_float("FACE_Q_CAPTURE_DARK_V", 20.0)
-#: Above this full-image mean V, the frame is flash-blown.
+
 CAPTURE_BRIGHT_MEAN_V = _env_float("FACE_Q_CAPTURE_BRIGHT_V", 240.0)
-#: Captures with a smaller min-dimension than this are reference thumbnails.
+
 REFERENCE_MAX_DIM = int(_env_float("FACE_Q_REFERENCE_MAX_DIM", 240))
-#: Minimum face-crop sharpness (Laplacian variance, 200px-normalised).
+
 BLUR_MIN = _env_float("FACE_Q_BLUR_MIN", 45.0)
-#: Face-crop brightness band (HSV value-channel mean).
+
 BRIGHT_MIN = _env_float("FACE_Q_BRIGHT_MIN", 55.0)
 BRIGHT_MAX = _env_float("FACE_Q_BRIGHT_MAX", 215.0)
-#: Face-crop contrast floor (V-channel std — flat grey = covered sensor).
+
 CONTRAST_MIN = _env_float("FACE_Q_CONTRAST_MIN", 12.0)
-#: Smallest usable face bounding box (min side, px) in full-capture mode.
+
 FACE_MIN_PX = _env_float("FACE_Q_FACE_MIN_PX", 90.0)
-#: Smallest usable face as a fraction of frame area in full-capture mode.
+
 FACE_MIN_FRAC = _env_float("FACE_Q_FACE_MIN_FRAC", 0.01)
-#: |yaw proxy| above this means a side-angle capture (see yaw_proxy_from_kps).
+
 YAW_MAX = _env_float("FACE_Q_YAW_MAX", 0.30)
-#: Occlusion advisory only (beards trigger naive detectors): lower-face edge
-#: density ratio below this raises `occlusion_suspected` as a WARNING.
+
+
 OCCLUSION_EDGE_RATIO = _env_float("FACE_Q_OCCLUSION_EDGE_RATIO", 0.40)
 
-#: Hard-gate failures. `occlusion_suspected` is deliberately NOT here — it is
-#: advisory (beards/scarves), while the rest are measurement failures.
+
+
 HARD_FAILURES = frozenset({
     "unreadable", "image_too_small", "too_dark", "too_bright",
     "no_face", "multi_face", "face_too_small", "blurry",
     "dark_face", "bright_face", "flat_contrast", "side_angle",
 })
 
-#: Officer-facing recapture instructions per reason code.
+
 RECAPTURE_GUIDANCE: Dict[str, str] = {
     "unreadable": "Image could not be read — recapture the {role}.",
     "image_too_small": "Capture resolution is too low — move closer / check the camera and recapture the {role}.",
@@ -97,11 +97,11 @@ _ROLE_LABEL = {"live": "live capture", "document": "document photo"}
 class QualityReport:
     """Outcome of the quality gates for one input image."""
 
-    role: str  # "live" | "document"
+    role: str
     passed: bool = True
-    reference_mode: bool = False  # tiny pre-cropped reference thumbnail
-    failed: List[str] = field(default_factory=list)  # hard-gate reason codes
-    warnings: List[str] = field(default_factory=list)  # advisory codes
+    reference_mode: bool = False
+    failed: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
     metrics: Dict[str, Any] = field(default_factory=dict)
 
     def recapture_reasons(self) -> List[str]:
@@ -120,9 +120,9 @@ class QualityReport:
         }
 
 
-# ---------------------------------------------------------------------------
-# Low-level measurements (pure functions — unit-testable without a detector)
-# ---------------------------------------------------------------------------
+
+
+
 
 def laplacian_sharpness(gray: Any, norm_width: int = 200) -> float:
     """Variance of Laplacian on a width-normalised grayscale crop.
@@ -207,9 +207,9 @@ def occlusion_hint(face_crop_bgr: Any) -> Tuple[bool, Dict[str, float]]:
         return False, {}
 
 
-# ---------------------------------------------------------------------------
-# Gate stages
-# ---------------------------------------------------------------------------
+
+
+
 
 def assess_capture(image_bgr: Any, role: str) -> QualityReport:
     """Stage 1 — whole-image hygiene (no face detection required)."""
@@ -266,7 +266,7 @@ def assess_face(
         rep.failed.append("unreadable")
         return rep
 
-    # --- face count gate (live captures must isolate the traveller) ---
+
     rep.metrics["faces_detected"] = int(face_count or 0)
     if (face_count or 0) == 0:
         rep.passed = False
@@ -284,7 +284,7 @@ def assess_face(
             rep.failed.append("no_face")
         return rep
 
-    # --- face size gate ---
+
     try:
         import numpy as np
 
@@ -304,9 +304,9 @@ def assess_face(
     if min(bw, bh) < FACE_MIN_PX or frac < FACE_MIN_FRAC:
         rep.passed = False
         rep.failed.append("face_too_small")
-        return rep  # too few pixels for any downstream measurement to mean anything
+        return rep
 
-    # --- face-crop sharpness / light gates ---
+
     try:
         import cv2
 
@@ -341,7 +341,7 @@ def assess_face(
         rep.passed = False
         rep.failed.append("flat_contrast")
 
-    # --- head-pose gate (side angle destroys 1:1 similarity) ---
+
     yaw = yaw_proxy_from_kps(getattr(face, "kps", None))
     if yaw is not None:
         rep.metrics["yaw_proxy"] = round(yaw, 3)
@@ -361,7 +361,7 @@ def assess_face(
         except Exception:
             pass
 
-    # --- occlusion advisory (never a hard gate — see occlusion_hint) ---
+
     try:
         suspected,ometrics = occlusion_hint(crop)
         rep.metrics.update(ometrics)

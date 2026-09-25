@@ -64,7 +64,7 @@ def _fft_metrics(face_bgr: np.ndarray) -> dict:
 
     gray = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2GRAY)
 
-    # window to avoid edge discontinuities
+
     h, w = gray.shape
     win = cv2.createHanningWindow((w, h), cv2.CV_64F)
     windowed = gray.astype(np.float64) * win
@@ -79,7 +79,7 @@ def _fft_metrics(face_bgr: np.ndarray) -> dict:
     if Nyquist < 1:
         return {"error": "image too small"}
 
-    # frequency bands
+
     low = power[ : max(1, int(Nyquist * 0.2))]
     mid = power[int(Nyquist * 0.2) : int(Nyquist * 0.6)]
     high = power[int(Nyquist * 0.6) : int(Nyquist * 0.95)]
@@ -87,15 +87,15 @@ def _fft_metrics(face_bgr: np.ndarray) -> dict:
     total_energy = np.sum(power[1:]) + 1e-9
     hf_fraction = hf_energy / total_energy
 
-    # anomaly: look for a pronounced peak in the high-mid band that would not
-    # appear in a natural band-limited photo (periodic upsampling grid).
+
+
     band = power[int(Nyquist * 0.3) : int(Nyquist * 0.85)]
     peakedness = 0.0
     if len(band) >= 4:
         base = np.percentile(band, 25)
         peakedness = float(np.max(band) / (base + 1e-9))
 
-    # rolloff: natural photos show smooth 1/f-ish rolloff; synthetic grids spike
+
     rolloff_ratio = float((np.mean(high) + 1e-9) / (np.mean(low) + 1e-9))
 
     return {
@@ -120,22 +120,22 @@ def run_deepfake(face_image) -> ModuleResult:
         img = load_image(face_image)
         if img is None or img.size == 0:
             raise ValueError("empty image")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return inconclusive_result(MODULE_NAME, exc)
 
     try:
         metrics = _fft_metrics(img)
         if "error" in metrics:
             return inconclusive_result(MODULE_NAME, metrics["error"])
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return inconclusive_result(MODULE_NAME, exc)
 
     hf = metrics["high_frequency_fraction"]
     peak = metrics["spectral_peakedness"]
     roll = metrics["rolloff_ratio"]
 
-    # Compose the heuristic score (tuned to separate clean captures from
-    # synthetically upsampled images; raw metrics always surfaced).
+
+
     score_hf = np.clip((hf - 0.10) / 0.25, 0.0, 1.0)
     score_peak = np.clip((peak - 2.0) / 6.0, 0.0, 1.0)
     score_roll = np.clip((roll - 0.5) / 3.0, 0.0, 1.0)

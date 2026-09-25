@@ -12,16 +12,16 @@ export default function Sidebar() {
     try {
       await api.post('/auth/logout');
     } catch (e) {
-      // ignore
+      
     }
     localStorage.clear();
     navigate('/login');
   };
 
-  // Role-based navigation (audit P2 §4):
-  //   officer:    Case Dashboard + Kiosk Scanner
-  //   supervisor: Case Dashboard + Kiosk Scanner + Audit Trail
-  //   auditor:    Case Dashboard + Audit Trail (no scanner)
+  
+  
+  
+  
   const showScanner = role === 'officer' || role === 'supervisor';
   const showAudit = role === 'supervisor' || role === 'auditor';
 

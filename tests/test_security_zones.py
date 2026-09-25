@@ -9,9 +9,9 @@ def test_template_zones_exist():
     assert "photo" in TEMPLATE_ZONES["passport"]
 
 def test_security_zones_runs():
-    # Create a dummy document image
+
     img = np.ones((600, 1000, 3), dtype=np.uint8) * 255
-    # Add a fake face in photo zone for passport
+
     import cv2
     cv2.circle(img, (180, 300), 50, (0,0,0), -1)
     res = run_security_zones(img, document_type="passport", save_evidence=False)

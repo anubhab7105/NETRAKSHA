@@ -28,7 +28,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-from pipeline.ocr_mrz import check_digit  # noqa: E402  (import after path setup)
+from pipeline.ocr_mrz import check_digit
 
 SAMPLES = pathlib.Path(__file__).resolve().parent
 FACES_DIR = SAMPLES / "faces"
@@ -41,9 +41,9 @@ def _ensure_dirs():
         d.mkdir(parents=True, exist_ok=True)
 
 
-# ---------------------------------------------------------------------------
-# Sample faces (Olivetti)
-# ---------------------------------------------------------------------------
+
+
+
 
 def _get_olivetti():
     from sklearn.datasets import fetch_olivetti_faces
@@ -60,16 +60,16 @@ def _face_bgr(imgs, person, frame_idx, size=(96, 96)):
 
 def fetch_faces() -> None:
     imgs = _get_olivetti()
-    # two "people" for match vs mismatch
+
     cv2.imwrite(str(FACES_DIR / "person_a.png"), _face_bgr(imgs, 3, 0))
-    cv2.imwrite(str(FACES_DIR / "person_a_2.png"), _face_bgr(imgs, 3, 5))  # same person, another frame
-    cv2.imwrite(str(FACES_DIR / "person_b.png"), _face_bgr(imgs, 17, 0))  # different person
+    cv2.imwrite(str(FACES_DIR / "person_a_2.png"), _face_bgr(imgs, 3, 5))
+    cv2.imwrite(str(FACES_DIR / "person_b.png"), _face_bgr(imgs, 17, 0))
     print("face samples:", os.listdir(FACES_DIR))
 
 
-# ---------------------------------------------------------------------------
-# Genuine passport document (synthetic, ICAO-valid MRZ)
-# ---------------------------------------------------------------------------
+
+
+
 
 def _font(size):
     for cand in ["/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
@@ -83,11 +83,11 @@ def _build_mrz(surname="SPECIMEN", given="JASMINE", doc_no="L898902C3",
                country="UTO", nationality="UTO", dob="691204", sex="F",
                expiry="280312", personal="Z3456789"):
     """Construct two valid ICAO TD3 MRZ lines (44 chars each)."""
-    # line 1: P<CCCsurname<<given<<<<<
+
     line1 = "P<" + country + surname + "<<" + given + "<" * 3
     line1 = line1.ljust(44, "<")
 
-    # line 2
+
     doc_block = doc_no
     dob_block = dob
     exp_block = expiry
@@ -104,7 +104,7 @@ def _build_mrz(surname="SPECIMEN", given="JASMINE", doc_no="L898902C3",
         + str(check_digit(exp_block))
         + pers
     )
-    # composite check digit = checksum of line1[0:10]
+
     comp = str(check_digit(line1[:10]))
     line2 = line2[:43] + comp
     line2 = line2.ljust(44, "<")
@@ -124,7 +124,7 @@ def _paper_texture(size):
     grain = rng.integers(-22, 23, (h, w, 1), dtype=np.int16)
     img = np.full((h, w, 3), 243, dtype=np.uint8)
     img = img.astype(np.int16) + grain
-    # soft diagonal gradient
+
     yy, xx = np.mgrid[0:h, 0:w]
     grad = ((xx + yy) / (w + h) * 26).astype(np.int16)
     img = img + grad[:, :, None]
@@ -155,7 +155,7 @@ def render_genuine_doc(face_bgr, size=(1000, 700)) -> np.ndarray:
     label = _font(26)
     mono = _font(40)
 
-    # soft guilloche band behind the header for realism
+
     g = _guilloche_band(size, 140, 170)
     band = Image.fromarray(np.clip(g, 0, 255).astype(np.uint8)).convert("RGB")
     img = Image.blend(img, band, 0.35)
@@ -165,7 +165,7 @@ def render_genuine_doc(face_bgr, size=(1000, 700)) -> np.ndarray:
     d.text((40, 88), "PASSPORT - SPECIMEN", font=label, fill=(90, 90, 95))
     d.text((40, 122), "Not a real identity document", font=label, fill=(150, 40, 40))
 
-    # photo area (passport-style) with a border frame
+
     photo_x, photo_y, photo_w, photo_h = 700, 90, 240, 220
     d.rectangle([photo_x - 8, photo_y - 8, photo_x + photo_w + 8, photo_y + photo_h + 8],
                 outline=(40, 40, 40), width=2)
@@ -174,7 +174,7 @@ def render_genuine_doc(face_bgr, size=(1000, 700)) -> np.ndarray:
     )
     img.paste(face_pil, (photo_x, photo_y))
 
-    # text fields (left side, above the MRZ band)
+
     fields = [
         ("SURNAME:", "SPECIMEN"),
         ("GIVEN NAME(S):", "JASMINE"),
@@ -190,7 +190,7 @@ def render_genuine_doc(face_bgr, size=(1000, 700)) -> np.ndarray:
         d.text((320, y), val, font=mono, fill=(10, 10, 10))
         y += 50
 
-    # MRZ at the bottom — large crisp font on a solid white band
+
     line1, line2, *_ = _build_mrz()
     bw = d.textlength(line1, font=mono)
     if bw > w - 60:
@@ -215,13 +215,13 @@ def render_tampered_doc(genuine: np.ndarray) -> np.ndarray:
     from PIL import Image
 
     bgr = genuine.copy()
-    # (1) copy-move: duplicate a textured background block (noise + guilloche)
-    #     => many inlier keypoints at one consistent offset.
-    src = bgr[120:260, 40:240].copy()      # textured, keypoint-rich patch
-    bgr[400:540, 760:960] = src            # pasted as a second copy lower-right
 
-    # (2) localized splice: re-encode only a small patch at low quality then
-    #     place it back, so its compression history differs from the base.
+
+    src = bgr[120:260, 40:240].copy()
+    bgr[400:540, 760:960] = src
+
+
+
     roi = bgr[470:560, 20:160].copy()
     pil_roi = Image.fromarray(cv2.cvtColor(roi, cv2.COLOR_BGR2RGB))
     buf = io.BytesIO()
@@ -236,9 +236,9 @@ def render_tampered_doc(genuine: np.ndarray) -> np.ndarray:
     return bgr
 
 
-# ---------------------------------------------------------------------------
-# Liveness frame bursts (blink vs static), derived from a detected sample face
-# ---------------------------------------------------------------------------
+
+
+
 
 def _eye_boxes(landmarker, img, h, w):
     import mediapipe as mp
@@ -290,15 +290,15 @@ def make_liveness_bursts(frame_face_bgr) -> None:
             cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
             padx = (x2 - x1) // 2 + 16
             pady = (y2 - y1) // 2 + 8
-            skin = tuple(int(v) for v in img[cy + pady, cx])  # cheek tone
+            skin = tuple(int(v) for v in img[cy + pady, cx])
             cv2.ellipse(img, (cx, cy), (padx, pady), 0, 0, 360, skin, -1)
             cv2.line(img, (x1 - padx // 2, cy), (x2 + padx // 2, cy),
                      (35, 35, 35), 5, cv2.LINE_AA)
         return img
 
-    # --- blink burst -------------------------------------------------------
+
     blink_frames = []
-    # 12 frames: 3 open, 4 closed, 5 open  -> 1 blink
+
     pattern = ["open"] * 3 + ["closed"] * 4 + ["open"] * 5
     for state in pattern:
         img = base.copy()
@@ -307,7 +307,7 @@ def make_liveness_bursts(frame_face_bgr) -> None:
         blink_frames.append(img)
     _write_burst(blink_frames, LIVE_DIR / "blink_burst")
 
-    # --- static burst (no blink) -------------------------------------------
+
     static = [base.copy() for _ in range(8)]
     _write_burst(static, LIVE_DIR / "static_burst")
     landmarker.close()
@@ -319,21 +319,21 @@ def _write_burst(frames, stem: pathlib.Path):
         cv2.imwrite(str(stem.with_name(f"{stem.name}_{i:02d}.png")), f)
 
 
-# ---------------------------------------------------------------------------
-# main
-# ---------------------------------------------------------------------------
+
+
+
 
 def main():
     _ensure_dirs()
     imgs = _get_olivetti()
 
-    # faces for face-match
+
     cv2.imwrite(str(FACES_DIR / "person_a.png"), _face_bgr(imgs, 3, 0))
     cv2.imwrite(str(FACES_DIR / "person_a_2.png"), _face_bgr(imgs, 3, 5))
     cv2.imwrite(str(FACES_DIR / "person_b.png"), _face_bgr(imgs, 17, 0))
     print("faces written")
 
-    # documents
+
     doc_face = _face_bgr(imgs, 3, 0, size=(220, 280))
     genuine = render_genuine_doc(doc_face)
     cv2.imwrite(str(SAMPLES / "genuine_doc.png"), genuine)
@@ -342,8 +342,8 @@ def main():
     cv2.imwrite(str(SAMPLES / "tampered_doc.png"), tampered)
     print("documents written")
 
-    # liveness bursts use a larger sample face (eyes need enough pixels for the
-    # blink fill to drop EAR below the closed threshold without losing the face)
+
+
     burst_face = _face_bgr(imgs, 3, 0, size=(512, 512))
     make_liveness_bursts(burst_face)
 

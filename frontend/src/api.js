@@ -7,32 +7,32 @@ function resolveBaseURL() {
     return envBase && envBase.endsWith('/api') ? envBase : `${envBase || 'http://localhost:8000'}/api`;
   }
 
-  // Vite dev server: route through the Vite proxy (same origin, no CORS).
+  
   if (import.meta.env.DEV) {
     return '/api';
   }
 
-  // FastAPI serves the built SPA on :8000 — keep requests same-origin.
+  
   if (window.location.port === '8000') {
     return '/api';
   }
 
-  // Production: Vercel (netraksha.xyz) MUST use same-origin /api via vercel.json
-  // rewrites proxy to Railway. This avoids CORS (www vs non-www) and mobile-carrier
-  // blocking of *.up.railway.app (screenshot: CORS No Access-Control-Allow-Origin).
-  // Takes precedence over VITE_API_BASE_URL so a stale env var can't force cross-origin.
+  
+  
+  
+  
   const host = window.location.hostname.toLowerCase();
   if (host === 'netraksha.xyz' || host === 'www.netraksha.xyz' || host === 'sih-weld-psi.vercel.app') {
     return '/api';
   }
 
-  // Deployed (e.g. Vercel): use the configured absolute backend URL for other hosts.
-  // Guard: if envBase doesn't start with http, it's a relative path which would
-  // silently resolve against the frontend origin — treat as unset.
+  
+  
+  
   if (envBase && (envBase.startsWith('http://') || envBase.startsWith('https://'))) {
     return envBase.endsWith('/api') ? envBase : `${envBase}/api`;
   }
-  // Railway preview / direct backend access — keep same-origin.
+  
   if (host.endsWith('.up.railway.app')) {
     return '/api';
   }
@@ -40,8 +40,8 @@ function resolveBaseURL() {
 }
 
 const api = axios.create({
-  baseURL: resolveBaseURL(), // FastAPI backend
-  timeout: 90000, // cold start + OCR + Gemini + 3-way can exceed 30s on free tier
+  baseURL: resolveBaseURL(), 
+  timeout: 90000, 
 });
 
 api.interceptors.request.use((config) => {
@@ -52,10 +52,10 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// On an expired/invalid session, clear local credentials and return to login
-// instead of surfacing a cryptic 401 error. Step-up endpoints (MFA code,
-// password rotation) use 401 for field-level errors — those must NOT wipe
-// the session. Rotation/MFA gates (403) route to the security setup screen.
+
+
+
+
 const STEP_UP_URLS = ['/auth/mfa/challenge', '/auth/mfa/verify', '/auth/change-password', '/auth/mfa/disable'];
 api.interceptors.response.use(
   (res) => res,
@@ -86,10 +86,10 @@ api.interceptors.response.use(
 
 export default api;
 
-/** Human-readable message from an API failure. Never returns an object —
- *  FastAPI 422 bodies carry detail as an ARRAY, which would otherwise either
- *  render blank or crash React. Includes the HTTP status so field errors
- *  (400/401/422/429) are distinguishable from transport failures. */
+
+
+
+
 export function apiErrorMessage(err, fallback = 'Request failed.') {
   const status = err?.response?.status;
   const data = err?.response?.data;

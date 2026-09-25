@@ -17,8 +17,8 @@ from pipeline.risk_engine import assess_risk
 
 DOC = "samples/genuine_doc.png"
 LIVE = "samples/live/blink_burst_05.png"
-DB_SAME = "samples/faces/person_a.png"   # registry photo (demo identity)
-DB_OTHER = "samples/faces/person_b.png"  # another person's registry photo
+DB_SAME = "samples/faces/person_a.png"
+DB_OTHER = "samples/faces/person_b.png"
 
 
 def _ok_pair(p):
@@ -39,8 +39,8 @@ def test_three_way_complete_all_pairs_computed():
 
 
 def test_three_way_detects_registry_mismatch():
-    # Document/live agree path is whatever it is — the registry legs must
-    # still be really evaluated (booleans, not nulls).
+
+
     out = run_three_way_match(DOC, LIVE, DB_OTHER)
     assert out["completeness"] == "complete", out
     assert isinstance(out["pairs"]["doc_vs_db"]["match"], bool)
@@ -77,9 +77,9 @@ def test_three_way_never_raises_on_garbage():
     assert out["primary"] == {"similarity": None, "match": None}
 
 
-# ---------------------------------------------------------------------------
-# Risk: evidence-backed registry mismatch forces Red; guesses never do
-# ---------------------------------------------------------------------------
+
+
+
 
 def _clean_base():
     return dict(
@@ -109,7 +109,7 @@ def test_risk_ignores_nonlocal_registry_claims():
         r = assess_risk(**_clean_base(), db_face_pairs={
             "doc_vs_db_match": False, "live_vs_db_match": False, "evidence": evidence})
         assert r.verdict == "Green", (evidence, r.flags)
-    # No pairs at all / inconclusive pairs → no Red.
+
     r = assess_risk(**_clean_base(), db_face_pairs={
         "doc_vs_db_match": None, "live_vs_db_match": None, "evidence": "local"})
     assert r.verdict == "Green"

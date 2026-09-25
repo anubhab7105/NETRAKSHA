@@ -26,9 +26,9 @@ from backend.auth_security import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Password policy
-# ---------------------------------------------------------------------------
+
+
+
 
 def test_strong_passwords_accepted():
     validate_new_password("Kiosk-Bravo-2026!")
@@ -43,9 +43,9 @@ def test_weak_passwords_rejected():
             validate_new_password(bad)
 
 
-# ---------------------------------------------------------------------------
-# Secret gates
-# ---------------------------------------------------------------------------
+
+
+
 
 def test_secret_gate_dev_default_warns(monkeypatch):
     monkeypatch.delenv("APP_ENV", raising=False)
@@ -68,16 +68,16 @@ def test_secret_gate_production_accepts_strong(monkeypatch):
     assert app_env() == "production"
 
 
-# ---------------------------------------------------------------------------
-# TOTP (stdlib) — deterministic vectors via for_time
-# ---------------------------------------------------------------------------
+
+
+
 
 def test_totp_roundtrip_and_window():
     secret = generate_totp_secret()
-    assert len(secret) >= 32  # 160-bit entropy
+    assert len(secret) >= 32
     code = totp_at(secret, for_time=1_700_000_000)
     assert verify_totp(secret, code, for_time=1_700_000_000)
-    # ±1 step drift tolerated, ±2 steps rejected
+
     assert verify_totp(secret, code, for_time=1_700_000_000 + 30)
     assert not verify_totp(secret, code, for_time=1_700_000_000 + 61)
     assert not verify_totp(secret, "000000", for_time=1_700_000_000)
@@ -96,18 +96,18 @@ def test_match_window_measures_drift():
     secret = generate_totp_secret()
     base = 1_700_000_000
     assert match_window(secret, totp_at(secret, for_time=base), for_time=base) == 0
-    # A code from 5 steps ahead reads as +5 (phone fast / stale submission).
+
     assert match_window(secret, totp_at(secret, for_time=base + 150), for_time=base) == 5
     assert match_window(secret, totp_at(secret, for_time=base - 90), for_time=base) == -3
     assert match_window(secret, "000000", for_time=base) is None
-    # Strict verification still rejects anything outside ±1.
+
     assert verify_totp(secret, totp_at(secret, for_time=base + 150), for_time=base) is False
     assert verify_totp(secret, totp_at(secret, for_time=base + 30), for_time=base) is True
 
 
-# ---------------------------------------------------------------------------
-# Rate limiter
-# ---------------------------------------------------------------------------
+
+
+
 
 def test_rate_limiter_blocks_then_recovers():
     rl = RateLimiter(max_attempts=3, window_s=60)
@@ -122,9 +122,9 @@ def test_rate_limiter_blocks_then_recovers():
     assert allowed
 
 
-# ---------------------------------------------------------------------------
-# App wiring: token purpose + endpoint presence
-# ---------------------------------------------------------------------------
+
+
+
 
 def test_mfa_token_purpose_roundtrip():
     import backend.app as app
@@ -216,7 +216,7 @@ def test_change_password_stores_postgres_safe_datetimes():
                 assert off.must_change_password is False
                 assert off.password_changed_at is not None
                 assert off.password_changed_at.tzinfo is None
-            # New password verifies (rotation actually took effect).
+
             login2 = await app.login(
                 app.LoginRequest(username="chg1", password="New-Pass-2026!"),
                 _AnonReq())
@@ -274,7 +274,7 @@ def test_mfa_setup_issues_qr_and_verify_loop():
             assert setup["otpauth_uri"].startswith("otpauth://totp/")
             assert setup["qr_data_uri"].startswith("data:image/png;base64,")
             raw = base64.b64decode(setup["qr_data_uri"].split(",", 1)[1])
-            assert raw[:8] == b"\x89PNG\r\n\x1a\n"  # real PNG, not an empty stub
+            assert raw[:8] == b"\x89PNG\r\n\x1a\n"
             code = totp_at(setup["manual_key"])
             out = await app.mfa_verify(app.MfaVerifyRequest(code=code),
                                        _AuthedReq(login.token))

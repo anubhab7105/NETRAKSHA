@@ -37,9 +37,9 @@ class Base(DeclarativeBase):
     pass
 
 
-# ---------------------------------------------------------------------------
-# 1. Officer
-# ---------------------------------------------------------------------------
+
+
+
 
 class Officer(Base):
     __tablename__ = "officers"
@@ -47,17 +47,17 @@ class Officer(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(String(100), unique=True, nullable=False)
     password_hash = Column(Text, nullable=False)
-    role = Column(String(20), nullable=False, default="officer")  # officer | supervisor | auditor
-    unit = Column(String(50), nullable=False, default="BORDER_UNIT_1")  # location/unit for least-privilege scoping
+    role = Column(String(20), nullable=False, default="officer")
+    unit = Column(String(50), nullable=False, default="BORDER_UNIT_1")
     created_at = Column(DateTime, server_default=func.now())
-    # --- Auth hardening (password rotation + supervisor MFA) ---
-    # Pre-existing databases gain these via database.ensure_auth_columns().
+
+
     must_change_password = Column(Boolean, nullable=False, default=False)
-    totp_secret = Column(Text, nullable=True)  # base32 secret; set at enrollment
+    totp_secret = Column(Text, nullable=True)
     totp_enabled = Column(Boolean, nullable=False, default=False)
     password_changed_at = Column(DateTime, nullable=True)
 
-    # Relationships
+
     screening_cases = relationship("ScreeningCase", back_populates="officer")
     officer_actions = relationship("OfficerAction", back_populates="officer")
 
@@ -65,9 +65,9 @@ class Officer(Base):
         return f"<Officer(id={self.id}, username={self.username!r}, role={self.role!r})>"
 
 
-# ---------------------------------------------------------------------------
-# 2. CitizenRegistry
-# ---------------------------------------------------------------------------
+
+
+
 
 class CitizenRegistry(Base):
     __tablename__ = "citizens_registry"
@@ -76,31 +76,31 @@ class CitizenRegistry(Base):
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    document_type = Column(String(20), nullable=False)  # aadhaar | pan | voter_id | passport
+    document_type = Column(String(20), nullable=False)
     document_number = Column(String(50), nullable=False)
     full_name = Column(Text, nullable=False)
-    date_of_birth = Column(String(20), nullable=True)  # YYYY-MM-DD or DD/MM/YYYY
-    gender = Column(String(10), nullable=True)  # M | F | Other
+    date_of_birth = Column(String(20), nullable=True)
+    gender = Column(String(10), nullable=True)
     address = Column(Text, nullable=True)
     father_or_spouse_name = Column(Text, nullable=True)
-    photo_uri = Column(Text, nullable=True)  # path/URI to reference photo
+    photo_uri = Column(Text, nullable=True)
 
-    # --- Controlled-enrollment trust metadata (added post-audit) ---
-    # Pre-fix rows have NULLs here and are treated as `legacy` (grandfathered
-    # but flagged for authority re-verification). All post-fix rows are written
-    # only via dual approval or a signed authority import, so these are set.
-    # A runtime migration (database.ensure_registry_trust_columns) adds these
-    # columns to already-deployed databases on startup.
-    source = Column(String(30), nullable=True)  # authority_import | verified_enrollment | legacy_seed
-    source_ref = Column(Text, nullable=True)  # authority batch / enrollment reference
-    verification_method = Column(String(80), nullable=True)  # e.g. authority_signed_import
-    photo_hash = Column(String(64), nullable=True)  # SHA-256 of the enrolled face photo
-    enrolled_by = Column(String(100), nullable=True)  # requesting supervisor username
-    approved_by = Column(String(100), nullable=True)  # second supervisor (must differ)
+
+
+
+
+
+
+    source = Column(String(30), nullable=True)
+    source_ref = Column(Text, nullable=True)
+    verification_method = Column(String(80), nullable=True)
+    photo_hash = Column(String(64), nullable=True)
+    enrolled_by = Column(String(100), nullable=True)
+    approved_by = Column(String(100), nullable=True)
     last_reconciled_at = Column(DateTime, nullable=True)
-    reconciliation_status = Column(String(30), nullable=True)  # ok | needs_review | ...
+    reconciliation_status = Column(String(30), nullable=True)
 
-    # Relationships
+
     screening_cases = relationship("ScreeningCase", back_populates="citizen")
 
     def __repr__(self) -> str:
@@ -128,9 +128,9 @@ class CitizenRegistry(Base):
         }
 
 
-# ---------------------------------------------------------------------------
-# 2b. RegistryEnrollment — dual-approval workflow for the master registry
-# ---------------------------------------------------------------------------
+
+
+
 
 class RegistryEnrollment(Base):
     """Controlled-enrollment request for the master citizen registry.
@@ -145,9 +145,9 @@ class RegistryEnrollment(Base):
     __tablename__ = "registry_enrollments"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    action = Column(String(10), nullable=False, default="create")  # create | delete
-    status = Column(String(10), nullable=False, default="pending")  # pending | approved | rejected
-    # Proposed payload (for action=create)
+    action = Column(String(10), nullable=False, default="create")
+    status = Column(String(10), nullable=False, default="pending")
+
     document_type = Column(String(20), nullable=True)
     document_number = Column(String(50), nullable=True)
     full_name = Column(Text, nullable=True)
@@ -155,19 +155,19 @@ class RegistryEnrollment(Base):
     gender = Column(String(10), nullable=True)
     address = Column(Text, nullable=True)
     father_or_spouse_name = Column(Text, nullable=True)
-    photo_uri = Column(Text, nullable=True)  # staged pending photo (approved → linked)
+    photo_uri = Column(Text, nullable=True)
     photo_hash = Column(String(64), nullable=True)
     source = Column(String(30), nullable=True)
     source_ref = Column(Text, nullable=True)
     verification_method = Column(String(80), nullable=True)
-    request_reason = Column(Text, nullable=True)  # why this enrollment is needed
-    review_note = Column(Text, nullable=True)  # approver/rejecter note
+    request_reason = Column(Text, nullable=True)
+    review_note = Column(Text, nullable=True)
     requested_by_id = Column(Integer, ForeignKey("officers.id"), nullable=False)
     requested_by = Column(String(100), nullable=False)
     approved_by_id = Column(Integer, ForeignKey("officers.id"), nullable=True)
     approved_by = Column(String(100), nullable=True)
-    target_citizen_id = Column(Integer, ForeignKey("citizens_registry.id"), nullable=True)  # for delete
-    resulting_citizen_id = Column(Integer, ForeignKey("citizens_registry.id"), nullable=True)  # for create
+    target_citizen_id = Column(Integer, ForeignKey("citizens_registry.id"), nullable=True)
+    resulting_citizen_id = Column(Integer, ForeignKey("citizens_registry.id"), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     decided_at = Column(DateTime, nullable=True)
 
@@ -207,9 +207,9 @@ class RegistryEnrollment(Base):
         }
 
 
-# ---------------------------------------------------------------------------
-# 3. ScreeningCase
-# ---------------------------------------------------------------------------
+
+
+
 
 class ScreeningCase(Base):
     __tablename__ = "screening_cases"
@@ -221,15 +221,15 @@ class ScreeningCase(Base):
     citizen_id = Column(Integer, ForeignKey("citizens_registry.id"), nullable=True)
     demographic_match = Column(Boolean, nullable=True)
     risk_score = Column(Float, nullable=True)
-    verdict = Column(String(10), nullable=True)  # Green | Yellow | Red
-    status = Column(String(20), default="pending_review")  # pending_review | escalated | decided
-    unit = Column(String(50), nullable=True)  # officer's unit at screening time for location scoping
-    version = Column(Integer, default=0, nullable=False)  # optimistic locking version
-    provenance = Column(Text, nullable=True)  # JSON of model/config/input hashes for reproducibility
-    provenance_signature = Column(Text, nullable=True)  # HMAC signature of provenance
-    challenge_type = Column(String(20), nullable=True)  # active liveness challenge: blink | head_turn | mouth_open | smile
+    verdict = Column(String(10), nullable=True)
+    status = Column(String(20), default="pending_review")
+    unit = Column(String(50), nullable=True)
+    version = Column(Integer, default=0, nullable=False)
+    provenance = Column(Text, nullable=True)
+    provenance_signature = Column(Text, nullable=True)
+    challenge_type = Column(String(20), nullable=True)
 
-    # Relationships
+
     officer = relationship("Officer", back_populates="screening_cases")
     citizen = relationship("CitizenRegistry", back_populates="screening_cases")
     extracted_fields = relationship("ExtractedField", back_populates="case", cascade="all, delete-orphan")
@@ -265,9 +265,9 @@ class ScreeningCase(Base):
         }
 
 
-# ---------------------------------------------------------------------------
-# 4. ExtractedField
-# ---------------------------------------------------------------------------
+
+
+
 
 class ExtractedField(Base):
     __tablename__ = "extracted_fields"
@@ -277,10 +277,10 @@ class ExtractedField(Base):
     field_name = Column(String(50), nullable=False)
     extracted_value = Column(Text, nullable=True)
     database_value = Column(Text, nullable=True)
-    match_status = Column(String(20), nullable=False, default="unverified")  # match | mismatch | unverified
+    match_status = Column(String(20), nullable=False, default="unverified")
     confidence = Column(Float, nullable=True)
 
-    # Relationships
+
     case = relationship("ScreeningCase", back_populates="extracted_fields")
 
     def __repr__(self) -> str:
@@ -298,19 +298,19 @@ class ExtractedField(Base):
         }
 
 
-# ---------------------------------------------------------------------------
-# Iris Templates — encrypted biometric storage
-# ---------------------------------------------------------------------------
+
+
+
 
 class IrisTemplate(Base):
     __tablename__ = "iris_templates"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     citizen_id = Column(Integer, ForeignKey("citizens_registry.id"), nullable=False)
-    template = Column(Text, nullable=False)  # base64-encoded encrypted template
-    mask = Column(Text, nullable=True)  # base64 mask
+    template = Column(Text, nullable=False)
+    mask = Column(Text, nullable=True)
     quality = Column(Float, nullable=True)
-    eye = Column(String(10), nullable=False, default="left")  # left/right
+    eye = Column(String(10), nullable=False, default="left")
     created_at = Column(DateTime, server_default=func.now())
     enrolled_by = Column(Integer, ForeignKey("officers.id"), nullable=True)
 
@@ -327,14 +327,14 @@ class IrisTemplate(Base):
             "enrolled_by": self.enrolled_by,
         }
         if include_template:
-            # Never expose raw template via API — only for internal matching
+
             d["template"] = "***REDACTED***"
         return d
 
 
-# ---------------------------------------------------------------------------
-# 5. ModuleResult (DB model — distinct from pipeline.common.ModuleResult)
-# ---------------------------------------------------------------------------
+
+
+
 
 class ModuleResultDB(Base):
     __tablename__ = "module_results"
@@ -343,12 +343,12 @@ class ModuleResultDB(Base):
     case_id = Column(Integer, ForeignKey("screening_cases.id"), nullable=False)
     module_name = Column(String(50), nullable=False)
     score = Column(Float, nullable=True)
-    status = Column(String(20), nullable=False, default="ok")  # ok | inconclusive
-    raw_output = Column(Text, nullable=True)  # JSON string
+    status = Column(String(20), nullable=False, default="ok")
+    raw_output = Column(Text, nullable=True)
     evidence_uri = Column(Text, nullable=True)
     is_mocked = Column(Boolean, default=False)
 
-    # Relationships
+
     case = relationship("ScreeningCase", back_populates="module_results")
 
     def __repr__(self) -> str:
@@ -374,9 +374,9 @@ class ModuleResultDB(Base):
         }
 
 
-# ---------------------------------------------------------------------------
-# 6. OfficerAction
-# ---------------------------------------------------------------------------
+
+
+
 
 class OfficerAction(Base):
     __tablename__ = "officer_actions"
@@ -384,11 +384,11 @@ class OfficerAction(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     case_id = Column(Integer, ForeignKey("screening_cases.id"), nullable=False)
     officer_id = Column(Integer, ForeignKey("officers.id"), nullable=False)
-    action = Column(String(20), nullable=False)  # clear | deny | escalate
+    action = Column(String(20), nullable=False)
     reason = Column(Text, nullable=False)
     timestamp = Column(DateTime, server_default=func.now())
 
-    # Relationships
+
     case = relationship("ScreeningCase", back_populates="officer_actions")
     officer = relationship("Officer", back_populates="officer_actions")
 
@@ -406,27 +406,27 @@ class OfficerAction(Base):
         }
 
 
-# ---------------------------------------------------------------------------
-# 7. AuditLog
-# ---------------------------------------------------------------------------
+
+
+
 
 class AuditLog(Base):
     __tablename__ = "audit_log"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    actor = Column(String(100), nullable=False, index=True)  # officer username or "system"
+    actor = Column(String(100), nullable=False, index=True)
     action = Column(Text, nullable=False)
-    entity = Column(String(100), nullable=True)  # e.g. "case:42"
+    entity = Column(String(100), nullable=True)
     timestamp = Column(DateTime, server_default=func.now(), index=True)
     immutable = Column(Boolean, default=True)
-    # Enriched attribution for screening events
-    officer_id = Column(Integer, nullable=True)  # FK to officers.id when actor is an officer
-    session_id = Column(String(100), nullable=True)  # JWT jti or session token ID
-    request_id = Column(String(100), nullable=True)  # per-request UUID for tracing
-    device_info = Column(Text, nullable=True)  # User-Agent + IP + location context
-    file_hashes = Column(Text, nullable=True)  # JSON of input file hashes (doc/live)
-    prev_hash = Column(String(64), nullable=True)  # hash chain: previous entry_hash
-    entry_hash = Column(String(64), nullable=True)  # HMAC of this entry
+
+    officer_id = Column(Integer, nullable=True)
+    session_id = Column(String(100), nullable=True)
+    request_id = Column(String(100), nullable=True)
+    device_info = Column(Text, nullable=True)
+    file_hashes = Column(Text, nullable=True)
+    prev_hash = Column(String(64), nullable=True)
+    entry_hash = Column(String(64), nullable=True)
 
     def __repr__(self) -> str:
         return f"<AuditLog(id={self.id}, actor={self.actor!r}, action={self.action!r})>"
@@ -452,10 +452,10 @@ class AuditLog(Base):
     async def create_with_chain(session, **kwargs):
         """Create an audit log entry with hash chaining."""
         import hashlib, hmac, os
-        # Get previous hash
+
         try:
             from sqlalchemy import select as _select, desc as _desc
-            # Use raw query to avoid circular import
+
             result = await session.execute(
                 _select(AuditLog).order_by(AuditLog.id.desc()).limit(1)
             )
@@ -463,7 +463,7 @@ class AuditLog(Base):
             prev_hash = last.entry_hash if last and last.entry_hash else "0" * 64
         except Exception:
             prev_hash = "0" * 64
-        # Compute entry hash
+
         try:
             secret = os.environ.get("JWT_SECRET", "sih-hackathon-dev-secret-change-in-prod")
             payload = f"{prev_hash}{kwargs.get('actor','')}{kwargs.get('action','')}{kwargs.get('entity','')}".encode()
@@ -477,9 +477,9 @@ class AuditLog(Base):
         return entry
 
 
-# ---------------------------------------------------------------------------
-# 8. IdempotencyRecord — duplicate-submission guard for POST /api/screen
-# ---------------------------------------------------------------------------
+
+
+
 
 class IdempotencyRecord(Base):
     """Deduplicates screening requests across network retries.
@@ -507,7 +507,7 @@ class IdempotencyRecord(Base):
     session_id = Column(String(100), nullable=True, default="")
     input_hash = Column(String(64), nullable=False)
     case_id = Column(Integer, ForeignKey("screening_cases.id"), nullable=True)
-    response_snapshot = Column(Text, nullable=True)  # JSON of the original screening result
+    response_snapshot = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
     def __repr__(self) -> str:
@@ -517,9 +517,9 @@ class IdempotencyRecord(Base):
         )
 
 
-# ---------------------------------------------------------------------------
-# WatchlistEntry (mocked — per Schema.md)
-# ---------------------------------------------------------------------------
+
+
+
 
 class WatchlistEntry(Base):
     __tablename__ = "watchlist_entries"

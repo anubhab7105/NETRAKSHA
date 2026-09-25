@@ -37,11 +37,11 @@ def test_late_gemini_gate_matrix():
     assert app._needs_late_gemini_face(False, "live.png", "/db.png", {}) is True
     assert app._needs_late_gemini_face(False, None, "/db.png", {}) is True
     assert app._needs_late_gemini_face(False, "live.png", "/db.png", full) is False
-    # One leg present, one missing → still worth filling.
+
     assert app._needs_late_gemini_face(
         False, "live.png", "/db.png", {"doc_vs_db_match": True}) is True
-    # Simulated mode never re-calls the cloud.
+
     assert app._needs_late_gemini_face(True, "live.png", "/db.png", {}) is False
-    # No resolved photo → nothing to compare against.
+
     assert app._needs_late_gemini_face(False, "live.png", None, {}) is False
     assert app._needs_late_gemini_face(False, "live.png", "", {}) is False

@@ -49,8 +49,8 @@ const VerdictCard = ({ verdict, riskScore, anomalyCount, similarity }) => {
           </h2>
           <p className="mt-1 text-sm text-[#667085]">{meta.desc}</p>
         </div>
-        {/* Stacked on phones (3-up would squeeze and overflow), 3-up from 480px, stacked again on sm where the sidebar narrows the content.
-            w-full only while the card is flex-col; in flex-row it must be w-auto or the 100% width crushes the title column. */}
+        {
+}
         <dl className="grid w-full shrink-0 grid-cols-1 gap-2 min-[480px]:grid-cols-3 sm:w-auto sm:grid-cols-1 sm:min-w-[190px] lg:grid-cols-3 lg:min-w-[320px]">
           <div className="rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] px-3 py-2 text-center">
             <dt className="text-[11px] font-semibold uppercase tracking-wide text-[#667085]">Risk Score</dt>
@@ -70,7 +70,7 @@ const VerdictCard = ({ verdict, riskScore, anomalyCount, similarity }) => {
   );
 };
 
-/** Module status indicator */
+
 const StatusBadgeLocal = ({ status, score }) => {
   if (status === 'inconclusive') {
     return <StatusBadge tone="amber" icon={<AlertTriangle size={12} aria-hidden="true" />}>Inconclusive</StatusBadge>;
@@ -85,12 +85,12 @@ const StatusBadgeLocal = ({ status, score }) => {
   return <StatusBadge tone="green" icon={<Check size={12} aria-hidden="true" />}>OK</StatusBadge>;
 };
 
-/** Violet badge marking mocked/simulated data — must never look like verified output */
+
 const MockedDataBadge = ({ label = 'MOCKED DATA' }) => (
   <StatusBadge tone="violet">{label}</StatusBadge>
 );
 
-/** Mask Aadhaar numbers to XXXX-XXXX-<last4> before render (PII hygiene) */
+
 const maskAadhaar = (fieldName, value) => {
   if (value == null || value === '') return value;
   const name = String(fieldName || '').toLowerCase();
@@ -101,7 +101,7 @@ const maskAadhaar = (fieldName, value) => {
   return `XXXX-XXXX-${digits.slice(-4)}`;
 };
 
-/** Authenticated evidence image — fetches a short-lived signed URL */
+
 const EvidenceImage = ({ evidenceUri, alt }) => {
   const [src, setSrc] = useState(null);
   const [error, setError] = useState(false);
@@ -164,13 +164,13 @@ export default function CaseReport() {
       try {
         const res = await api.get(`/cases/${id}`);
         setData(res.data);
-        // Fetch provenance for reproducibility
+        
         try {
           const provRes = await api.get(`/cases/${id}/provenance`);
           setProvenance(provRes.data);
           setProvVerified(provRes.data.verified);
         } catch {
-          // no provenance for old cases
+          
         }
       } catch (err) {
         if (import.meta.env.DEV) console.error(err);
@@ -219,7 +219,7 @@ export default function CaseReport() {
 
   const { case: c, extracted_fields, module_results } = data;
 
-  // Find specific modules (audit P2 §5: render ALL)
+  
   const findModule = (name) => module_results.find(m => m.module_name === name);
   const geminiModule = findModule('gemini_ai');
   const tamperModule = findModule('tamper');
@@ -232,10 +232,10 @@ export default function CaseReport() {
 
   const geminiData = geminiModule?.raw_output || {};
   const faceMatch = geminiData.three_way_face_match || {};
-  // The cloud AI payload also carries the evidence-backed local InsightFace
-  // pairs (pair_sources "local"/"local_late"). When the cloud was offline the
-  // module is mocked, but those local pairs are still real biometrics and must
-  // be displayed — not hidden behind the "AI unavailable" notice.
+  
+  
+  
+  
   const pairSources = faceMatch.pair_sources || {};
   const hasLocalFacePair = Object.values(pairSources).some(
     (s) => typeof s === 'string' && s.startsWith('local')
@@ -246,7 +246,7 @@ export default function CaseReport() {
     faceMatch.doc_vs_db_match != null ||
     faceMatch.live_vs_db_match != null ||
     hasLocalFacePair;
-  // Registry-leg failure reasons, in officer-actionable words.
+  
   const dbPairsReasonText = (reason) => ({
     no_registry_match: 'no matching record in the citizens registry',
     no_registry_photo: 'no reference photo on the matched record',
@@ -256,7 +256,7 @@ export default function CaseReport() {
   }[reason] || (reason ? String(reason).replace(/_/g, ' ') : ''));
   const physicalData = physicalModule?.raw_output || {};
   const physicalChecks = physicalData.checks || {};
-  // Iris verification: prefer top-level response field, fall back to persisted module
+  
   const irisData = data.iris_verification || irisModule?.raw_output || null;
   const faceLive = livenessModule?.raw_output?.live;
   const biometricOverall = (() => {
@@ -271,12 +271,12 @@ export default function CaseReport() {
     return 'REVIEW';
   })();
 
-  // A genuine registry comparison exists only when the backend actually
-  // matched a citizen using trusted extraction (real Gemini or real local OCR)
-  // — reported by the case API as db_record_found.
+  
+  
+  
   const hasGenuineDbRecord = Boolean(data.db_record_found);
 
-  // Structured verification summary (spec §10) — neutral shell, color only on badges
+  
   const mismatchCount = (extracted_fields || []).filter((f) => f.match_status === 'mismatch').length;
   const summaryRows = [
     {
@@ -341,7 +341,7 @@ export default function CaseReport() {
 
       <VerdictCard verdict={c.verdict} riskScore={c.risk_score} anomalyCount={anomalyCount} similarity={faceMatch.similarity_score} />
 
-      {/* Verification summary — structured PASS/REVIEW/FAIL */}
+      {}
       <section aria-label="Verification summary" className="gov-card-padded">
         <div className="mb-2 flex items-center justify-between gap-2 border-b border-[#D9DEE7] pb-3">
           <h2 className="gov-card-title">Verification Summary</h2>
@@ -354,7 +354,7 @@ export default function CaseReport() {
         </div>
       </section>
 
-      {/* Demo-only: simulated AI was excluded from scoring */}
+      {}
       {(data.is_demo || geminiModule?.is_mocked) && (
         <GovNotice tone="amber" icon={<ShieldAlert size={18} className="mt-0.5 shrink-0" aria-hidden="true" />} title="DEMO ONLY — Simulated AI Excluded">
           {data.demo_label || geminiData.is_demo && 'This case used offline simulation for face/tamper AI. Those simulated results were excluded from the risk score — this verdict is DEMO ONLY and requires manual officer review.'}
@@ -362,7 +362,7 @@ export default function CaseReport() {
         </GovNotice>
       )}
 
-      {/* Cloud unavailable — network failure fallback, local checks only */}
+      {}
       {(data.cloud_unavailable || data.gemini_metadata?.cloud_unavailable || geminiData.cloud_unavailable) && (
         <GovNotice tone="amber" icon={<AlertTriangle size={18} className="mt-0.5 shrink-0" aria-hidden="true" />} title="CLOUD UNAVAILABLE — Local Checks Only">
           Cloud AI verification was unavailable due to network/cloud failure. Local forensic checks (tamper, liveness, OCR) completed, but final decision requires <strong>manual officer review</strong>. System did not halt — controlled fallback to Yellow applied.
@@ -370,7 +370,7 @@ export default function CaseReport() {
         </GovNotice>
       )}
 
-      {/* No DB record / unverifiable — alert the officer instead of faking a comparison */}
+      {}
       {!hasGenuineDbRecord && (
         <GovNotice tone="amber" icon={<AlertTriangle size={18} className="mt-0.5 shrink-0" aria-hidden="true" />} title="NO DOCUMENT FOUND IN THE DATABASE">
           No matching record exists in the citizens registry for this document, or the
@@ -379,7 +379,7 @@ export default function CaseReport() {
         </GovNotice>
       )}
 
-      {/* Recapture requested — face image quality too poor for a biometric verdict */}
+      {}
       {(faceMatch.recapture_requested || faceMatch.face_quality?.gate === 'failed') && (
         <GovNotice tone="blue" icon={<ScanLine size={18} className="mt-0.5 shrink-0" aria-hidden="true" />} title={`RECAPTURE NEEDED${(faceMatch.recapture_target && faceMatch.recapture_target !== 'both') ? ` — ${String(faceMatch.recapture_target).toUpperCase()}` : ''}`}>
           No biometric verdict was produced — the {(faceMatch.recapture_target === 'document' ? 'document photo' : faceMatch.recapture_target === 'live' ? 'live capture' : 'face images')} failed quality checks. This is a capture problem, not an identity mismatch.
@@ -393,7 +393,7 @@ export default function CaseReport() {
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
 
-        {/* Left column — Demographic Parity + Biometric Verification + Tamper Detection */}
+        {}
         <div className="min-w-0 space-y-5">
         <div className="gov-card-padded">
           <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-[#D9DEE7] pb-3">
@@ -411,8 +411,8 @@ export default function CaseReport() {
             </div>
           )}
 
-          {/* Compact wrapping field list — no min-width, no side-scroll.
-              Long values wrap onto multiple lines instead of scrolling. */}
+          {
+}
           <div className="divide-y divide-[#EAEDEF]">
             {extracted_fields.map(f => (
               <div key={f.id} className="flex items-start justify-between gap-3 py-2.5 first:pt-0 last:pb-0">
@@ -444,7 +444,7 @@ export default function CaseReport() {
           </div>
         </div>
 
-        {/* Biometric Verification — one person capture: face + iris + liveness */}
+        {}
         <div className="gov-card-padded">
           <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-[#D9DEE7] pb-3">
             <Eye className="text-[#1769AA]" size={18} aria-hidden="true" />
@@ -492,7 +492,7 @@ export default function CaseReport() {
           </div>
         </div>
 
-        {/* Tamper Detection */}
+        {}
         <div className="gov-card-padded">
           <div className="mb-3 flex flex-col gap-2 border-b border-[#D9DEE7] pb-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-2">
@@ -518,7 +518,7 @@ export default function CaseReport() {
         </div>
         </div>
 
-        {/* Right column — 3-Way Face Match + Physical Forgery */}
+        {}
         <div className="min-w-0 space-y-5">
           <div className="gov-card-padded">
             <div className="mb-3 flex flex-wrap items-center gap-2 border-b border-[#D9DEE7] pb-3">
@@ -576,7 +576,7 @@ export default function CaseReport() {
                   </div>
                 )}
 
-                {/* Three-way completeness — every advertised pair traced to evidence */}
+                {}
                 {(faceMatch.comparison_completeness || faceMatch.pair_sources) && (
                   <div className="mt-3 rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] p-3 text-xs text-[#667085]">
                     <span className="font-semibold uppercase tracking-wide text-[#172033]">Registry comparison: </span>
@@ -598,7 +598,7 @@ export default function CaseReport() {
             )}
           </div>
 
-          {/* Physical Forgery — layout/font/photo-frame/print-scan/QR/security print */}
+          {}
           <div className="gov-card-padded">
             <div className="mb-3 flex flex-col gap-2 border-b border-[#D9DEE7] pb-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-2">
@@ -682,7 +682,7 @@ export default function CaseReport() {
         </div>
       </div>
 
-      {/* Analysis Details (expandable) — Deepfake, Liveness, Checksum, Security Zones */}
+      {}
       <section aria-label="Analysis details" className="space-y-3">
         <h2 className="gov-section-title">Analysis Details</h2>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -791,7 +791,7 @@ export default function CaseReport() {
         </Details>
       </section>
 
-      {/* Watchlist Panel — always shown, even on clear (audit P2 §6) */}
+      {}
       <section aria-label="Watchlist lookup" className={`gov-card-padded ${!watchlistModule?.is_mocked && watchlistModule?.raw_output?.is_hit ? 'border-l-4 !border-l-[#C62828]' : ''}`}>
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <ShieldAlert className={!watchlistModule?.is_mocked && watchlistModule?.raw_output?.is_hit ? 'text-[#C62828]' : 'text-[#667085]'} size={20} aria-hidden="true" />
@@ -821,10 +821,10 @@ export default function CaseReport() {
         )}
       </section>
 
-      {/* Officer Action — state machine: pending_review -> escalated -> decided.
-          Deny is supervisor-only (explicit allowlist): officers and auditors —
-          and any unknown role — are never rendered a Deny affordance. The API
-          additionally rejects officer deny with 403 (defense in depth). */}
+      {
+
+
+}
       {(() => {
         const myRole = (localStorage.getItem('role') || 'officer').toLowerCase();
         const isAuditor = myRole === 'auditor';
@@ -870,7 +870,7 @@ export default function CaseReport() {
             </div>
           );
         }
-        // pending_review
+        
         return (
           <div className="gov-card-padded mt-6 border-t-4 !border-t-[#123B66]">
             <h2 className="gov-card-title mb-3">Officer Adjudication <span className="text-xs font-normal text-[#98A2B3]">(v{c.version ?? 0})</span></h2>
@@ -898,7 +898,7 @@ export default function CaseReport() {
         );
       })()}
 
-      {/* Verification Evidence / Audit Details — provenance */}
+      {}
       <section aria-label="Verification evidence and audit details" className="space-y-3">
         <h2 className="gov-section-title">Verification Evidence &amp; Audit Details</h2>
         <Details title="Decision provenance — signed record for reproducibility">

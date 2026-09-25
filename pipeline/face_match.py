@@ -44,17 +44,17 @@ from .face_quality import (
 
 MODULE_NAME = "face_match"
 
-# Same-person match threshold used ONLY to set the per-module `match` boolean
-# (evidence). It is not a case verdict. Surfaced in raw_output for transparency.
+
+
 MATCH_THRESHOLD = 0.55
 
 _face_analysis_lock = threading.Lock()
 _face_analysis = None
 _provider_used = None
 
-# Haar cascades — fallback ONLY (classify *why* InsightFace found nothing:
-# profile-hit ≈ side angle). Never a hard gate on their own: Haar misses
-# good frames too often. Cached, thread-safe via the GIL + lazy init.
+
+
+
 _haar_lock = threading.Lock()
 _haar_frontal = None
 _haar_profile = None
@@ -92,7 +92,7 @@ def _haar_fallback_codes(image_bgr) -> list:
             return []
         gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
         if len(frontal.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(50, 50))):
-            return []  # a face IS there — detector miss, keep generic no_face
+            return []
         if profile is not None:
             prof = profile.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(50, 50))
             if len(prof) == 0:
@@ -140,8 +140,8 @@ def _get_face_analysis():
 
         model_root = str(INSIGHTFACE_MODEL_ROOT)
 
-        # Use whichever execution providers this runtime actually exposes
-        # (CPU on boxes without a GPU), so we avoid noisy fallback errors.
+
+
         from onnxruntime import get_available_providers
         available = get_available_providers()
         pref = ("CUDAExecutionProvider", "ROCMExecutionProvider",
@@ -154,7 +154,7 @@ def _get_face_analysis():
             providers=providers,
             allowed_modules=["detection", "recognition"],
         )
-        # record which provider actually bound (for raw_output explainability)
+
         bound = app.models.get("recognition")
         provider_used = "unknown"
         if hasattr(bound, "session"):
@@ -164,9 +164,9 @@ def _get_face_analysis():
         return _face_analysis
 
 
-# Files the local engine needs (allowed_modules = detection + recognition).
-# Checked WITHOUT initialising anything, so status probes never trigger a
-# ~300MB model download inside a request path.
+
+
+
 _REQUIRED_BUFFALO_FILES = ("det_10g.onnx", "w600k_r50.onnx")
 
 _last_engine_error: Optional[str] = None
@@ -217,7 +217,7 @@ def prewarm_local_engine() -> bool:
         _last_engine_error = None
         single_log(f"local face engine READY (provider={_provider_used})")
         return True
-    except Exception as exc:  # noqa: BLE001 — degraded, reported not raised
+    except Exception as exc:
         _last_engine_error = f"{type(exc).__name__}: {str(exc)[:160]}"
         single_log(
             "local face engine UNAVAILABLE "
@@ -234,7 +234,7 @@ def _detect_faces(app, image_bgr: np.ndarray):
     faces = app.get(image_bgr)
     if not faces:
         return None, None, None
-    # pick largest face by bbox area
+
     def _area(f):
         b = getattr(f, "bbox", None)
         if b is None:
@@ -282,13 +282,13 @@ def run_face_match(document_photo, live_capture, save_evidence: bool = True) -> 
     try:
         doc = load_image(document_photo)
         live = load_image(live_capture)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return inconclusive_result(MODULE_NAME, exc)
 
-    # --- Quality stage 1: whole-image hygiene (no detection needed) ---
-    # Catches lens-covered / flash-blown / corrupt frames before spending
-    # seconds on model inference. Reference thumbnails (tiny registry crops)
-    # report reference_mode and skip hard gates here.
+
+
+
+
     doc_cap = assess_capture(doc, "document")
     live_cap = assess_capture(live, "live")
     early_failed = [r for r in (doc_cap, live_cap) if not r.passed and not r.reference_mode]
@@ -297,14 +297,14 @@ def run_face_match(document_photo, live_capture, save_evidence: bool = True) -> 
 
     try:
         app = _get_face_analysis()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         single_log(f"face_match: insightface init failed ({type(exc).__name__})")
         return inconclusive_result(MODULE_NAME, exc)
 
     try:
         doc_face, doc_norm, doc_n = _detect_faces(app, doc)
         live_face, live_norm, live_n = _detect_faces(app, live)
-        # Document photos (Aadhaar etc.) have small faces — retry upscaled if needed
+
         if doc_norm is None:
             import cv2
             h, w = doc.shape[:2]
@@ -317,25 +317,25 @@ def run_face_match(document_photo, live_capture, save_evidence: bool = True) -> 
             if max(h, w) < 500:
                 live_up = cv2.resize(live, (int(w*1.6), int(h*1.6)), interpolation=cv2.INTER_CUBIC)
                 live_face, live_norm, live_n = _detect_faces(app, live_up)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return inconclusive_result(MODULE_NAME, exc)
 
-    # --- Quality stage 2: per-face usability (blur / light / size / pose) ---
-    # A blurry/dark/side-angle capture must request RECAPTURE — never a
-    # fabricated match/mismatch verdict. Tiny registry thumbnails run in
-    # reference_mode (face presence only) so enrolled data keeps verifying.
+
+
+
+
     doc_rep = assess_face(doc, doc_face, doc_n or 0, "document")
     live_rep = assess_face(live, live_face, live_n or 0, "live")
     for rep, cap_rep in ((doc_rep, doc_cap), (live_rep, live_cap)):
         if cap_rep.reference_mode:
-            # Downgrade measurement gates to advisories; keep presence gates.
+
             keep = [c for c in rep.failed if c in ("no_face", "multi_face")]
             rep.warnings.extend(c for c in rep.failed if c not in keep)
             rep.failed = keep
             rep.reference_mode = True
             rep.passed = not keep
-    # Sharpen a bare no_face with the Haar fallback: a profile-only hit means
-    # the traveller is facing sideways — say so instead of a generic miss.
+
+
     for rep, img in ((doc_rep, doc), (live_rep, live)):
         if rep.failed == ["no_face"]:
             alt = _haar_fallback_codes(img)
@@ -346,8 +346,8 @@ def run_face_match(document_photo, live_capture, save_evidence: bool = True) -> 
         return _quality_failure_result(doc_rep, live_rep)
 
     if doc_norm is None or live_norm is None:
-        # Unreachable in practice (stage 2 already gated presence), kept as a
-        # safety net so the contract holds under any detector behaviour.
+
+
         return _quality_failure_result(doc_rep, live_rep)
 
     similarity = float(np.dot(doc_norm, live_norm))
@@ -357,13 +357,13 @@ def run_face_match(document_photo, live_capture, save_evidence: bool = True) -> 
     evidence_uri = None
     if save_evidence:
         try:
-            # crop to detected faces (fall back to full image)
+
             doc_crop = _crop_face(doc, doc_face) if doc_face is not None else doc
             live_crop = _crop_face(live, live_face) if live_face is not None else live
             evidence_uri = _render_side_by_side(
                 doc_crop, live_crop, new_evidence_path(MODULE_NAME, "png")
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             single_log(f"face_match: evidence write failed ({type(exc).__name__})")
 
     raw = {
@@ -376,9 +376,9 @@ def run_face_match(document_photo, live_capture, save_evidence: bool = True) -> 
         "live_embedding_norm": round(float(np.linalg.norm(live_norm)), 4),
         "model": "insightface/buffalo_l (ArcFace w600k_r50)",
         "providers": _provider_used,
-        # Quality transparency: gates passed for this comparison; warnings
-        # (e.g. occlusion_suspected, multi-face doc print) ride along so the
-        # officer sees capture caveats next to the similarity score.
+
+
+
         "quality_gate": "passed",
         "face_quality": {
             "document": doc_rep.to_dict(),
@@ -490,7 +490,7 @@ def run_three_way_match(
                 pairs["live_vs_doc"] = _pair_from_result(
                     run_face_match(document_photo, live_capture, save_evidence=save_evidence)
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 pairs["live_vs_doc"] = {**_pair_unavailable("comparison_failed"),
                                         "reason": f"comparison_failed: {type(exc).__name__}"}
         if db_reference is None:
@@ -503,7 +503,7 @@ def run_three_way_match(
                 pairs["doc_vs_db"] = _pair_from_result(
                     run_face_match(document_photo, db_reference, save_evidence=False)
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 pairs["doc_vs_db"] = {**_pair_unavailable("comparison_failed"),
                                       "reason": f"comparison_failed: {type(exc).__name__}"}
             if live_capture is None:
@@ -513,7 +513,7 @@ def run_three_way_match(
                     pairs["live_vs_db"] = _pair_from_result(
                         run_face_match(live_capture, db_reference, save_evidence=False)
                     )
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     pairs["live_vs_db"] = {**_pair_unavailable("comparison_failed"),
                                            "reason": f"comparison_failed: {type(exc).__name__}"}
 
@@ -551,7 +551,7 @@ def run_three_way_match(
                 "match": primary_pair.get("match"),
             },
         }
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return {
             "pairs": {
                 "live_vs_doc": _pair_unavailable("comparison_failed"),

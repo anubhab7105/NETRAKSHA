@@ -48,9 +48,9 @@ from .common import (
 
 MODULE_NAME = "physical_forgery"
 
-# ---------------------------------------------------------------------------
-# Thresholds (env-overridable; calibrated on the repo specimen pages)
-# ---------------------------------------------------------------------------
+
+
+
 
 def _env_float(name: str, default: float) -> float:
     try:
@@ -59,23 +59,23 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-#: Page aspect (w/h) expectations per doc family.
+
 _ASPECTS = {
-    "passport": 1.42,   # 125 x 88 mm data page
-    "aadhaar": 1.586,   # ID-1 85.6 x 53.98 mm
+    "passport": 1.42,
+    "aadhaar": 1.586,
     "pan": 1.586,
-    "voter_id": 1.50,   # varies — wide tolerance
+    "voter_id": 1.50,
     "unknown": None,
 }
 ASPECT_TOL = _env_float("PHYS_ASPECT_TOL", 0.10)
-#: Expected MRZ text lines (None = this doc type carries no MRZ assertion).
+
 _MRZ_LINES = {"passport": 2, "aadhaar": 0, "pan": 0, "voter_id": 0, "unknown": None}
-#: Sub-check weights (renormalised over available checks).
+
 _WEIGHTS = {
     "layout": 0.22, "font_consistency": 0.16, "photo_boundary": 0.22,
     "print_scan": 0.20, "qr_barcode": 0.10, "security_features": 0.10,
 }
-#: Module risk mapping mirrors the tamper module (Red ≥ .7, Yellow ≥ .4).
+
 PHYS_HIGH = _env_float("PHYS_HIGH", 0.70)
 PHYS_MODERATE = _env_float("PHYS_MODERATE", 0.40)
 
@@ -95,9 +95,9 @@ def _norm_type(hint: Optional[str]) -> str:
     return t if t in _ASPECTS else "unknown"
 
 
-# ---------------------------------------------------------------------------
-# Shared image helpers
-# ---------------------------------------------------------------------------
+
+
+
 
 def _gray(bgr: np.ndarray) -> np.ndarray:
     import cv2
@@ -119,7 +119,7 @@ def _text_line_rows(band: np.ndarray) -> List[Tuple[int, int]]:
     _, bw = cv2.threshold(band, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     text = (bw < 128).astype(np.float32)
     rowsum = text.mean(axis=1)
-    # Smooth over ~ a glyph height so each text line forms ONE hump.
+
     ksize = int(h * 0.09) | 1
     sm = cv2.GaussianBlur(rowsum.reshape(-1, 1), (1, max(7, ksize)), 0).ravel()
     peaks = [i for i in range(1, len(sm) - 1)
@@ -138,9 +138,9 @@ def _text_line_rows(band: np.ndarray) -> List[Tuple[int, int]]:
     return spans
 
 
-# ---------------------------------------------------------------------------
-# 1. Layout validation (+ structural template match)
-# ---------------------------------------------------------------------------
+
+
+
 
 def _check_layout(bgr: np.ndarray, gray: np.ndarray, doc_type: str) -> Tuple[float, str, dict]:
     import cv2
@@ -149,7 +149,7 @@ def _check_layout(bgr: np.ndarray, gray: np.ndarray, doc_type: str) -> Tuple[flo
     details: Dict[str, Any] = {"aspect": round(w / max(1, h), 3)}
     penalties: List[Tuple[float, str]] = []
 
-    # (a) page aspect vs known travel-doc ratios
+
     expected = _ASPECTS.get(doc_type)
     candidates = [a for a in _ASPECTS.values() if a] if expected is None else [expected]
     aspect = w / max(1, h)
@@ -159,7 +159,7 @@ def _check_layout(bgr: np.ndarray, gray: np.ndarray, doc_type: str) -> Tuple[flo
     else:
         details["aspect_ok"] = True
 
-    # (b) MRZ text-line structure (TD3 passports carry exactly 2 rows)
+
     band = _mrz_band(gray)
     lines = _text_line_rows(band)
     details["mrz_lines"] = len(lines)
@@ -174,8 +174,8 @@ def _check_layout(bgr: np.ndarray, gray: np.ndarray, doc_type: str) -> Tuple[flo
     else:
         details["mrz_ok"] = "not_asserted"
 
-    # (c) portrait-zone occupancy — a travel doc carries a portrait; an empty
-    # photo zone (covered / cropped page) breaks the template.
+
+
     ph, pw = int(h * 0.42), int(w * 0.34)
     zone = gray[0:ph, w - pw:w]
     edges = cv2.Canny(zone, 60, 140)
@@ -193,9 +193,9 @@ def _check_layout(bgr: np.ndarray, gray: np.ndarray, doc_type: str) -> Tuple[flo
     return _clamp01(score), "ok", {**details, "findings": [m for _, m in penalties]}
 
 
-# ---------------------------------------------------------------------------
-# 2. Font consistency (MRZ monospace lattice)
-# ---------------------------------------------------------------------------
+
+
+
 
 def _glyph_advance_regularity(line_img: np.ndarray) -> Tuple[float, int, float]:
     """Monospace regularity of one text line.
@@ -222,12 +222,12 @@ def _glyph_advance_regularity(line_img: np.ndarray) -> Tuple[float, int, float]:
         runs.append((start, len(ink_cols)))
     starts = [a for a, b in runs if b - a >= 2]
     if len(starts) < 8:
-        return 0.0, 0, 0.0  # too few glyphs to judge — caller treats as unavailable
+        return 0.0, 0, 0.0
     adv = np.diff(np.asarray(starts, dtype=float))
     adv = adv[adv > 0]
     if len(adv) < 6:
         return 0.0, 0, 0.0
-    # Dominant advance via 1px histogram peak (robust to fragment outliers).
+
     hist, edges = np.histogram(adv, bins=np.arange(0, adv.max() + 2) - 0.5)
     mode = float(edges[np.argmax(hist)] + 0.5)
     if mode < 1e-6:
@@ -293,12 +293,12 @@ def _check_font(gray: np.ndarray, doc_type: str) -> Tuple[float, str, dict]:
             strokes.append(_stroke_cv(line))
     if not inliers:
         return 0.0, "not_available", {"reason": "glyph lattice unreadable"}
-    # A single re-typeset line is enough: score the WORST line, not the mean.
+
     worst_inlier = min(inliers)
     line_score = _clamp01((0.92 - worst_inlier) / 0.30)
     cv_stroke = float(np.mean(strokes)) if strokes else 0.0
-    # TD3 MRZ lines hold exactly 44 character cells — merged/split glyphs
-    # corroborate a re-set line.
+
+
     count_term = 0.0 if all(n == 44 for n in counts) else 0.7
     score = 0.55 * line_score + 0.20 * _clamp01((cv_stroke - 0.30) / 0.55) + 0.25 * count_term
     details = {"advance_inlier_min": round(worst_inlier, 3),
@@ -310,9 +310,9 @@ def _check_font(gray: np.ndarray, doc_type: str) -> Tuple[float, str, dict]:
     return _clamp01(score), "ok", details
 
 
-# ---------------------------------------------------------------------------
-# 3. Photo-boundary integrity (portrait frame geometry)
-# ---------------------------------------------------------------------------
+
+
+
 
 def _quad_in_roi(roi: np.ndarray, x_off: int, page_area: float):
     """Best near-rectangular contour inside one portrait ROI (or (None, 0))."""
@@ -331,9 +331,9 @@ def _quad_in_roi(roi: np.ndarray, x_off: int, page_area: float):
         if len(approx) != 4 or not cv2.isContourConvex(approx):
             continue
         pts = approx.reshape(4, 2).astype(float)
-        # rectangularity: corner angles near 90° + opposite sides equal.
-        # ±18° tolerates handheld perspective tilt; a pasted substitute
-        # still fails via deformed (non-quad) contours, not via angles.
+
+
+
         def _ang(a, b, c):
             v1, v2 = a - b, c - b
             n = (np.linalg.norm(v1) * np.linalg.norm(v2)) + 1e-9
@@ -435,12 +435,12 @@ def _check_photo_boundary(bgr: np.ndarray, gray: np.ndarray) -> Tuple[float, str
     quad, rectangularity = _portrait_quad(gray)
     details: Dict[str, Any] = {"rectangularity": round(rectangularity, 3)}
     if quad is None:
-        # No closed portrait quad — three distinct cases:
-        #  1. interrupted straight frame lines remain -> a frame EXISTED and
-        #     was broken/covered (pasted substitute) -> alarm;
-        #  2. no lines but a face is present -> frameless design or capture
-        #     angle -> low score, manual glance advised;
-        #  3. neither lines nor face -> photo missing/destroyed -> alarm.
+
+
+
+
+
+
         remnants = _frame_remnant_length(gray)
         details["frame_remnants_px"] = round(remnants, 1)
         face_present = _portrait_face_present(bgr)
@@ -457,12 +457,12 @@ def _check_photo_boundary(bgr: np.ndarray, gray: np.ndarray) -> Tuple[float, str
                             "findings": ["no portrait frame and no face detected in portrait zones — "
                                          "possible photo removal or destruction"]}
     details["portrait_quad"] = True
-    # Frame-line presence: at sample points along the quad, the 11×11 patch
-    # must contain a dark VALLEY (the outline) between brighter borders —
-    # depth = max(border means) − patch min. A genuine outline scores ≈1;
-    # a substitute pasted over the frame leaves a mere content step (≈0).
-    # Valley logic tolerates the ±2px contour offset that defeats exact
-    # pixel-masks.
+
+
+
+
+
+
     n_side = 20
     hits = 0
     total = 0
@@ -481,10 +481,10 @@ def _check_photo_boundary(bgr: np.ndarray, gray: np.ndarray) -> Tuple[float, str
             if ends - patch.min() > 120.0:
                 hits += 1
     dark_frac = hits / max(1, total)
-    # Step uniformity sampled within the portrait x-span and the middle
-    # 60% of rows (edge rows run along the horizontal frame lines and
-    # would pollute the statistic; rows outside the x-span cross
-    # unrelated text).
+
+
+
+
     steps = []
     x_lo, x_hi = int(np.clip(quad[:, 0].min(), 6, w - 7)), int(np.clip(quad[:, 0].max(), 6, w - 7))
     y_lo, y_hi = quad[:, 1].min(), quad[:, 1].max()
@@ -504,9 +504,9 @@ def _check_photo_boundary(bgr: np.ndarray, gray: np.ndarray) -> Tuple[float, str
     return 0.4, "ok", {**details, "findings": ["portrait frame is degraded — manual inspection advised"]}
 
 
-# ---------------------------------------------------------------------------
-# 4. Print-scan / recapture detection (moire + acutance)
-# ---------------------------------------------------------------------------
+
+
+
 
 def _moire_metrics(gray: np.ndarray) -> dict:
     """Periodic screen/half-tone energy + micro-text acutance.
@@ -533,10 +533,10 @@ def _moire_metrics(gray: np.ndarray) -> dict:
     band = mag[ring]
     base = float(np.percentile(band, 50)) + 1e-9
     peakedness = float(np.percentile(band, 99.5) / base)
-    # directional moire: periodic display grids concentrate energy in single
-    # rows/columns of the spectrum. High-pass first so the legitimate
-    # document lattice (MRZ glyph grid ≈ 22px period) does not count: screen
-    # moire lives at a few px period, genuine micro-text does not.
+
+
+
+
     hp = crop.astype(np.float64) - cv2.GaussianBlur(crop.astype(np.float64), (0, 0), 2.0)
     det = hp - hp.mean(axis=1, keepdims=True)
     row_e = np.abs(np.fft.fft(det, axis=1)).mean(axis=0)
@@ -544,7 +544,7 @@ def _moire_metrics(gray: np.ndarray) -> dict:
     col_e = np.abs(np.fft.fft(det2, axis=0)).mean(axis=1)
     directionality = float(max(row_e.max() / (np.median(row_e) + 1e-9),
                                col_e.max() / (np.median(col_e) + 1e-9)))
-    # acutance: edge strength on the MRZ band (copies lose micro-text bite)
+
     mrz = _mrz_band(gray)
     sx = cv2.Sobel(mrz, cv2.CV_64F, 1, 0, ksize=3)
     sy = cv2.Sobel(mrz, cv2.CV_64F, 0, 1, ksize=3)
@@ -556,9 +556,9 @@ def _moire_metrics(gray: np.ndarray) -> dict:
 
 def _check_print_scan(gray: np.ndarray) -> Tuple[float, str, dict]:
     m = _moire_metrics(gray)
-    # A clean digital render / first-generation capture: smooth spectrum
-    # (peakedness ≈ 1, directionality ≈ 4) and crisp micro-text. Display
-    # grids push directionality past ~9; multi-generation copies blur edges.
+
+
+
     moire = _clamp01((m["spectral_peakedness"] - 1.6) / 2.2)
     screen = _clamp01((m["directionality"] - 4.5) / 5.0)
     blur_copy = _clamp01((14.0 - m["acutance"]) / 12.0)
@@ -570,14 +570,14 @@ def _check_print_scan(gray: np.ndarray) -> Tuple[float, str, dict]:
     return _clamp01(score), "ok", details
 
 
-# ---------------------------------------------------------------------------
-# 5. QR / barcode validation (where available)
-# ---------------------------------------------------------------------------
+
+
+
 
 def _decode_barcodes(bgr: np.ndarray) -> List[dict]:
     found: List[dict] = []
     seen = set()
-    # OpenCV QR detector (no extra dependency)
+
     try:
         import cv2
 
@@ -598,7 +598,7 @@ def _decode_barcodes(bgr: np.ndarray) -> List[dict]:
             found.append({"format": "QR", "payload": payload.strip()})
     except Exception:
         pass
-    # pyzbar for 1D + 2D symbologies (optional system lib — guarded)
+
     try:
         from pyzbar.pyzbar import decode as _zbar
 
@@ -644,16 +644,16 @@ def _check_qr(bgr: np.ndarray, doc_number_hint: Optional[str]) -> Tuple[float, s
     return 0.05, "ok", details
 
 
-# ---------------------------------------------------------------------------
-# 6. Security features (guilloche/laminate cues; holograms need tilt-series)
-# ---------------------------------------------------------------------------
+
+
+
 
 def _check_security_features(bgr: np.ndarray, gray: np.ndarray) -> Tuple[float, str, dict]:
     h, w = gray.shape
-    # Guilloche cue: the specimen header carries a faint sine band
-    # (~50px period along x). Detect that periodicity directly: column-mean
-    # profile of the header strip → FFT → peak in the 20–120px period range.
-    # Plain paper has no such peak; a scanned counterfeit smears it.
+
+
+
+
     header = gray[int(h * 0.16):int(h * 0.26), :]
     details: Dict[str, Any] = {}
     try:
@@ -685,9 +685,9 @@ def _check_security_features(bgr: np.ndarray, gray: np.ndarray) -> Tuple[float, 
     return _clamp01(score), "ok", details
 
 
-# ---------------------------------------------------------------------------
-# Aggregation + evidence + entry point
-# ---------------------------------------------------------------------------
+
+
+
 
 def _render_evidence(bgr: np.ndarray, gray: np.ndarray, per_check: dict,
                      score: float, out_path) -> str:
@@ -695,15 +695,15 @@ def _render_evidence(bgr: np.ndarray, gray: np.ndarray, per_check: dict,
 
     h, w = gray.shape
     canvas = bgr.copy()
-    # MRZ band box
+
     y0 = int(h * (1.0 - 0.32))
     cv2.rectangle(canvas, (8, y0), (w - 8, h - 8), (255, 180, 0), 2)
     cv2.putText(canvas, "MRZ", (12, y0 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 180, 0), 2, cv2.LINE_AA)
-    # portrait zone box
+
     ph, pw = int(h * 0.50), int(w * 0.42)
     cv2.rectangle(canvas, (w - pw, 0), (w, ph), (0, 255, 160), 2)
     cv2.putText(canvas, "PHOTO", (w - pw + 6, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 160), 2, cv2.LINE_AA)
-    # verdict strip
+
     bar = np.zeros((54, w, 3), np.uint8)
     colour = (60, 60, 200) if score >= PHYS_HIGH else ((0, 170, 230) if score >= PHYS_MODERATE else (40, 160, 60))
     cv2.rectangle(bar, (0, 0), (w, 54), colour, -1)
@@ -737,7 +737,7 @@ def run_physical_forgery(
         gray = _gray(bgr)
         if min(gray.shape) < 200:
             return inconclusive_result(MODULE_NAME, "image too small for physical checks")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return inconclusive_result(MODULE_NAME, exc)
 
     doc_type = _norm_type(document_type_hint)
@@ -758,7 +758,7 @@ def run_physical_forgery(
                 s, st, d = _check_security_features(bgr, gray)
             per_check[name] = {"score": round(_clamp01(s), 4), "status": st, "details": d,
                                "weight": _WEIGHTS[name]}
-        except Exception as exc:  # noqa: BLE001 — one broken check never kills the module
+        except Exception as exc:
             per_check[name] = {"score": 0.0, "status": "error",
                                "details": {"error": f"{type(exc).__name__}"}, "weight": _WEIGHTS[name]}
 

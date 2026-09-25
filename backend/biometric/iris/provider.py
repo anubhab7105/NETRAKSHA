@@ -65,11 +65,11 @@ class RGBProvider(BiometricProvider):
         from .segmenter import segment_iris
         from .normalizer import normalize_iris
         from .encoder import encode_iris
-        # 1. quality gate (accepts path or ndarray)
+
         q = assess_iris_quality(eye_image)
         if not q.get("usable"):
             return {"template": None, "mask": None, "quality": q, "error": "poor_quality"}
-        # 2. segment (needs ndarray — load once)
+
         try:
             from pipeline.common import load_image as _load
             _img = _load(eye_image) if not isinstance(eye_image, np.ndarray) else eye_image
@@ -78,11 +78,11 @@ class RGBProvider(BiometricProvider):
         seg = segment_iris(_img)
         if seg.get("status") != "ok":
             return {"template": None, "mask": None, "quality": q, "error": seg.get("reason", "segmentation_failed")}
-        # 3. normalize (use the loaded ndarray)
+
         norm = normalize_iris(_img, seg["pupil"], seg["iris"], seg.get("mask"))
         if norm.get("status") != "ok":
             return {"template": None, "mask": None, "quality": q, "error": "normalization_failed"}
-        # 4. encode
+
         enc = encode_iris(norm["normalized"], norm.get("mask"))
         out = {
             "template": enc.get("template"),
@@ -97,7 +97,7 @@ class RGBProvider(BiometricProvider):
 
     def verify(self, probe_image, reference_template: bytes, reference_mask: bytes) -> Dict[str, Any]:
         from .matcher import match_templates
-        # Enroll the probe to get its template, then match
+
         probe = self.enroll(probe_image)
         if not probe.get("template"):
             return {"match": None, "distance": None, "quality": probe.get("quality"), "decision": "INCONCLUSIVE"}

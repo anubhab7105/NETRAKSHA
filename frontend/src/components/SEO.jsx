@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { SITE_URL, SITE_NAME, SITE_TAGLINE, DEFAULT_DESCRIPTION, OG_IMAGE } from '../config/site';
 
-// Upserts a <meta> or <link> tag in <head>, keyed by name/property/rel.
+
 function upsert(selector, create) {
   let el = document.head.querySelector(selector);
   if (!el) {
@@ -29,13 +29,13 @@ function setCanonical(href) {
   el.setAttribute('href', href);
 }
 
-/**
- * Per-page document metadata. Keeps every route's <title>, meta description,
- * canonical URL, social tags and crawl directives unique (SPAs otherwise keep
- * the static index.html head for every route).
- *
- * No third-party dependency: imperative DOM updates inside one effect.
- */
+
+
+
+
+
+
+
 export default function SEO({ title, description = DEFAULT_DESCRIPTION, path = '/', noindex = false }) {
   useEffect(() => {
     const fullTitle = title ? `${title} — ${SITE_NAME}` : `${SITE_NAME} — ${SITE_TAGLINE}`;

@@ -1,8 +1,8 @@
 import React from 'react';
 import { AlertTriangle, CheckCircle2, ShieldAlert, Info, XCircle } from 'lucide-react';
 
-/** Single source of truth for restrained status presentation.
- *  Every status pairs an icon with text — never color alone. */
+
+
 export function StatusBadge({ tone = 'grey', icon, children, className = '' }) {
   return (
     <span className={`gov-badge gov-badge-${tone} ${className}`}>
@@ -22,7 +22,7 @@ export function VerdictBadge({ verdict }) {
   return <StatusBadge tone="grey" icon={<Info size={13} aria-hidden="true" />}>{String(verdict || 'UNKNOWN').toUpperCase()}</StatusBadge>;
 }
 
-/** Structured PASS / REVIEW / FAIL row used by verification results. */
+
 export function CheckRow({ label, state, detail }) {
   const map = {
     PASS: { tone: 'green', icon: <CheckCircle2 size={14} aria-hidden="true" />, text: 'PASS' },
@@ -79,7 +79,7 @@ export function KpiCard({ label, value, sub, icon, accent = '#1769AA' }) {
   );
 }
 
-/** Government workflow stepper — Capture → … → Final Verdict. */
+
 export const VERIFICATION_STEPS = [
   'Capture',
   'Document Validation',

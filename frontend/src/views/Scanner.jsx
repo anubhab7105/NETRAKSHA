@@ -85,16 +85,16 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
     canvas.height = video.videoHeight;
     const ctx = canvas.getContext('2d');
 
-    // For the live-face capture, grab a ~2s frame burst so the liveness module
-    // can detect a real blink (adaptive EAR), micro-motion and screen-replay
-    // artifacts. A ~0.8s / 6-frame burst was too short to reliably catch a blink.
+    
+    
+    
     if (onAllowBurst && subject === 'face') {
       setBursting(true);
       setError(null);
       try {
-        // give the person a moment to react to the "blink now" prompt
+        
         await new Promise((r) => setTimeout(r, 650));
-        const totalFrames = 14; // ~14 * 150ms ~ 2.1s capture window
+        const totalFrames = 14; 
         const frames = [];
         for (let i = 0; i < totalFrames; i++) {
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -109,7 +109,7 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
         const captured = new File(blobs, `${subject}_burst.zip`, {
           type: 'application/zip',
         });
-        captured.burst = blobs; // attach the frame blobs for multipart upload
+        captured.burst = blobs; 
         setBursting(false);
         onCapture(captured);
         stopStream();
@@ -120,8 +120,8 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
       return;
     }
 
-    // Lite document: downscale to max 1280px JPEG (~300-600KB) instead of
-    // full-res PNG (~3MB). Avoids 502s on the 512MB free-tier backend.
+    
+    
     const vw = video.videoWidth || 1280;
     const vh = video.videoHeight || 720;
     const scale = Math.min(1, 1280 / Math.max(vw, vh));
@@ -246,9 +246,9 @@ export default function Scanner() {
   const [error, setError] = useState(null);
   const navigate = useNavigate();
 
-  // Idempotency key: one UUID per screening intent. Reused across network
-  // retries so POST /api/screen returns the original case instead of a
-  // duplicate. Regenerated when inputs change or after a completed screening.
+  
+  
+  
   const newIdempotencyKey = () => (
     typeof crypto !== 'undefined' && crypto.randomUUID
       ? crypto.randomUUID()
@@ -256,11 +256,11 @@ export default function Scanner() {
   );
   const [idempotencyKey, setIdempotencyKey] = useState(() => newIdempotencyKey());
 
-  // New inputs => new screening intent => fresh key. Otherwise the server
-  // would rightly reject the old key with 422 (different input bytes).
+  
+  
   useEffect(() => {
     setIdempotencyKey(newIdempotencyKey());
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    
   }, [docFile, personCapture]);
 
   const handleScan = async () => {
@@ -274,15 +274,15 @@ export default function Scanner() {
 
     const formData = new FormData();
     formData.append('document_image', docFile);
-    // Form-field fallback mirrors the Idempotency-Key header (for proxies
-    // that strip custom headers on multipart uploads).
+    
+    
     formData.append('idempotency_key', idempotencyKey);
     if (personCapture) {
-      // ONE person capture → ONE frame sequence feeds face + liveness + iris.
-      // live_capture = primary (middle) frame for 3-way face matching;
-      // live_frames = full burst for liveness; backend derives the eye/iris
-      // crop server-side from the same burst (iris_eye=auto), so no second
-      // camera or separate iris upload is needed.
+      
+      
+      
+      
+      
       const burst = Array.isArray(personCapture.burst) ? personCapture.burst : [];
       const primary = personCapture.primaryFrame || burst[Math.floor(burst.length / 2)] || burst[0];
       const primaryType = primary?.type || 'image/jpeg';
@@ -300,12 +300,12 @@ export default function Scanner() {
     try {
       const res = await api.post('/screen', formData, {
         headers: {
-          // Don't set Content-Type — let axios/browser add the multipart boundary.
+          
           'Idempotency-Key': idempotencyKey,
         }
       });
-      // Success (or idempotent replay) — mint a fresh key so the next
-      // screening is a new intent, then go to the (original) case.
+      
+      
       setIdempotencyKey(newIdempotencyKey());
       navigate(`/case/${res.data.case_id}`);
     } catch (err) {
@@ -313,11 +313,11 @@ export default function Scanner() {
       const status = err.response?.status;
       const rawDetail = err.response?.data?.detail;
       const detail = typeof rawDetail === 'string' ? rawDetail : rawDetail ? JSON.stringify(rawDetail, null, 2) : (typeof err.response?.data === 'string' ? err.response.data : null);
-      // Special handling for document_quality_failed
+      
       const isDocQuality = rawDetail && typeof rawDetail === 'object' && rawDetail.error === 'document_quality_failed';
       if (status === 409) {
-        // Duplicate in flight — the original request is still processing.
-        // Keep the SAME key so a manual retry joins the original, not a new case.
+        
+        
         setError(
           detail
             ? `Duplicate suppressed (HTTP 409): ${detail}`
@@ -327,8 +327,8 @@ export default function Scanner() {
         return;
       }
       if (status === 422 && /idempo/i.test(String(detail || ''))) {
-        // Key/input drift (e.g. files changed mid-flight) — mint a fresh key
-        // and ask the officer to retry once.
+        
+        
         setIdempotencyKey(newIdempotencyKey());
         setError(
           detail

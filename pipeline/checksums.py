@@ -16,11 +16,11 @@ import re
 from typing import List, Optional
 
 
-# ---------------------------------------------------------------------------
-# Verhoeff algorithm tables (Aadhaar 12th-digit validation)
-# ---------------------------------------------------------------------------
 
-# Dihedral group D5 multiplication table
+
+
+
+
 _VERHOEFF_D = [
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
     [1, 2, 3, 4, 0, 6, 7, 8, 9, 5],
@@ -34,7 +34,7 @@ _VERHOEFF_D = [
     [9, 8, 7, 6, 5, 4, 3, 2, 1, 0],
 ]
 
-# Permutation table
+
 _VERHOEFF_P = [
     [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
     [1, 5, 7, 6, 2, 8, 3, 0, 9, 4],
@@ -46,7 +46,7 @@ _VERHOEFF_P = [
     [7, 0, 4, 6, 9, 1, 3, 2, 5, 8],
 ]
 
-# Inverse table
+
 _VERHOEFF_INV = [0, 4, 3, 2, 1, 5, 6, 7, 8, 9]
 
 
@@ -59,7 +59,7 @@ def validate_verhoeff(number: str) -> bool:
     Args:
         number: The Aadhaar number string (digits only, spaces/hyphens stripped).
     """
-    # Strip whitespace, hyphens, and spaces
+
     digits = re.sub(r"[\s\-]", "", number)
 
     if not digits.isdigit():
@@ -96,9 +96,9 @@ def compute_verhoeff_digit(number: str) -> int:
     return _VERHOEFF_INV[c]
 
 
-# ---------------------------------------------------------------------------
-# ICAO 9303 modulus-10 check digit (Passport MRZ)
-# ---------------------------------------------------------------------------
+
+
+
 
 _ICAO_WEIGHTS = (7, 3, 1)
 
@@ -111,7 +111,7 @@ def _icao_char_value(c: str) -> int:
         return 0
     if "A" <= c.upper() <= "Z":
         return ord(c.upper()) - ord("A") + 10
-    return 0  # unexpected char → treat as 0 (lenient ICAO behaviour)
+    return 0
 
 
 def icao_check_digit(block: str) -> int:
@@ -141,11 +141,11 @@ def validate_icao_9303(mrz_lines: list[str]) -> dict:
         result["status"] = "insufficient_mrz_lines"
         return result
 
-    # Ensure lines are padded to 44 chars (TD3)
+
     line1 = mrz_lines[0].ljust(44, "<")[:44]
     line2 = mrz_lines[1].ljust(44, "<")[:44]
 
-    # Document number: line2[0:9], check digit at line2[9]
+
     doc_num_block = line2[0:9]
     doc_num_check = line2[9]
     computed_doc = icao_check_digit(doc_num_block)
@@ -155,7 +155,7 @@ def validate_icao_9303(mrz_lines: list[str]) -> dict:
         "computed": computed_doc,
     }
 
-    # Date of birth: line2[13:19], check digit at line2[19]
+
     dob_block = line2[13:19]
     dob_check = line2[19]
     computed_dob = icao_check_digit(dob_block)
@@ -165,7 +165,7 @@ def validate_icao_9303(mrz_lines: list[str]) -> dict:
         "computed": computed_dob,
     }
 
-    # Date of expiry: line2[21:27], check digit at line2[27]
+
     exp_block = line2[21:27]
     exp_check = line2[27]
     computed_exp = icao_check_digit(exp_block)
@@ -175,7 +175,7 @@ def validate_icao_9303(mrz_lines: list[str]) -> dict:
         "computed": computed_exp,
     }
 
-    # Composite: line2[0:10] + line2[13:20] + line2[21:43], check digit at line2[43]
+
     composite_block = line2[0:10] + line2[13:20] + line2[21:43]
     composite_check = line2[43]
     computed_comp = icao_check_digit(composite_block)
@@ -188,9 +188,9 @@ def validate_icao_9303(mrz_lines: list[str]) -> dict:
     return result
 
 
-# ---------------------------------------------------------------------------
-# PAN format validator
-# ---------------------------------------------------------------------------
+
+
+
 
 _PAN_REGEX = re.compile(r"^[A-Z]{5}[0-9]{4}[A-Z]$")
 
@@ -208,9 +208,9 @@ def validate_pan_format(pan: str) -> bool:
     return bool(_PAN_REGEX.match(cleaned))
 
 
-# ---------------------------------------------------------------------------
-# Voter ID (EPIC) format validator
-# ---------------------------------------------------------------------------
+
+
+
 
 _EPIC_REGEX = re.compile(r"^[A-Z]{3}[0-9]{7}$")
 
@@ -228,9 +228,9 @@ def validate_epic_format(epic: str) -> bool:
     return bool(_EPIC_REGEX.match(cleaned))
 
 
-# ---------------------------------------------------------------------------
-# Unified dispatch helper
-# ---------------------------------------------------------------------------
+
+
+
 
 def validate_document_number(doc_type: str, doc_number: str) -> dict:
     """Validate a document number based on its type.
@@ -281,7 +281,7 @@ def validate_document_number(doc_type: str, doc_number: str) -> dict:
         return {
             "document_type": "passport",
             "document_number": num,
-            "valid": None,  # requires MRZ lines for full ICAO validation
+            "valid": None,
             "method": "icao_9303",
             "detail": "Use validate_icao_9303() with full MRZ lines for ICAO validation",
         }

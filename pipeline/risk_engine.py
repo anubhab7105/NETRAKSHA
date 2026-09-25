@@ -24,11 +24,11 @@ from typing import Any, List, Optional
 @dataclass
 class RiskAssessment:
     """The output of the risk engine."""
-    verdict: str              # "Green" | "Yellow" | "Red"
-    risk_score: float         # 0.0 (safe) to 1.0 (maximum risk)
+    verdict: str
+    risk_score: float
     recommendations: List[str]
-    flags: List[str]          # specific flags that triggered escalation
-    module_summary: dict      # per-module summary for audit
+    flags: List[str]
+    module_summary: dict
 
     def to_dict(self) -> dict:
         return {
@@ -87,9 +87,9 @@ def assess_risk(
     flags: List[str] = []
     recommendations: List[str] = []
     risk_components: List[float] = []
-    min_verdict = "Green"  # will be escalated by hard rules
+    min_verdict = "Green"
 
-    # --- Watchlist (highest priority) ---
+
     if watchlist_hit:
         flags.append("WATCHLIST_HIT")
         min_verdict = "Red"
@@ -99,7 +99,7 @@ def assess_risk(
             "Recommend immediate escalation to supervisor for review."
         )
 
-    # --- Demographic Parity ---
+
     if demographic_result is not None:
         overall_match = demographic_result.get("overall_match", True)
         critical = demographic_result.get("critical_mismatches", [])
@@ -124,12 +124,12 @@ def assess_risk(
         else:
             risk_components.append(0.0)
     else:
-        # No demographic data available
+
         risk_components.append(0.3)
 
-    # --- Registry trust (controlled enrollment) ---
-    # A demographic MATCH against an untrusted registry row must not read as
-    # Green: the row itself may be the forgery. Floor at Yellow.
+
+
+
     if registry_trust is not None and demographic_result is not None:
         level = registry_trust.get("level", "")
         reasons = ";".join(registry_trust.get("reasons", []) or [])
@@ -150,11 +150,11 @@ def assess_risk(
                 "(see reconciliation report)."
             )
 
-    # --- Registry face pairs (complete three-way comparison) ---
-    # Evidence-backed registry mismatches force Red: a substituted document
-    # photo can match the live impostor yet disagree with the official
-    # record — that is exactly the forgery the third comparison exists to
-    # catch. Non-local evidence (simulated guesses) never triggers this.
+
+
+
+
+
     if isinstance(db_face_pairs, dict) and db_face_pairs.get("evidence") == "local":
         for key, flag, label in (
             ("doc_vs_db_match", "DOC_DB_FACE_MISMATCH", "document photo vs registry photo"),
@@ -169,17 +169,17 @@ def assess_risk(
                     f"or impersonation against the official registry record."
                 )
 
-    # --- Face Verification (InsightFace local + Gemini 3-way) ---
-    # Bias mitigation: low-confidence band around the threshold is routed to manual review
-    # to avoid unfair targeting of groups where the model is less certain.
-    FACE_LOW_CONF_BAND = (0.45, 0.65)  # around MATCH_THRESHOLD 0.55
+
+
+
+    FACE_LOW_CONF_BAND = (0.45, 0.65)
     is_low_confidence = False
     if face_similarity is not None and FACE_LOW_CONF_BAND[0] <= face_similarity <= FACE_LOW_CONF_BAND[1]:
         is_low_confidence = True
         flags.append(f"FACE_LOW_CONFIDENCE:{face_similarity:.3f}")
-        # Low confidence always requires manual review, even if match==True
+
         min_verdict = _escalate(min_verdict, "Yellow")
-        risk_components.append(0.55)  # moderate risk for uncertainty
+        risk_components.append(0.55)
         recommendations.append(
             f"Face similarity {face_similarity:.3f} is near the decision threshold (0.55) — low confidence. "
             "Manual officer review required to avoid bias. Environmental factors (lighting, camera quality) "
@@ -201,11 +201,11 @@ def assess_risk(
             "Possible impersonation or photo substitution."
         )
     elif face_similarity is not None and not is_low_confidence:
-        # Score inversely: high similarity = low risk (only when not low-confidence)
+
         face_risk = max(0.0, 1.0 - face_similarity)
         risk_components.append(face_risk)
 
-    # Gemini 3-way face match (supplementary)
+
     if gemini_face_match is not None:
         live_vs_doc = gemini_face_match.get("live_vs_doc_match")
         if live_vs_doc is False:
@@ -213,7 +213,7 @@ def assess_risk(
             min_verdict = _escalate(min_verdict, "Red")
             risk_components.append(0.85)
 
-    # Gemini photo tamper
+
     if gemini_photo_tamper is True:
         flags.append("GEMINI_PHOTO_TAMPER_ANOMALY")
         min_verdict = _escalate(min_verdict, "Yellow")
@@ -222,7 +222,7 @@ def assess_risk(
             "AI detected possible photo tampering/splicing on the document."
         )
 
-    # --- Tamper Detection ---
+
     if tamper_status == "inconclusive":
         flags.append("TAMPER_INCONCLUSIVE")
         min_verdict = _escalate(min_verdict, "Yellow")
@@ -246,7 +246,7 @@ def assess_risk(
                 f"MODERATE: Tamper score {tamper_score:.2f} warrants manual document inspection."
             )
 
-    # --- Physical Forgery Detection (layout/font/photo/print-scan/QR) ---
+
     if physical_status == "inconclusive":
         flags.append("PHYSICAL_FORGERY_INCONCLUSIVE")
         min_verdict = _escalate(min_verdict, "Yellow")
@@ -270,7 +270,7 @@ def assess_risk(
                 f"MODERATE: Physical-forgery score {physical_score:.2f} warrants manual document inspection."
             )
 
-    # --- Deepfake Detection ---
+
     if deepfake_status == "inconclusive":
         flags.append("DEEPFAKE_INCONCLUSIVE")
         min_verdict = _escalate(min_verdict, "Yellow")
@@ -285,7 +285,7 @@ def assess_risk(
                 "Verify with additional biometric challenge."
             )
 
-    # --- Liveness Detection ---
+
     if liveness_status == "inconclusive":
         flags.append("LIVENESS_INCONCLUSIVE")
         min_verdict = _escalate(min_verdict, "Yellow")
@@ -302,13 +302,13 @@ def assess_risk(
             "Require in-person blink verification."
         )
     elif liveness_score is not None:
-        # Low liveness = higher risk
-        live_risk = max(0.0, 1.0 - liveness_score)
-        risk_components.append(live_risk * 0.5)  # weight liveness lower than face/tamper
 
-    # --- Iris Verification ---
-    # Iris is an additional biometric signal; poor quality → Yellow, mismatch → Red
-    # (explicit iris_* params, **kwargs already captured)
+        live_risk = max(0.0, 1.0 - liveness_score)
+        risk_components.append(live_risk * 0.5)
+
+
+
+
     if iris_quality is not None and not iris_quality.get("usable", True):
         flags.append("IRIS_QUALITY_POOR")
         min_verdict = _escalate(min_verdict, "Yellow")
@@ -325,18 +325,18 @@ def assess_risk(
         risk_components.append(0.7)
         recommendations.append("Iris liveness failed — possible contact lens or replay.")
     elif iris_match is True:
-        risk_components.append(0.0)  # strong positive signal
+        risk_components.append(0.0)
 
-    # --- Composite Risk Score ---
+
     if risk_components:
         risk_score = sum(risk_components) / len(risk_components)
     else:
-        risk_score = 0.5  # no data at all → uncertain
+        risk_score = 0.5
 
     risk_score = max(0.0, min(1.0, risk_score))
 
-    # --- Final Verdict ---
-    # Score-based verdict (can only escalate above the hard-flag minimum)
+
+
     if risk_score >= 0.65:
         score_verdict = "Red"
     elif risk_score >= 0.35:
@@ -346,13 +346,13 @@ def assess_risk(
 
     verdict = _escalate(min_verdict, score_verdict)
 
-    # Add default recommendation for green
+
     if verdict == "Green" and not recommendations:
         recommendations.append(
             "All checks passed. Low risk. Recommend clearance pending officer confirmation."
         )
 
-    # Build module summary for audit
+
     module_summary = {
         "demographic": {
             "overall_match": demographic_result.get("overall_match") if demographic_result else None,
@@ -392,9 +392,9 @@ def assess_risk(
     )
 
 
-# ---------------------------------------------------------------------------
-# Verdict escalation helper
-# ---------------------------------------------------------------------------
+
+
+
 
 _VERDICT_LEVELS = {"Green": 0, "Yellow": 1, "Red": 2}
 _LEVEL_TO_VERDICT = {0: "Green", 1: "Yellow", 2: "Red"}

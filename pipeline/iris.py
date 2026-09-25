@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Dict, Any, Optional
 import numpy as np
 
-# Re-export provider for convenience
+
 from backend.biometric.iris.provider import get_provider, RGBProvider, NIRProvider
 
 def run_iris_enrollment(eye_image, eye: str = "left", provider: str = "rgb") -> Dict[str, Any]:
