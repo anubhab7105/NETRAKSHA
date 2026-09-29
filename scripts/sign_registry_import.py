@@ -1,31 +1,3 @@
-"""Sign a master-registry authority import batch (HMAC-SHA256).
-
-The issuing authority (or the operator acting for it) builds the exact JSON
-body that will be POSTed to /api/citizens/import, signs the raw bytes with
-REGISTRY_IMPORT_SECRET, and sends the hex digest as the X-Import-Signature
-header. The server recomputes the HMAC over the received bytes — so sign the
-exact bytes you send (no pretty-print drift: use the canonical output file).
-
-Usage:
-    python scripts/sign_registry_import.py batch.json [--secret ENV_OR_VALUE]
-
-    # batch.json shape:
-    # {"batch_ref": "UIDAI-2026-09-001",
-    #  "records": [{"document_type": "aadhaar", "document_number": "...",
-    #               "full_name": "...", ...}]}
-
-    # 1) canonicalize + sign (writes batch.canonical.json + prints header):
-    python scripts/sign_registry_import.py batch.json
-
-    # 2) send (PowerShell):
-    # $sig = python scripts/sign_registry_import.py batch.canonical.json --quiet
-    # Invoke-RestMethod -Uri "$API/api/citizens/import" -Method Post `
-    #   -Headers @{Authorization="Bearer $TOKEN"; "X-Import-Signature"=$sig} `
-    #   -ContentType "application/json" -InFile batch.canonical.json
-
-The secret is read from --secret, else the REGISTRY_IMPORT_SECRET env var,
-else the root .env file. It is never printed except as the HMAC digest.
-"""
 
 from __future__ import annotations
 

@@ -1,26 +1,3 @@
-"""Module 2 — Tamper detection.
-
-Approach (Techspec.md §3): BOTH, not either/or.
-  * Error Level Analysis (ELA): re-save the image as JPEG at a known quality and
-    measure the absolute recompression residual. Genuinely re-encoded regions
-    show different error levels than the surrounding image.
-  * Exact-duplicate copy-move detection: hash textured blocks and pair byte-
-    identical blocks displaced by a large two-dimensional offset — a signature
-    of copied/pasted regions (classic copy-move forgery). Genuine horizontal
-    text and decorative-band repeats are discounted so only true 2-D pastes
-    score.
-
-Output contract:
-  * raw_output['tamper_score']       : 0-1 combined score (higher = more tamper)
-  * raw_output['ela_bright_ratio']   : fraction of pixels with high ELA residual
-  * raw_output['copy_move_region_count'] : number of strong 2-D copy-move
-                                           offset clusters
-  * evidence_uri                     : path to the real ELA heatmap overlay image,
-                                       rendered and saved so the Case Result UI
-                                       (Appflow.md §3.4) can display it directly.
-
-Never raises: any failure degrades to status="inconclusive", score=None.
-"""
 
 from __future__ import annotations
 
@@ -43,7 +20,6 @@ MODULE_NAME = "tamper"
 
 
 def _ela_residual(rgb_uint8: np.ndarray, quality: int = 90) -> np.ndarray:
-    """Recompress an RGB image as JPEG and return the absolute diff (0-255)."""
     from PIL import Image
     from PIL import ImageFilter
     import io
@@ -69,7 +45,6 @@ def _ela_metrics(residual: np.ndarray, threshold: float = 8.0) -> dict:
 
 
 def _render_ela_overlay(rgb_uint8: np.ndarray, residual: np.ndarray, out_path) -> str:
-    """Render a heatmap overlay of the ELA residual onto the document image."""
     import cv2
 
     h, w = rgb_uint8.shape[:2]
@@ -104,22 +79,6 @@ def _copy_move_detect(
     min_dist: float = 140.0,
     min_std: float = 10.0,
 ) -> dict:
-    """Detect copied-region forgeries by exact-duplicate block hashing.
-
-    A copy-move forgery pastes a region *exactly* somewhere else on the page,
-    so the pasted content and its source share byte-identical blocks. We hash
-    every textured block on a fine grid and pair up blocks sharing a hash, then
-    group pairs by their spatial offset.
-
-    A stamped page also contains genuine repeats (text rows and decorative
-    bands) — those repeat only *horizontally* (vertical offset ≈ 0), giving a
-    set of small lattice clusters. A real copy-move instead produces one strong
-    two-dimensional cluster (the actual paste displacement). We therefore only
-    count clusters with ``|dy| >= 2`` blocks as copy-move evidence, which cleanly
-    separates a pasted duplicate from a page's natural repeated structure.
-
-    Runs on the native-resolution gray image; sub-0.3s on the specimen pages.
-    """
     import hashlib
     from collections import defaultdict
 
@@ -171,14 +130,6 @@ def _copy_move_detect(
 
 
 def run_tamper(document_image, save_evidence: bool = True) -> ModuleResult:
-    """Run ELA + SHA1 exact-duplicate copy-move tamper detection on a single document image.
-
-    Signature for the FastAPI route owner:
-        run_tamper(document_image, save_evidence=True) -> ModuleResult
-
-    ``document_image`` is a path (str/Path), bytes buffer, PIL Image, or BGR
-    ndarray. Returns a result with status "ok" or "inconclusive". Never raises.
-    """
     try:
         img = load_image(document_image)
         if img.size == 0 or img is None:

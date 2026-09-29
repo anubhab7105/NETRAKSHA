@@ -1,35 +1,3 @@
-"""Module 2b — Physical forgery detection (beyond ELA / copy-move).
-
-ELA + copy-move catch digital pastes, but high-quality physical counterfeits
-(re-typeset data pages, swapped portraits, screen/print recaptures) sail
-through them. This module adds six independent, deterministic checks that run
-on the document still with only OpenCV/numpy/PIL (+ pyzbar when present):
-
-  1. ``layout``            — page aspect vs known travel-doc ratios, MRZ text-
-                             line structure, portrait-zone occupancy.
-  2. ``font_consistency``  — MRZ OCR-B monospace regularity (glyph-advance +
-                             stroke-width variation). Re-typeset characters in
-                             a proportional font break the monospace lattice.
-  3. ``photo_boundary``    — portrait-frame geometric integrity (Hough frame
-                             completeness, border-width uniformity, edge-step
-                             consistency). Swapped portraits break the frame.
-  4. ``print_scan``        — recapture tells: display/half-tone periodic FFT
-                             peaks (moire) + micro-text edge acutance loss.
-  5. ``qr_barcode``        — machine-readable zones *where available*: decode
-                             (OpenCV + pyzbar) and cross-check the payload
-                             against the MRZ/document number when supplied.
-  6. ``security_features`` — guilloche/laminate presence cues. Holograms and
-                             OVI genuinely need tilt-series captures, so those
-                             are reported as not-verifiable (physical referral)
-                             and never scored — no fabricated verdicts.
-
-Each sub-check returns ``(score 0..1, status, details)``; the module score is
-the weight-renormalised mean over AVAILABLE sub-checks. Unavailable checks
-(no QR printed, no MRZ on this doc type, …) contribute nothing and are
-reported as such. Fewer than 2 available sub-checks → inconclusive.
-
-Never raises: any failure degrades to status="inconclusive", score=None.
-"""
 
 from __future__ import annotations
 
@@ -106,13 +74,11 @@ def _gray(bgr: np.ndarray) -> np.ndarray:
 
 
 def _mrz_band(gray: np.ndarray, frac: float = 0.32) -> np.ndarray:
-    """Bottom band where MRZ rows live on TD3 pages."""
     h = gray.shape[0]
     return gray[int(h * (1.0 - frac)):, :]
 
 
 def _text_line_rows(band: np.ndarray) -> List[Tuple[int, int]]:
-    """Find text-line row spans in a band via smoothed projection profile."""
     import cv2
 
     h, w = band.shape
@@ -198,12 +164,6 @@ def _check_layout(bgr: np.ndarray, gray: np.ndarray, doc_type: str) -> Tuple[flo
 
 
 def _glyph_advance_regularity(line_img: np.ndarray) -> Tuple[float, int, float]:
-    """Monospace regularity of one text line.
-
-    Returns (inlier_frac, glyph_count, mode_advance): the fraction of
-    glyph advances within ±15% of the dominant (modal) advance. OCR-B
-    monospace → ≈1.0; re-typeset proportional characters scatter it.
-    """
     import cv2
 
     _, bw = cv2.threshold(line_img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
@@ -237,11 +197,6 @@ def _glyph_advance_regularity(line_img: np.ndarray) -> Tuple[float, int, float]:
 
 
 def _stroke_cv(line_img: np.ndarray) -> float:
-    """Variation of per-glyph stroke widths across one text line.
-
-    Median distance-transform value inside each glyph cell ≈ half stroke
-    width; uniform type → near-zero CV, mixed fonts → high CV.
-    """
     import cv2
 
     _, bw = cv2.threshold(line_img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
@@ -315,7 +270,6 @@ def _check_font(gray: np.ndarray, doc_type: str) -> Tuple[float, str, dict]:
 
 
 def _quad_in_roi(roi: np.ndarray, x_off: int, page_area: float):
-    """Best near-rectangular contour inside one portrait ROI (or (None, 0))."""
     import cv2
 
     edges = cv2.Canny(roi, 50, 150)
@@ -351,13 +305,6 @@ def _quad_in_roi(roi: np.ndarray, x_off: int, page_area: float):
 
 
 def _portrait_quad(gray: np.ndarray):
-    """Largest near-rectangular contour in the portrait zones (or None).
-
-    Searches the top-right ROI (passport-style) AND the top-left ROI
-    (Aadhaar-style) and keeps the better quad. Returns (quad_4x2,
-    rectangularity 0..1). A pasted substitute leaves either no closed
-    quad or a deformed one.
-    """
     h, w = gray.shape
     ph, pw = int(h * 0.52), int(w * 0.44)
     page_area = float(h * w)
@@ -369,13 +316,6 @@ def _portrait_quad(gray: np.ndarray):
 
 
 def _frame_remnant_length(gray: np.ndarray) -> float:
-    """Total length of long axis-aligned edge segments in portrait zones.
-
-    A pasted-over photo destroys the closed frame quad but leaves its
-    interrupted straight border lines (plus the paste's own straight
-    edges). A genuinely frameless design has almost none. Used only
-    when no closed quad was found.
-    """
     import cv2
 
     h, w = gray.shape
@@ -394,14 +334,6 @@ def _frame_remnant_length(gray: np.ndarray) -> float:
 
 
 def _portrait_face_present(bgr: np.ndarray) -> bool:
-    """Face-presence fallback: is there any face in either portrait half?
-
-    Used only when no closed frame quad is found, to distinguish a
-    frameless design / tilted capture (face present, low suspicion) from
-    a missing/destroyed photo (no face either, genuinely alarming).
-    Uses the MediaPipe FaceLandmarker (same model as liveness) — Haar
-    cascades are absent from headless OpenCV builds.
-    """
     try:
         import mediapipe as mp
 
@@ -509,12 +441,6 @@ def _check_photo_boundary(bgr: np.ndarray, gray: np.ndarray) -> Tuple[float, str
 
 
 def _moire_metrics(gray: np.ndarray) -> dict:
-    """Periodic screen/half-tone energy + micro-text acutance.
-
-    The FFT runs on a NATIVE-resolution centre crop (never a resampled
-    thumbnail — resampling destroys the few-px periods screen moire lives
-    at). A Hanning window suppresses edge leakage.
-    """
     import cv2
 
     h, w = gray.shape
@@ -721,14 +647,6 @@ def run_physical_forgery(
     doc_number_hint: Optional[str] = None,
     save_evidence: bool = True,
 ) -> ModuleResult:
-    """Run physical-forgery checks on a document still. Never raises.
-
-    Args:
-        document_image: path / bytes / PIL / BGR ndarray of the document.
-        document_type_hint: aadhaar | pan | voter_id | passport | unknown.
-        doc_number_hint: MRZ/document number for QR cross-checks (optional).
-        save_evidence: render the zone-overlay evidence image.
-    """
     try:
         img = load_image(document_image)
         if img is None or img.size == 0:

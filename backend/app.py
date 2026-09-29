@@ -1,16 +1,3 @@
-"""FastAPI REST Application — AI Document Screening System.
-
-Endpoints:
-  POST /api/auth/login      — Authenticate officer, generate JWT session
-  POST /api/auth/logout     — Terminate session
-  POST /api/screen          — High-speed screening (parallel local CV + Gemini AI)
-  GET  /api/cases           — Filterable dashboard case queue
-  GET  /api/cases/{id}      — Full case report
-  POST /api/cases/{id}/override — Record officer decision + audit log
-  GET  /api/audit           — Append-only audit trail viewer
-
-Mounts static directories for evidence heatmaps and photo crops.
-"""
 
 from __future__ import annotations
 
@@ -99,14 +86,6 @@ _MFA_TOKEN_MINUTES = int(os.environ.get("MFA_TOKEN_MINUTES", "5"))
 
 
 def _utcnow_naive() -> datetime:
-    """Naive UTC timestamp for DATABASE columns.
-
-    Postgres asyncpg rejects timezone-aware datetimes for TIMESTAMP WITHOUT
-    TIME ZONE (500s the request), while SQLite silently accepts them — so
-    only production explodes. All app-written DateTime columns must use this
-    (server_default columns are already naive). Never use
-    datetime.now(timezone.utc) for a model attribute.
-    """
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 try:
@@ -118,11 +97,6 @@ except ImportError:
 
 def _create_token(officer_id: int, username: str, role: str, unit: str = "BORDER_UNIT_1",
                   purpose: str = "session", expiry_minutes: Optional[int] = None) -> str:
-    """Create a JWT token for an authenticated officer.
-
-    purpose="session" (default, honoured by _auth) or "mfa" (short-lived
-    step-up token for the second factor — rejected by _auth everywhere).
-    """
     import uuid as _uuid
     jti = _uuid.uuid4().hex
     minutes = expiry_minutes if expiry_minutes is not None else _JWT_EXPIRY_HOURS * 60
@@ -153,7 +127,6 @@ def _create_token(officer_id: int, username: str, role: str, unit: str = "BORDER
 
 
 def _decode_token(token: str) -> dict:
-    """Decode and validate a JWT token."""
     if _HAS_PYJWT:
         try:
             return pyjwt.decode(token, _JWT_SECRET, algorithms=[_JWT_ALGORITHM])
@@ -171,12 +144,6 @@ def _decode_token(token: str) -> dict:
 
 
 def collect_provenance(file_hashes: Optional[dict] = None, extra: Optional[dict] = None) -> tuple[dict, str]:
-    """Collect immutable provenance for a screening decision and sign it.
-
-    Returns (provenance_dict, signature).
-    Provenance includes: code version, model versions/thresholds, dependency versions,
-    input checksums, and config. Signed with HMAC-SHA256 using JWT secret.
-    """
     import hashlib as _hashlib
     import hmac as _hmac
 
@@ -251,11 +218,6 @@ def collect_provenance(file_hashes: Optional[dict] = None, extra: Optional[dict]
 
 
 def _verify_password(plain: str, hashed: str) -> bool:
-    """Verify a password against its hash.
-
-    Requires passlib[bcrypt] — the SHA-256 fallback has been removed per
-    audit finding P3 §1 to prevent weak credential storage in demo builds.
-    """
     from passlib.context import CryptContext
     ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
     return ctx.verify(plain, hashed)
@@ -310,13 +272,6 @@ app.add_middleware(
 
 @app.exception_handler(HTTPException)
 async def _http_exception_handler(request: Request, exc: HTTPException):
-    """Ensure HTTPException (401, 403, 422, etc.) responses carry CORS headers.
-
-    FastAPI's default HTTPException handler runs BEFORE CORSMiddleware can
-    attach headers, so cross-origin browsers see a CORS error instead of the
-    real 401/403. This handler delegates to JSONResponse so the response flows
-    back through the middleware stack and gets the correct CORS headers.
-    """
     from fastapi.responses import JSONResponse
     return JSONResponse(
         status_code=exc.status_code,
@@ -327,13 +282,6 @@ async def _http_exception_handler(request: Request, exc: HTTPException):
 
 @app.exception_handler(Exception)
 async def _unhandled_exception_handler(request: Request, exc: Exception):
-    """Last-resort JSON 500 that still passes through CORSMiddleware.
-
-    Without this, an unhandled crash returns Starlette's bare 500 with NO
-    CORS headers, and cross-origin browsers misreport it as a CORS error —
-    hiding the real traceback from both the UI and the Render logs reader.
-    HTTPException subclasses keep their own status/detail (handled above us).
-    """
     from fastapi.responses import JSONResponse
 
     if isinstance(exc, HTTPException):
@@ -532,15 +480,6 @@ class OverrideRequest(BaseModel):
 
 async def _auth(request, allow_stale_password: bool = False,
                 allow_mfa_setup: bool = False) -> dict:
-    """Extract officer info from Authorization header and enrich with fresh DB state.
-
-    Enforcement (rotation + supervisor MFA) is ON by default: accounts flagged
-    must_change_password get 403 PASSWORD_CHANGE_REQUIRED, and supervisors who
-    have not enrolled TOTP get 403 MFA_SETUP_REQUIRED. Pass the allow_* flags
-    only for the endpoints that clear those states (change-password, MFA
-    setup/verify, logout). MFA step-up tokens (purpose="mfa") are rejected
-    everywhere — they are only valid at POST /api/auth/mfa/challenge.
-    """
     auth = request.headers.get("Authorization", "")
     if not auth.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing Bearer token")
@@ -582,13 +521,6 @@ async def _auth(request, allow_stale_password: bool = False,
 @app.post("/auth/login", response_model=LoginResponse, include_in_schema=False)
 @app.post("/api/auth/login", response_model=LoginResponse)
 async def login(req: LoginRequest, request: Request):
-    """Authenticate officer, generate JWT session.
-
-    Brute-force throttled per client IP and per username (429 when tripped).
-    Unknown usernames are dummy-verified so timing reveals nothing. Supervisors
-    with TOTP enrolled receive a short-lived mfa_token instead of a session
-    and must complete POST /api/auth/mfa/challenge.
-    """
     ip = client_ip(request)
     username = (req.username or "").strip()
     ok_ip, retry_ip = _LOGIN_LIMITER.check(f"ip:{ip}")
@@ -669,14 +601,6 @@ async def login(req: LoginRequest, request: Request):
 
 
 def _drift_hint(secret, code) -> str:
-    """Explain an MFA rejection without weakening it.
-
-    The accept/reject decision always stays at ±1 step; this only inspects a
-    wider window to tell a clock problem ("your code is ~N minutes off") from
-    a wrong-key problem ("doesn't match at all — re-scan"). Safe to expose:
-    the caller already passed password/session auth and attempts are
-    rate-limited, and knowing drift is useless without the secret itself.
-    """
     try:
         drift = match_window(secret, code) if secret else None
     except Exception:
@@ -691,7 +615,6 @@ def _drift_hint(secret, code) -> str:
 
 @app.post("/api/auth/mfa/challenge", response_model=LoginResponse)
 async def mfa_challenge(req: MfaChallengeRequest, request: Request):
-    """Complete supervisor MFA login with a TOTP code. Issues the session."""
     try:
         payload = _decode_token(req.mfa_token)
     except HTTPException:
@@ -733,7 +656,6 @@ async def mfa_challenge(req: MfaChallengeRequest, request: Request):
 
 @app.post("/api/auth/change-password")
 async def change_password(req: ChangePasswordRequest, request: Request):
-    """Rotate the caller's password (also clears the must-change flag)."""
     officer = await _auth(request, allow_stale_password=True, allow_mfa_setup=True)
     officer_id = int(officer["sub"])
     async with async_session() as session:
@@ -768,11 +690,6 @@ async def change_password(req: ChangePasswordRequest, request: Request):
 
 @app.post("/api/auth/mfa/setup")
 async def mfa_setup(request: Request):
-    """Begin supervisor TOTP enrollment.
-
-    Returns a scannable QR (preferred — no typing), plus the manual key +
-    otpauth URI fallback. Confirm with POST /api/auth/mfa/verify.
-    """
     officer = await _auth(request, allow_stale_password=True, allow_mfa_setup=True)
     _require_role(officer, "supervisor")
     officer_id = int(officer["sub"])
@@ -816,7 +733,6 @@ async def mfa_setup(request: Request):
 
 @app.post("/api/auth/mfa/verify")
 async def mfa_verify(req: MfaVerifyRequest, request: Request):
-    """Confirm TOTP enrollment with a code from the authenticator app."""
     officer = await _auth(request, allow_stale_password=True, allow_mfa_setup=True)
     _require_role(officer, "supervisor")
     officer_id = int(officer["sub"])
@@ -845,7 +761,6 @@ async def mfa_verify(req: MfaVerifyRequest, request: Request):
 
 @app.post("/api/auth/mfa/disable")
 async def mfa_disable(req: MfaDisableRequest, request: Request):
-    """Disable your own supervisor MFA (password + current code required)."""
     officer = await _auth(request, allow_stale_password=True, allow_mfa_setup=True)
     _require_role(officer, "supervisor")
     officer_id = int(officer["sub"])
@@ -878,7 +793,6 @@ async def mfa_disable(req: MfaDisableRequest, request: Request):
 @app.post("/auth/logout", include_in_schema=False)
 @app.post("/api/auth/logout")
 async def logout(request: Request):
-    """Terminate session (audit log only — JWT is stateless)."""
     try:
         officer = await _auth(request, allow_stale_password=True, allow_mfa_setup=True)
     except HTTPException:
@@ -911,12 +825,6 @@ _IDEMPOTENCY_HASH_WINDOW_MINUTES = 10
 
 
 def _extract_idempotency_key(request: Request, form_fallback: Optional[str] = None) -> str:
-    """Require a client-supplied idempotency key.
-
-    Accepts `Idempotency-Key` (standard) or `X-Idempotency-Key`, falling back
-    to the multipart `idempotency_key` form field for non-JS clients.
-    Raises 422 when missing or malformed.
-    """
     key = (
         request.headers.get("Idempotency-Key")
         or request.headers.get("X-Idempotency-Key")
@@ -940,7 +848,6 @@ def _extract_idempotency_key(request: Request, form_fallback: Optional[str] = No
 
 
 def _compute_input_hash(file_hashes: dict) -> str:
-    """Stable SHA-256 over the sorted per-file hashes (officer/session-independent)."""
     try:
         canonical = json.dumps(file_hashes or {}, sort_keys=True).encode()
     except Exception:
@@ -949,11 +856,6 @@ def _compute_input_hash(file_hashes: dict) -> str:
 
 
 async def _load_case_result_payload(case_id: int) -> Optional[dict]:
-    """Rebuild the screening response body for an already-completed case.
-
-    Used for idempotent replays when no snapshot was stored (e.g. legacy
-    rows). Returns None if the case no longer exists.
-    """
     async with async_session() as session:
         res = await session.execute(select(ScreeningCase).where(ScreeningCase.id == case_id))
         case = res.scalar_one_or_none()
@@ -994,18 +896,6 @@ async def screen_document(
     iris_eye: Optional[str] = Form(None),
     idempotency_key: Optional[str] = Form(None),
 ):
-    """Execute parallel local CV + Gemini AI screening pipeline.
-
-    Accepts multipart form data with document_image, an optional single
-    live_capture, and/or an optional live_frames burst (multiple frames) so the
-    liveness module receives enough frames for blink/EAR detection.
-    Returns the full screening result with risk verdict.
-
-    Idempotency (duplicate-retry guard): the caller MUST send an
-    `Idempotency-Key` header. Retries with the same key + same officer +
-    same session + same input bytes return the original case instead of
-    creating a duplicate.
-    """
     start_time = time.perf_counter()
 
 
@@ -1388,10 +1278,6 @@ async def screen_document(
 
 
 def _ocr_fields_to_demographics(ocr_raw):
-    """Map local OCR output (visible fields + machine-readable MRZ) into the
-    demographics dict used for the registry cross-check. Returns {} when
-    nothing readable was extracted. MRZ values are authoritative over fuzzy
-    printed-field OCR."""
     by_name = {}
     for f in (ocr_raw or {}).get("fields") or []:
         if f.get("readable") and f.get("value"):
@@ -1419,14 +1305,6 @@ def _ocr_fields_to_demographics(ocr_raw):
 
 
 def _needs_late_gemini_face(is_simulated, live_str, db_photo_path, face_match_data) -> bool:
-    """Whether a late 3-image Gemini call is warranted for the registry legs.
-
-    Narrow gate: real (non-simulated) cloud, a resolved registry photo, and
-    at least one registry leg still missing — i.e. the record arrived after
-    the parallel phase (late hit) or the local engine is down/missed a leg.
-    Simulated mode never re-calls: demo verdicts stay Yellow and no quota
-    burns. Pure function (unit-tested).
-    """
     if is_simulated or not db_photo_path:
         return False
     try:
@@ -1447,16 +1325,6 @@ async def _run_screening_pipeline(
     iris_eye: str = "left",
     iris_source: str = "none",
 ) -> dict:
-    """Execute the full screening pipeline with parallel local+cloud execution.
-
-    Pipeline order (audit fixes applied):
-      0. Document quality gate — fail fast on blurry/dark/low-res
-      1. Citizen DB lookup FIRST → retrieve photo_uri for 3-way face (P1 §4)
-      2. Parallel: tamper + deepfake(live) + liveness + Gemini(3 images) (P1 §3, P2 §1)
-      3. Post-process: checksums, demographics, watchlist
-      4. Risk engine (with liveness params)
-      5. Persist all module results with honest ok/inconclusive (P1 §5)
-    """
 
 
 
@@ -2632,7 +2500,6 @@ async def list_cases(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
-    """List screening cases with least-privilege scoping."""
     officer = await _auth(request)
 
     async with async_session() as session:
@@ -2677,7 +2544,6 @@ async def list_cases(
 @app.get("/cases/{case_id}", include_in_schema=False)
 @app.get("/api/cases/{case_id}")
 async def get_case(case_id: int, request: Request):
-    """Get full case report with least-privilege access control."""
     officer = await _auth(request)
 
     async with async_session() as session:
@@ -2775,7 +2641,6 @@ async def get_case(case_id: int, request: Request):
 @app.get("/api/cases/{case_id}/provenance", include_in_schema=False)
 @app.get("/api/cases/{case_id}/provenance/verify", include_in_schema=False)
 async def get_provenance(case_id: int, request: Request):
-    """Return the signed provenance for a case and verify its integrity."""
     officer = await _auth(request)
 
     async with async_session() as session:
@@ -2828,7 +2693,6 @@ async def get_provenance(case_id: int, request: Request):
 @app.post("/cases/{case_id}/override", include_in_schema=False)
 @app.post("/api/cases/{case_id}/override")
 async def override_case(case_id: int, req: OverrideRequest, request: Request):
-    """Record officer decision (clear/deny/escalate) with mandatory reason."""
     if req.action not in ("clear", "deny", "escalate"):
         raise HTTPException(
             status_code=400,
@@ -2945,7 +2809,6 @@ async def list_audit(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
-    """View the append-only audit trail — auditor role only (least-privilege)."""
     officer = await _auth(request)
     if officer.get("role") != "auditor":
         raise HTTPException(status_code=403, detail="Access denied: auditor role required to view audit logs")
@@ -2972,7 +2835,6 @@ async def list_audit(
 
 @app.get("/api/audit/verify", include_in_schema=False)
 async def verify_audit_chain(request: Request):
-    """Verify the tamper-evident hash chain for the audit log."""
     officer = await _auth(request)
     if officer.get("role") not in ("auditor", "supervisor"):
         raise HTTPException(status_code=403, detail="Access denied: auditor or supervisor required")
@@ -3010,7 +2872,6 @@ async def verify_audit_chain(request: Request):
 
 @app.get("/api/audit/access-review", include_in_schema=False)
 async def access_review(request: Request, days: int = Query(30, ge=1, le=365)):
-    """Periodic access review — aggregate registry and case access by officer (auditor only)."""
     officer = await _auth(request)
     if officer.get("role") != "auditor":
         raise HTTPException(status_code=403, detail="Access denied: auditor role required")
@@ -3051,11 +2912,6 @@ async def access_review(request: Request, days: int = Query(30, ge=1, le=365)):
 
 @app.get("/api/fairness/report", include_in_schema=False)
 async def get_fairness_report(request: Request, limit: int = Query(200, ge=1, le=1000)):
-    """Fairness & bias audit — aggregated face-matching metrics per demographic / env group.
-
-    Access: supervisor or auditor. Returns per-group mean similarity, low-confidence
-    rates, and balanceness of the enrollment data so systemic skew can be detected.
-    """
     officer = await _auth(request)
     if officer.get("role") not in ("supervisor", "auditor"):
         raise HTTPException(status_code=403, detail="Access denied: supervisor or auditor role required")
@@ -3117,7 +2973,6 @@ _ENROLL_SOURCE_LABELS = sorted(_ENROLL_SOURCES)
 
 
 def _require_role(officer: dict, role: str) -> None:
-    """Raise 403 unless the authenticated officer has the given role."""
     if officer.get("role") != role:
         raise HTTPException(
             status_code=403,
@@ -3131,20 +2986,10 @@ def _require_supervisor_or_reject(officer: dict) -> None:
 
 
 def _normalize_doc_number(number: str) -> str:
-    """Normalize a document number the same way screening lookups do."""
     return (number or "").strip().replace(" ", "").replace("-", "").upper()
 
 
 def _citizen_identity_clause(doc_type: str, norm_number: str):
-    """Case/format-insensitive (type + number) match for CitizenRegistry.
-
-    Legacy rows predate write-path normalization (`'Aadhaar'` vs `'aadhaar'`,
-    `'7848 4723 6650'` vs `'784847236650'`), and exact-match lookups miss
-    them — surfacing as a false "NO DOCUMENT FOUND IN THE DATABASE".
-    Comparing lower(type) and the space/hyphen-stripped, uppercased number
-    on BOTH sides keeps those rows matchable. Type scoping is preserved: a
-    PAN never matches an Aadhaar holding the same digits.
-    """
     from sqlalchemy import func
 
     norm_type = (doc_type or "").strip().lower()
@@ -3174,15 +3019,6 @@ _REGISTRY_PHOTO_IMAGE_EXTS = ("jpg", "jpeg", "png", "webp", "bmp")
 
 
 def _supabase_photo_config() -> dict:
-    """Lazy Supabase Storage config for registry photos (no secrets logged).
-
-    Env:
-      SUPABASE_URL — e.g. https://<ref>.supabase.co (required to enable)
-      SUPABASE_SERVICE_ROLE_KEY — server-only, private-bucket reads (preferred)
-      SUPABASE_ANON_KEY — fallback for public buckets
-      SUPABASE_PHOTOS_BUCKET — default bucket (default "img")
-      SUPABASE_PHOTO_SIGNED_TTL — signed-URL TTL seconds (default 60)
-    """
     base = (os.environ.get("SUPABASE_URL", "") or "").strip().rstrip("/")
     service = (os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "") or "").strip()
     anon = (os.environ.get("SUPABASE_ANON_KEY", "") or "").strip()
@@ -3204,17 +3040,6 @@ def _supabase_photo_config() -> dict:
 
 
 def _parse_storage_ref(photo_uri: str, default_bucket: str) -> Optional[tuple]:
-    """Parse a Supabase Storage object ref into (bucket, object_path).
-
-    Accepted prod forms (all stored WITHOUT host or token):
-      * "img/photo.jpg" / "img/folder/photo.png" (bucket/object)
-      * "img://photo.jpg" / "img://folder/photo.png"
-      * "supabase://img/photo.jpg" / "storage://img/photo.jpg"
-      * "photo.jpg" (bare image filename → default bucket; only when the
-        value is a single path component, so local paths like
-        "samples/faces/x.png" never match)
-    Returns None for http(s) URLs, local paths, and anything unsafe.
-    """
     if not isinstance(photo_uri, str):
         return None
     uri = photo_uri.strip()
@@ -3254,12 +3079,6 @@ def _parse_storage_ref(photo_uri: str, default_bucket: str) -> Optional[tuple]:
 
 
 def _registry_photo_cache_dir() -> Path:
-    """Disk cache for downloaded registry photos (keyed by URL hash).
-
-    Remote reference photos (e.g. Supabase Storage signed URLs) are fetched
-    once per URL and reused across screenings. Bounded: one stable filename
-    per (citizen, URL), rewritten atomically on change.
-    """
     import tempfile
 
     d = Path(tempfile.gettempdir()) / "netraksha_registry_photos"
@@ -3271,7 +3090,6 @@ def _registry_photo_cache_dir() -> Path:
 
 
 def _looks_like_image(data: bytes) -> bool:
-    """Magic-byte check for PNG / JPEG / BMP / WEBP (never trust extensions)."""
     if not data:
         return False
     if data.startswith(b"\x89PNG\r\n\x1a\n"):
@@ -3284,7 +3102,6 @@ def _looks_like_image(data: bytes) -> bool:
 
 
 def _supabase_auth_headers(cfg: dict) -> dict:
-    """Auth headers for Supabase Storage REST calls (never logged)."""
     key = cfg.get("service_key") or cfg.get("anon_key") or ""
     if not key:
         return {}
@@ -3292,11 +3109,6 @@ def _supabase_auth_headers(cfg: dict) -> dict:
 
 
 def _http_get_bytes(url: str, headers: Optional[dict] = None) -> tuple:
-    """GET a URL with size + Content-Type + magic-byte validation.
-
-    Returns (data, error_reason). Never raises. Shared by direct URL and
-    Supabase signed-URL downloads so both paths enforce the same guardrails.
-    """
     import urllib.request
 
     try:
@@ -3321,7 +3133,6 @@ def _http_get_bytes(url: str, headers: Optional[dict] = None) -> tuple:
 
 
 def _cache_photo_bytes(data: bytes, citizen_id, cache_key: str, ext: str):
-    """Atomically write validated image bytes to the disk cache."""
     ext = (ext or "").lower()[:5]
     if ext not in _REGISTRY_PHOTO_IMAGE_EXTS:
         ext = "jpg"
@@ -3343,14 +3154,6 @@ def _cache_photo_bytes(data: bytes, citizen_id, cache_key: str, ext: str):
 
 
 def _fetch_supabase_object(bucket: str, object_path: str, citizen_id=None):
-    """Download one private/public Storage object via the REST API.
-
-    Order: short-lived signed URL (works for private buckets with the
-    service_role key) → authenticated object GET (works for public buckets
-    and private buckets when RLS/service key allows). Returns
-    (local_path, None) or (None, "registry_photo_download_failed").
-    Never raises, never logs key material.
-    """
     import json as _json
     import urllib.parse as _parse
     import urllib.request as _request
@@ -3402,12 +3205,6 @@ def _fetch_supabase_object(bucket: str, object_path: str, citizen_id=None):
 
 
 def _upload_to_supabase_bucket(bucket: str, object_path: str, data: bytes, content_type: str) -> bool:
-    """Upload enrollment bytes to Supabase Storage (server-side, never raises).
-
-    Uses POST /storage/v1/object/{bucket}/{object} with x-upsert:true so
-    re-approvals overwrite deterministically. Requires SUPABASE_URL +
-    SERVICE_ROLE_KEY (private bucket writes). Returns True on 2xx.
-    """
     import urllib.request as _request
 
     try:
@@ -3436,7 +3233,6 @@ def _upload_to_supabase_bucket(bucket: str, object_path: str, data: bytes, conte
 
 
 def _storage_object_for_enrollment(doc_type: str, doc_number: str, photo_hash: str, suffix: str) -> str:
-    """Deterministic Storage object key for an approved enrollment."""
     try:
         safe_num = _normalize_doc_number(doc_number or "unknown") or "unknown"
     except Exception:
@@ -3450,25 +3246,6 @@ def _storage_object_for_enrollment(doc_type: str, doc_number: str, photo_hash: s
 
 
 def _resolve_db_photo(photo_uri, citizen_id=None):
-    """Resolve a citizen `photo_uri` to a local file path for face comparison.
-
-    Handles, in order:
-      1. `http(s)` URLs — direct/signed URLs (Supabase hosts get the
-         configured apikey attached when available). Downloaded once into
-         a disk cache and reused.
-      2. Supabase Storage refs — `img/<object>`, `img://<object>`, or a
-         bare image filename (resolved into SUPABASE_PHOTOS_BUCKET).
-         Requires SUPABASE_URL + key (see `_supabase_photo_config`).
-      3. Server-local paths (`samples/faces/x.png`, absolute paths).
-
-    Runs synchronously — callers must use `run_in_executor` so the event
-    loop never blocks. Returns `(path, reason)`; never raises:
-      * `no_registry_photo` — no URI enrolled on the citizen row
-      * `registry_photo_missing_on_server` — local path does not exist
-        (or storage ref supplied without Supabase configured)
-      * `registry_photo_download_failed` — fetch failed / non-image /
-        oversize (degrades to partial comparison, never halts)
-    """
     uri = photo_uri.strip() if isinstance(photo_uri, str) else ""
     if not uri:
         return None, "no_registry_photo"
@@ -3530,7 +3307,6 @@ def _resolve_db_photo(photo_uri, citizen_id=None):
 
 
 def _registry_photo_backend_status() -> dict:
-    """Non-secret photo-backend summary for /api/health and startup logs."""
     cfg = _supabase_photo_config()
     if cfg["configured"]:
         mode = "supabase_storage+http+local" if cfg["private_ok"] else "supabase_public+http+local"
@@ -3541,13 +3317,6 @@ def _registry_photo_backend_status() -> dict:
 
 
 async def _find_citizen_by_number(doc_type: str, doc_number: str):
-    """Registry lookup scoped to (type + number). Returns CitizenRegistry or None.
-
-    A PAN must never match an Aadhaar holding the same digits, so every
-    attempt is type-scoped. Matching is case/format-insensitive on both
-    sides (see `_citizen_identity_clause`) so legacy rows that predate
-    write-path normalization still match.
-    """
     if not doc_type or not doc_number:
         return None
     async with async_session() as session:
@@ -3570,13 +3339,6 @@ async def _find_citizen_by_number(doc_type: str, doc_number: str):
 
 
 def _validate_enrollment_doc_number(doc_type: str, doc_number: str) -> dict:
-    """Source-verification gate: reject document numbers that fail checksums.
-
-    Returns the checksum result dict. Raises 400 when the number is
-    affirmatively INVALID. `valid=None` (e.g. passport without MRZ lines —
-    cannot be algorithmically verified) is allowed but flagged so the
-    approver and reconciliation know a manual authority check is owed.
-    """
     try:
         from pipeline.checksums import validate_document_number as _validate
     except Exception:
@@ -3594,13 +3356,6 @@ def _validate_enrollment_doc_number(doc_type: str, doc_number: str) -> dict:
 
 
 def _verify_enrollment_photo(photo_bytes: bytes, filename: str = "") -> str:
-    """Verify an enrollment face photo is a real image. Returns its SHA-256.
-
-    Raises 400 for empty, oversized (>5MB), undecodable, or degenerately
-    small (<80px on either side) images. A face-presence probe via the local
-    InsightFace bundle is attempted when available but is advisory only —
-    the hard gate is genuine-image integrity, enforced with Pillow.
-    """
     if not photo_bytes:
         raise HTTPException(status_code=400, detail="Photo is required for verified enrollment (face reference).")
     if len(photo_bytes) > 5_000_000:
@@ -3626,17 +3381,6 @@ def _verify_enrollment_photo(photo_bytes: bytes, filename: str = "") -> str:
 
 
 def _registry_trust_for(citizen) -> dict:
-    """Classify how much screening may trust a registry row.
-
-    Levels:
-      * authority_verified — signed authority import (HMAC second factor).
-      * dual_approved     — requested by one supervisor, approved by another.
-      * legacy            — pre-fix row (NULL trust columns / legacy_seed):
-                            grandfathered for demo continuity, flagged for
-                            authority re-verification, Green still possible.
-      * unverified        — anything else (self-approved, missing source,
-                            single-writer). Screening floors these at Yellow.
-    """
     try:
         source = (getattr(citizen, "source", None) or "").strip()
         enrolled = (getattr(citizen, "enrolled_by", None) or "").strip()
@@ -3663,7 +3407,6 @@ def _registry_trust_for(citizen) -> dict:
 
 
 def _verify_import_signature(raw_body: bytes, signature: str) -> None:
-    """Verify HMAC-SHA256 of the raw import body. Raises 401 on failure."""
     import hmac as _hmac
     sig = (signature or "").strip().lower()
     if not sig:
@@ -3678,7 +3421,6 @@ def _verify_import_signature(raw_body: bytes, signature: str) -> None:
 
 
 def _secure_delete_file(path: Optional[Path]) -> bool:
-    """Overwrite-with-zeros + unlink. Returns True if the file is gone."""
     try:
         if path is None or not path.is_file():
             return True
@@ -3709,7 +3451,6 @@ async def list_citizens(
     offset: int = Query(0, ge=0),
     reason: Optional[str] = Query(None, description="Reason for search (required for sensitive/broad searches)"),
 ):
-    """List registered citizens with least-privilege scoping and misuse protection."""
     officer = await _auth(request)
 
     is_sensitive = False
@@ -3822,14 +3563,6 @@ async def create_citizen(
     request_reason: str = Form(...),
     photo: UploadFile = File(...),
 ):
-    """Request enrollment of a citizen record (supervisor only).
-
-    Controlled enrollment — this creates a PENDING request, NOT a live
-    registry row. A DIFFERENT supervisor must approve it
-    (POST /api/citizens/requests/{id}/approve) before the record becomes
-    authoritative for screening. Source verification (checksum + real-image
-    photo + provenance fields) runs here so bad data never enters the queue.
-    """
     officer = await _auth(request)
     _require_role(officer, "supervisor")
     username = officer.get("username", "unknown")
@@ -3974,7 +3707,6 @@ async def list_enrollment_requests(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
-    """List controlled-enrollment requests (supervisor + auditor)."""
     officer = await _auth(request)
     if officer.get("role") not in ("supervisor", "auditor"):
         raise HTTPException(status_code=403, detail="Access denied: supervisor or auditor role required")
@@ -3995,7 +3727,6 @@ async def list_enrollment_requests(
 
 
 def _require_different_supervisor(officer: dict, req: RegistryEnrollment) -> tuple[int, str]:
-    """Enforce four-eyes: approver must be a supervisor other than the requester."""
     _require_role(officer, "supervisor")
     officer_id = int(officer["sub"])
     username = officer.get("username", "unknown")
@@ -4011,7 +3742,6 @@ def _require_different_supervisor(officer: dict, req: RegistryEnrollment) -> tup
 
 @app.post("/api/citizens/requests/{enrollment_id}/approve")
 async def approve_enrollment(enrollment_id: int, request: Request):
-    """Approve a pending enrollment (second supervisor). Creates the live row."""
     officer = await _auth(request)
     async with async_session() as session:
         result = await session.execute(select(RegistryEnrollment).where(RegistryEnrollment.id == enrollment_id))
@@ -4145,7 +3875,6 @@ async def approve_enrollment(enrollment_id: int, request: Request):
 
 @app.post("/api/citizens/requests/{enrollment_id}/reject")
 async def reject_enrollment(enrollment_id: int, req_body: _ReviewNote, request: Request):
-    """Reject a pending enrollment (second supervisor). Staged photo is purged."""
     officer = await _auth(request)
     note = ((req_body.review_note if req_body else "") or "").strip()
     if len(note) < 3:
@@ -4191,14 +3920,6 @@ class _ImportBody(BaseModel):
 
 @app.post("/api/citizens/import")
 async def import_authority_citizens(request: Request):
-    """Bulk import from the issuing authority (supervisor + HMAC signature).
-
-    The request body must be signed: header `X-Import-Signature` =
-    hex(HMAC-SHA256(raw_body, REGISTRY_IMPORT_SECRET)). The authority
-    signature is the second factor, so validated records are enrolled
-    directly as `authority_import` (still checksum-verified + audited).
-    Sign bodies with scripts/sign_registry_import.py.
-    """
     officer = await _auth(request)
     _require_role(officer, "supervisor")
     username = officer.get("username", "unknown")
@@ -4298,7 +4019,6 @@ async def import_authority_citizens(request: Request):
 
 
 def _reconcile_citizen_row(citizen, authority_by_key: Optional[dict] = None) -> dict:
-    """Run all integrity checks for one registry row. Pure (no DB writes)."""
     issues: list[str] = []
     doc_type = (citizen.document_type or "").strip().lower()
     doc_number = (citizen.document_number or "").strip()
@@ -4352,7 +4072,6 @@ def _reconcile_citizen_row(citizen, authority_by_key: Optional[dict] = None) -> 
 
 
 def _parse_authority_snapshot(snapshot) -> Optional[dict]:
-    """Normalize an operator-supplied authority export to {(type, number): row}."""
     if not snapshot:
         return None
     if not isinstance(snapshot, list):
@@ -4372,7 +4091,6 @@ def _parse_authority_snapshot(snapshot) -> Optional[dict]:
 
 
 async def _build_reconciliation_report(authority_snapshot=None) -> dict:
-    """Scan the whole registry and grade every row. Read-only."""
     authority_by_key = _parse_authority_snapshot(authority_snapshot)
     async with async_session() as session:
         result = await session.execute(select(CitizenRegistry).order_by(CitizenRegistry.id.asc()))
@@ -4403,11 +4121,6 @@ async def reconciliation_report(
     limit: int = Query(200, ge=1, le=2000),
     offset: int = Query(0, ge=0),
 ):
-    """Integrity + authority-diff report for the master registry (read-only).
-
-    Supervisor/auditor. For a full authority diff, POST to
-    /api/citizens/reconciliation/run with an `authority_snapshot` export.
-    """
     officer = await _auth(request)
     if officer.get("role") not in ("supervisor", "auditor"):
         raise HTTPException(status_code=403, detail="Access denied: supervisor or auditor role required")
@@ -4420,13 +4133,6 @@ async def reconciliation_report(
 
 @app.post("/api/citizens/reconciliation/run")
 async def reconciliation_run(request: Request):
-    """Re-verify the registry and persist per-row status (supervisor).
-
-    Optional JSON body: {"authority_snapshot": [...]} — an export from the
-    issuing authority to diff against. Each run stamps `last_reconciled_at` /
-    `reconciliation_status` and writes an audit entry, giving the periodic
-    cadence (e.g. weekly) an auditable trail.
-    """
     officer = await _auth(request)
     _require_role(officer, "supervisor")
     username = officer.get("username", "unknown")
@@ -4470,14 +4176,6 @@ async def delete_citizen(
     request: Request,
     reason: Optional[str] = Query(None, description="Justification for removal (min 10 chars)"),
 ):
-    """Request removal of a citizen record (supervisor only).
-
-    Controlled removal — creates a PENDING delete request. A DIFFERENT
-    supervisor must approve it (POST /api/citizens/requests/{id}/approve)
-    before the row and its biometric file are destroyed. Pass
-    `?reason=...` (min 10 chars). Direct single-supervisor deletes are
-    closed: one malicious removal could blind screening to a real identity.
-    """
     officer = await _auth(request)
     _require_role(officer, "supervisor")
     username = officer.get("username", "unknown")
@@ -4544,7 +4242,6 @@ async def delete_citizen(
 
 
 def _find_orphan_biometric_files() -> list[str]:
-    """Scan uploads for files not referenced by any CitizenRegistry.photo_uri."""
     uploads_dir = (_PROJECT_ROOT / "samples" / "faces" / "uploads").resolve()
     if not uploads_dir.is_dir():
         return []
@@ -4554,7 +4251,6 @@ def _find_orphan_biometric_files() -> list[str]:
 
 
 async def _find_orphans_async() -> tuple[list[str], list[str]]:
-    """Async helper to find orphan files: returns (orphans, all_files)."""
     uploads_dir = (_PROJECT_ROOT / "samples" / "faces" / "uploads").resolve()
     if not uploads_dir.is_dir():
         return [], []
@@ -4590,7 +4286,6 @@ async def _find_orphans_async() -> tuple[list[str], list[str]]:
 @app.get("/api/citizens/orphans", include_in_schema=False)
 @app.get("/api/citizens/orphans/check", include_in_schema=False)
 async def check_orphan_files(request: Request):
-    """List orphan biometric files not linked to any citizen (supervisor/auditor only)."""
     officer = await _auth(request)
     if officer.get("role") not in ("supervisor", "auditor"):
         raise HTTPException(status_code=403, detail="Access denied: supervisor or auditor role required")
@@ -4605,7 +4300,6 @@ async def check_orphan_files(request: Request):
 
 @app.post("/api/citizens/orphans/cleanup", include_in_schema=False)
 async def cleanup_orphan_files(request: Request):
-    """Securely delete orphan biometric files (supervisor only) and log the action."""
     officer = await _auth(request)
     _require_role(officer, "supervisor")
     orphans, _ = await _find_orphans_async()
@@ -4655,7 +4349,6 @@ class WatchlistCreateRequest(BaseModel):
 
 @app.get("/api/watchlist")
 async def list_watchlist(request: Request):
-    """List all watchlist entries (any authenticated officer can view)."""
     await _auth(request)
     from pipeline.watchlist import get_watchlist_provider
     provider = get_watchlist_provider()
@@ -4676,7 +4369,6 @@ async def list_watchlist(request: Request):
 
 @app.post("/api/watchlist")
 async def create_watchlist_entry(req: WatchlistCreateRequest, request: Request):
-    """Create a watchlist entry — supervisor only. Hot-reloads provider."""
     officer = await _auth(request)
     _require_role(officer, "supervisor")
     name = (req.name or "").strip()
@@ -4708,7 +4400,6 @@ async def create_watchlist_entry(req: WatchlistCreateRequest, request: Request):
 
 @app.delete("/api/watchlist/{entry_id}")
 async def delete_watchlist_entry(entry_id: int, request: Request):
-    """Delete a watchlist entry — supervisor only."""
     officer = await _auth(request)
     _require_role(officer, "supervisor")
     async with async_session() as session:
@@ -4730,7 +4421,6 @@ async def delete_watchlist_entry(entry_id: int, request: Request):
 
 @app.post("/api/watchlist/reload")
 async def reload_watchlist(request: Request):
-    """Hot-reload watchlist provider from DB — supervisor only (use after bulk Supabase edits)."""
     officer = await _auth(request)
     _require_role(officer, "supervisor")
     from pipeline.watchlist import load_db_watchlist_provider, set_watchlist_provider
@@ -4745,7 +4435,6 @@ async def reload_watchlist(request: Request):
 
 
 def _encrypt_template(data: bytes) -> str:
-    """Encrypt template for at-rest storage (HMAC + base64, not just plaintext)."""
     import base64, hmac, hashlib
 
     try:
@@ -4757,7 +4446,6 @@ def _encrypt_template(data: bytes) -> str:
         return _b64.b64encode(data).decode()
 
 def _decrypt_template(enc: str) -> bytes:
-    """Decrypt template."""
     import base64
     try:
         if ":" in enc:
@@ -4776,7 +4464,6 @@ async def enroll_iris(
     provider: str = Form("rgb"),
     eye_image: UploadFile = File(...),
 ):
-    """Enroll an iris template for a citizen — supervisor only, eye image is deleted after."""
     officer = await _auth(request)
     _require_role(officer, "supervisor")
     if eye not in ("left", "right"):
@@ -4850,7 +4537,6 @@ async def verify_iris(
     eye_image: UploadFile = File(...),
     provider: str = Form("rgb"),
 ):
-    """Verify a probe eye image against a stored template."""
     officer = await _auth(request)
     if not citizen_id and not case_id:
         raise HTTPException(status_code=400, detail="Provide citizen_id or case_id")
@@ -4906,7 +4592,6 @@ async def verify_iris(
 
 @app.get("/api/biometric/iris/template/{citizen_id}", include_in_schema=False)
 async def get_iris_template_status(citizen_id: int, request: Request):
-    """Return only whether a template exists and its quality — never the raw template."""
     officer = await _auth(request)
     if officer.get("role") not in ("supervisor", "auditor"):
         raise HTTPException(status_code=403, detail="Supervisor or auditor required")
@@ -4925,7 +4610,6 @@ async def get_iris_template_status(citizen_id: int, request: Request):
 
 
 def _evidence_token_for(filename: str, officer_id: int, expires_in: int = 300) -> str:
-    """Create a short-lived signed token for an evidence file."""
     if _HAS_PYJWT:
         payload = {
             "sub": str(officer_id),
@@ -4945,7 +4629,6 @@ def _evidence_token_for(filename: str, officer_id: int, expires_in: int = 300) -
         return base64.b64encode(payload.encode()).decode()
 
 def _verify_evidence_token(token: str) -> dict:
-    """Verify an evidence token and return its payload."""
     if _HAS_PYJWT:
         try:
             payload = pyjwt.decode(token, _JWT_SECRET, algorithms=[_JWT_ALGORITHM])
@@ -4968,7 +4651,6 @@ def _verify_evidence_token(token: str) -> dict:
 
 
 async def _check_evidence_access(filename: str, officer: dict) -> None:
-    """Verify the officer has access to the case owning this evidence file."""
 
     safe_name = Path(filename).name
     if safe_name != filename or "/" in filename or "\\" in filename or ".." in filename:
@@ -5001,7 +4683,6 @@ async def _check_evidence_access(filename: str, officer: dict) -> None:
 
 @app.get("/api/evidence/view")
 async def view_evidence_by_token(token: str = Query(...)):
-    """Serve an evidence file via a short-lived signed token (no auth header needed)."""
     payload = _verify_evidence_token(token)
     filename = payload.get("filename")
     if not filename:
@@ -5022,7 +4703,6 @@ async def view_evidence_by_token(token: str = Query(...)):
 
 @app.get("/api/evidence/token/{filename}")
 async def get_evidence_token(filename: str, request: Request, expires_in: int = Query(300, ge=30, le=3600)):
-    """Generate a short-lived signed URL token for an evidence file."""
     officer = await _auth(request)
     await _check_evidence_access(filename, officer)
     token = _evidence_token_for(Path(filename).name, int(officer["sub"]), expires_in)
@@ -5036,7 +4716,6 @@ async def get_evidence_token(filename: str, request: Request, expires_in: int = 
 
 @app.get("/api/evidence/{filename}")
 async def get_evidence_file(filename: str, request: Request):
-    """Serve an evidence file — requires authentication and case ownership."""
     officer = await _auth(request)
     await _check_evidence_access(filename, officer)
     safe_name = Path(filename).name
@@ -5057,7 +4736,6 @@ async def get_evidence_file(filename: str, request: Request):
 @app.get("/health", include_in_schema=False)
 @app.get("/api/health")
 async def health():
-    """System health check."""
     from backend.database import get_engine_info
     try:
         from pipeline.face_match import local_engine_status
@@ -5087,7 +4765,6 @@ async def health():
 
 @app.get("/evidence/{path:path}")
 async def block_public_evidence(path: str):
-    """Block the old public /evidence URL — evidence is now via authenticated /api/evidence."""
     raise HTTPException(status_code=404, detail="Evidence files are now served via authenticated /api/evidence endpoints — please use the case report view")
 
 
@@ -5097,11 +4774,6 @@ async def block_public_evidence(path: str):
 
 @app.get("/{full_path:path}")
 async def serve_spa(full_path: str):
-    """Serve the built React SPA — real static files when present, otherwise index.html (SPA fallback).
-
-    IMPORTANT: this catch-all must stay registered AFTER the /api and /evidence
-    routes so those are matched first (a "/" StaticFiles mount would swallow them).
-    """
     from fastapi.responses import FileResponse
 
     if full_path.startswith("api/"):

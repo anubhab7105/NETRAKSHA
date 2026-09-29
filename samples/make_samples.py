@@ -1,19 +1,3 @@
-"""Generate specimen/sample test data for the ML/CV pipeline modules.
-
-East-member script — NOT part of the runtime pipeline.
-
-Produces, under ``samples/``:
-  * faces/                 : sample face photos (openly-licensed academic data)
-  * genuine_doc.png        : synthetic passport page w/ ICAO-valid MRZ + a face
-  * tampered_doc.png       : the same doc, with a copied region (duplicate) and
-                             re-encoded, to exercise ELA + ORB copy-move
-  * live_faces/            : frames used for face-match / liveness test assets
-
-Only sample/specimen data is used — never a real person's government ID.
-
-The face photos come from the Olivetti faces dataset (publicly-licensed
-academic sample photographs; fetched via scikit-learn and cached here).
-"""
 
 from __future__ import annotations
 
@@ -82,7 +66,6 @@ def _font(size):
 def _build_mrz(surname="SPECIMEN", given="JASMINE", doc_no="L898902C3",
                country="UTO", nationality="UTO", dob="691204", sex="F",
                expiry="280312", personal="Z3456789"):
-    """Construct two valid ICAO TD3 MRZ lines (44 chars each)."""
 
     line1 = "P<" + country + surname + "<<" + given + "<" * 3
     line1 = line1.ljust(44, "<")
@@ -112,13 +95,6 @@ def _build_mrz(surname="SPECIMEN", given="JASMINE", doc_no="L898902C3",
 
 
 def _paper_texture(size):
-    """Return a non-repeating, ORB-detectable paper texture (BGR array).
-
-    A random fine grain plus a soft diagonal gradient breaks up the otherwise
-    flat page so ORB copy-move has real keypoints and the background does NOT
-    self-similar-match (the failure mode of a flat, structurally-repeated
-    synthetic page). Deterministic given the same rng so specimens are stable.
-    """
     w, h = size
     rng = np.random.default_rng(20240901)
     grain = rng.integers(-22, 23, (h, w, 1), dtype=np.int16)
@@ -132,7 +108,6 @@ def _paper_texture(size):
 
 
 def _guilloche_band(size, y0, y1):
-    """Faint sine-wave detail band (mild periodic accent on the background)."""
     w, h = size
     img = np.zeros((h, w), dtype=np.float32)
     for i in range(y0, y1, 3):
@@ -142,10 +117,6 @@ def _guilloche_band(size, y0, y1):
 
 
 def render_genuine_doc(face_bgr, size=(1000, 700)) -> np.ndarray:
-    """Render a photo-realistic passport page on a textured (non-repeating)
-    paper background. Texture-rich background gives ORB copy-move a real
-    signal base and avoids the periodic-structure false positives seen on a
-    flat synthetic page."""
     w, h = size
     base = _paper_texture(size)
     img = Image.fromarray(cv2.cvtColor(base, cv2.COLOR_BGR2RGB))
@@ -204,13 +175,6 @@ def render_genuine_doc(face_bgr, size=(1000, 700)) -> np.ndarray:
 
 
 def render_tampered_doc(genuine: np.ndarray) -> np.ndarray:
-    """Create a tampered specimen with two hard-to-spoof signatures:
-      1) a copy-move: a distinctive textured region is duplicated exactly at a
-         second location (ORB copy-move gives a dominant large-offset cluster);
-      2) a locally spliced region stored at lower quality (localized ELA bump).
-    Both operate on the photo-realistic textured background so the signals are
-    clearly separable from the genuine specimen. Returns a BGR array.
-    """
     import io
     from PIL import Image
 
@@ -257,15 +221,6 @@ def _eye_boxes(landmarker, img, h, w):
 
 
 def make_liveness_bursts(frame_face_bgr) -> None:
-    """Write blink_burst (a real blink) and static_burst (no blink) to disk.
-
-    A blink is synthesised by painting the eye regions skin-coloured plus a
-    dark closed-lid line for a few consecutive frames. The landmarker must
-    still find the face AND read the eyes as closed, so the face is upscaled
-    to 1024px first (the raw synthetic faces have ~13px eyes where any paint
-    knocks mediapipe offline entirely). The closed-eye paint drops the EAR
-    comfortably below the adaptive closed threshold -> a validated blink.
-    """
     from mediapipe.tasks import python as mp_py
     from mediapipe.tasks.python import vision
 

@@ -1,16 +1,3 @@
-"""Database seeding — test accounts and citizen registry records.
-
-Seeds:
-  * Officer accounts (bcrypt-hashed passwords):
-    - officer1 / Officer@123     (role: officer)
-    - supervisor1 / Supervisor@123 (role: supervisor)
-    - auditor1 / Auditor@123     (role: auditor)
-
-  * CitizenRegistry reference profiles for Aadhaar, PAN, Voter ID, Passport
-  * WatchlistEntry mock records
-
-All seed data is idempotent — re-running does not create duplicates.
-"""
 
 from __future__ import annotations
 
@@ -33,11 +20,6 @@ from backend.models import (
 
 
 def _hash_password(plain: str) -> str:
-    """Hash a password using bcrypt via passlib.
-
-    The SHA-256 fallback has been removed per audit finding P3 §1.
-    passlib[bcrypt] is listed in requirements.txt and must be installed.
-    """
     from passlib.context import CryptContext
     ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
     return ctx.hash(plain)
@@ -153,7 +135,6 @@ WATCHLIST = [
 
 
 async def seed_all() -> dict:
-    """Run all seed operations. Returns a summary of what was seeded."""
     from backend.auth_security import app_env, is_production, validate_new_password
 
     await init_db()

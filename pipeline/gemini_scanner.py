@@ -1,29 +1,3 @@
-"""Gemini AI Multi-Task Scanner — single-call document analysis.
-
-Sends a single multi-image request to a configured Google Gemini model
-(see GEMINI_MODELS / GEMINI_MODEL, default cascade:
-  gemini-flash-lite-latest → gemini-3.5-flash → gemini-3-flash-preview)
-containing:
-  1. Uploaded Document Image
-  2. Live Webcam Capture Still
-  3. Database Reference Photo (optional)
-
-In a single ~1.4-second roundtrip, Gemini returns a structured JSON payload
-with document classification, OCR demographics, 3-way face verification,
-and photo tamper anomaly detection.
-
-Includes a **cascading multi-model fallback**: if the primary model fails
-(overloaded, unavailable, or misconfigured), the scanner automatically
-retries with the next model in the list before falling back to the
-**offline simulation engine** (marked `is_simulated: true`).
-
-Misconfiguration note: a non-Google key (valid Google keys start with
-`AIza`) or all models failing fails exactly like a network outage —
-`is_simulated=True` + `cloud_unavailable=True` — and the case is floored
-at Yellow. Check the `[gemini_scanner]` log line and `.env`
-(`GEMINI_API_KEY`, `GEMINI_MODELS=gemini-flash-lite-latest,gemini-3.5-flash`)
-first when the UI shows "CLOUD UNAVAILABLE — Local Checks Only".
-"""
 
 from __future__ import annotations
 
@@ -55,18 +29,10 @@ DEFAULT_GEMINI_MODEL = DEFAULT_GEMINI_MODELS[0]
 
 
 def _get_api_key() -> str:
-    """Read the API key lazily so `.env` changes apply without reimport."""
     return os.environ.get("GEMINI_API_KEY", "")
 
 
 def _get_models() -> list[str]:
-    """Return the ordered list of models to try, from most to least preferred.
-
-    Resolution order:
-      1. GEMINI_MODELS (comma-separated list, e.g. "gemini-flash-lite-latest,gemini-3.5-flash")
-      2. GEMINI_MODEL  (single model name — backwards compatibility)
-      3. DEFAULT_GEMINI_MODELS hardcoded cascade
-    """
     multi = os.environ.get("GEMINI_MODELS", "").strip()
     if multi:
         return [m.strip() for m in multi.split(",") if m.strip()]
@@ -83,10 +49,6 @@ def _get_models() -> list[str]:
 
 
 def _get_model() -> str:
-    """Legacy single-model getter — returns the first model in the cascade.
-
-    Kept for backwards compatibility; new call-sites should use _get_models().
-    """
     return _get_models()[0]
 
 
@@ -137,7 +99,6 @@ Rules:
 
 
 def _load_image_bytes(image_path: str | Path) -> Optional[bytes]:
-    """Load image bytes from a file path."""
     p = Path(image_path)
     if not p.exists():
         return None
@@ -145,7 +106,6 @@ def _load_image_bytes(image_path: str | Path) -> Optional[bytes]:
 
 
 def _get_mime_type(image_path: str | Path) -> str:
-    """Infer MIME type from file extension."""
     ext = Path(image_path).suffix.lower()
     return {
         ".png": "image/png",
@@ -164,14 +124,6 @@ _NO_LIVE_FACE_REASON = (
 
 
 def _normalize_no_live_face_match(result: dict, has_live: bool) -> dict:
-    """Make the advertised 3-way face-match block consistent with the input.
-
-    Without a live capture the live-vs-* comparisons are meaningless, yet the
-    model may still guess at them (e.g. a mismatch at 0% similarity). Reset
-    those fields to None with an explicit reason so no consumer — the response
-    OR the persisted module raw_output — can manufacture a face verdict.
-    Doc-vs-DB stays as reported when a DB reference photo was supplied.
-    """
     if has_live:
         return result
     fm = result.get("three_way_face_match") or {}
@@ -195,21 +147,6 @@ def scan_document(
     db_reference_path: Optional[str | Path] = None,
     timeout: float = 10.0,
 ) -> dict:
-    """Execute the single-call multi-task AI scan with cascading model fallback.
-
-    Iterates through the model list from GEMINI_MODELS (or GEMINI_MODEL for
-    backwards compatibility, or the built-in default cascade) and tries each
-    in order. The first model to succeed returns its result immediately.
-    Only when every model in the list has been exhausted does the system fall
-    back to the offline simulation engine.
-
-    Returns:
-        A dict matching the structured JSON schema above, plus metadata fields:
-          - `is_simulated`: bool — True if the fallback engine was used
-          - `latency_ms`: float — roundtrip time in milliseconds
-          - `model_used`: str — the model identifier or "offline_simulation"
-          - `models_attempted`: list[str] — models tried before success/failure
-    """
     start = time.perf_counter()
     has_live = bool(live_capture_path and _load_image_bytes(live_capture_path))
     api_key = _get_api_key()
@@ -320,14 +257,6 @@ def scan_document(
 
 
 def _generate_with_timeout(client, model: str, parts, timeout: float):
-    """Run the blocking Gemini call with a hard timeout.
-
-    The google-genai SDK call has no timeout parameter, so without this a
-    stalled network/model hangs screening forever (frontend 90s axios timeout
-    then reports "could not reach the backend"). Each model in the cascade
-    gets at most `timeout` seconds before we raise TimeoutError and try the
-    next model / offline simulation.
-    """
     import concurrent.futures
 
     try:
@@ -379,7 +308,6 @@ def _call_gemini(
     api_key: Optional[str] = None,
     model: Optional[str] = None,
 ) -> dict:
-    """Make a real Gemini API call with multi-image input."""
     from google import genai
     from google.genai import types
     from google.genai.errors import ClientError
@@ -499,11 +427,6 @@ def _simulate_scan(
     live_capture_path: str | Path,
     db_reference_path: Optional[str | Path],
 ) -> dict:
-    """Produce realistic simulated output for demo / offline execution.
-
-    Randomly selects a demo profile and generates face match results
-    with slight randomization for natural variance.
-    """
 
     profile_key = secrets.choice(list(_DEMO_PROFILES.keys()))
     profile = _DEMO_PROFILES[profile_key].copy()
@@ -546,10 +469,6 @@ def simulate_mismatch_scan(
     live_capture_path: str | Path,
     db_reference_path: Optional[str | Path] = None,
 ) -> dict:
-    """Simulate a FAILED scan for testing — face mismatch + anomalies.
-
-    Returns output with low similarity and detected anomalies.
-    """
     result = _simulate_scan(document_image_path, live_capture_path, db_reference_path)
 
     result["three_way_face_match"] = {

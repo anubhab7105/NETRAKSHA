@@ -1,18 +1,3 @@
-"""Async database engine configuration — Supabase PostgreSQL in production,
-local SQLite fallback for VS Code / dev runs.
-
-Production (``APP_ENV=production``) is still Supabase-PostgreSQL-only and
-fails fast without a usable ``DATABASE_URL``. In non-production, a missing
-or ``sqlite`` ``DATABASE_URL`` falls back to a local file
-(``LOCAL_DB_PATH`` or ``./local_dev.db``) so ``uvicorn`` works out of the
-box without Supabase credentials.
-
-URL forms accepted:
-  * ``postgresql+asyncpg://...`` (preferred, all envs)
-  * ``postgresql://...`` (auto-rewritten to the above)
-  * ``sqlite+aiosqlite:///...`` / ``sqlite:///...`` (dev only)
-  * empty (dev only → local file fallback)
-"""
 
 from __future__ import annotations
 
@@ -95,13 +80,11 @@ async_session = async_sessionmaker(
 
 
 async def get_session() -> AsyncSession:
-    """Dependency for FastAPI — yields an async session."""
     async with async_session() as session:
         yield session
 
 
 async def init_db() -> None:
-    """Create all tables. Called once at application startup."""
     from .models import Base
 
     async with engine.begin() as conn:
@@ -135,7 +118,6 @@ async def init_db() -> None:
 
 
 async def _sqlite_table_columns(conn, table_name: str) -> set:
-    """Return existing column names for a SQLite table via PRAGMA."""
     from sqlalchemy import text as _text
 
     try:
@@ -146,15 +128,6 @@ async def _sqlite_table_columns(conn, table_name: str) -> set:
 
 
 async def ensure_model_columns() -> dict:
-    """Add every ORM-mapped column missing from the live database.
-
-    Generic drift repair: compares each model's columns against the actual
-    table (information_schema on Postgres, PRAGMA on SQLite) and ALTERs in
-    whatever is absent — e.g. officers.unit on databases created before
-    unit scoping shipped.
-    Idempotent, race-safe (per-column try/except), runs on every startup.
-    Returns {"table": [added, ...]}.
-    """
     from .models import Base
 
     from sqlalchemy import text as _text
@@ -241,10 +214,6 @@ _REGISTRY_TRUST_COLUMNS: tuple[tuple[str, str], ...] = (
 
 
 async def ensure_registry_trust_columns() -> dict:
-    """Add missing controlled-enrollment columns to citizens_registry.
-
-    Safe to run on every startup (idempotent). Returns {"added": [...]}.
-    """
     from sqlalchemy import text as _text
 
     added: list[str] = []
@@ -280,7 +249,6 @@ _AUTH_COLUMNS: tuple[tuple[str, str], ...] = (
 
 
 async def ensure_auth_columns() -> dict:
-    """Add missing auth columns to officers. Idempotent; runs every startup."""
     from sqlalchemy import text as _text
 
     added: list[str] = []
@@ -320,15 +288,6 @@ async def ensure_auth_columns() -> dict:
 
 
 async def ensure_sequences() -> dict:
-    """Re-anchor SERIAL sequences past max(id) on every table.
-
-    Legacy databases (rows inserted with explicit IDs, restores, dashboard
-    edits) leave e.g. officers_id_seq behind max(officers.id), so the next
-    autoincrement INSERT dies with a duplicate-pkey IntegrityError and —
-    in production — crash-loops the backend at seed time. pg_get_serial_-
-    sequence() resolves the real sequence regardless of naming. Returns
-    {"table": next_id}. No-op on SQLite (native autoincrement).
-    """
     if IS_SQLITE:
         return {}
 
@@ -360,7 +319,6 @@ async def ensure_sequences() -> dict:
 
 
 def get_engine_info() -> dict:
-    """Return diagnostic info about the current database engine."""
     if IS_SQLITE:
         return {
             "url": DATABASE_URL,

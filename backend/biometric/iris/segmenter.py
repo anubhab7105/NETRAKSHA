@@ -1,4 +1,3 @@
-"""Iris/pupil segmentation — classical Hough circles (CPU, no training)."""
 
 from __future__ import annotations
 import cv2
@@ -6,7 +5,6 @@ import numpy as np
 from typing import Dict, Any
 
 def segment_iris(eye_bgr: np.ndarray) -> Dict[str, Any]:
-    """Segment iris and pupil via Hough circles on the eye crop."""
     try:
         gray = cv2.cvtColor(eye_bgr, cv2.COLOR_BGR2GRAY)
         gray = cv2.medianBlur(gray, 5)

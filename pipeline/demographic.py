@@ -1,15 +1,3 @@
-"""Demographic database reconciliation module.
-
-Compares AI-extracted demographics against official citizen registry records.
-Produces a structured comparison list with per-field match/mismatch status
-and an overall parity assessment.
-
-Key features:
-  * Name parity:  Token-sort fuzzy string distance (tolerance >= 0.85)
-  * DOB parity:   Strict date comparison (flags forged birthdates)
-  * Address parity: Locality, state, and PIN code checks
-  * Document ID parity: Exact match after normalization
-"""
 
 from __future__ import annotations
 
@@ -18,22 +6,12 @@ from typing import Optional
 
 
 def _normalize(value: Optional[str]) -> str:
-    """Normalize a string for comparison: lowercase, strip, collapse whitespace."""
     if value is None:
         return ""
     return re.sub(r"\s+", " ", str(value).strip().lower())
 
 
 def _normalize_date(date_str: Optional[str]) -> str:
-    """Normalize a date string to YYYY-MM-DD format for comparison.
-
-    Handles common Indian date formats:
-      - YYYY-MM-DD
-      - DD/MM/YYYY
-      - DD-MM-YYYY
-      - DD.MM.YYYY
-      - Compact YYMMDD (passport MRZ; ICAO century heuristic: 00-39 → 2000s)
-    """
     if not date_str:
         return ""
     s = str(date_str).strip()
@@ -59,7 +37,6 @@ def _normalize_date(date_str: Optional[str]) -> str:
 
 
 def _normalize_gender(value: Optional[str]) -> str:
-    """Canonicalize gender for comparison (M/F vs Male/Female variants)."""
     s = _normalize(value)
     if s in ("f", "female", "femelle"):
         return "f"
@@ -69,20 +46,12 @@ def _normalize_gender(value: Optional[str]) -> str:
 
 
 def _normalize_doc_number(number: Optional[str]) -> str:
-    """Normalize a document number: uppercase, strip spaces/hyphens."""
     if not number:
         return ""
     return re.sub(r"[\s\-]", "", str(number).strip().upper())
 
 
 def _token_sort_similarity(a: str, b: str) -> float:
-    """Compute a token-sort fuzzy similarity between two strings.
-
-    Uses a simplified Levenshtein-based approach:
-    1. Tokenize and sort both strings
-    2. Compute character-level similarity
-    Returns 0.0 to 1.0 (1.0 = exact match).
-    """
     if not a and not b:
         return 1.0
     if not a or not b:
@@ -102,7 +71,6 @@ def _token_sort_similarity(a: str, b: str) -> float:
 
 
 def _levenshtein(s1: str, s2: str) -> int:
-    """Compute Levenshtein edit distance between two strings."""
     if len(s1) < len(s2):
         return _levenshtein(s2, s1)
 
@@ -124,7 +92,6 @@ def _levenshtein(s1: str, s2: str) -> int:
 
 
 def _extract_pin_code(address: Optional[str]) -> Optional[str]:
-    """Extract a 6-digit Indian PIN code from an address string."""
     if not address:
         return None
     m = re.search(r"\b(\d{6})\b", address)
@@ -132,32 +99,6 @@ def _extract_pin_code(address: Optional[str]) -> Optional[str]:
 
 
 def reconcile_demographics(extracted: dict, db_record: dict) -> dict:
-    """Compare extracted demographics against a database record.
-
-    Args:
-        extracted: Dict with keys like full_name, date_of_birth,
-                   document_number, gender, address, father_or_spouse_name
-        db_record: Dict with the same keys from citizens_registry
-
-    Returns:
-        {
-            "comparisons": [
-                {
-                    "field": "Full Name",
-                    "extracted": "Rajesh Kumar",
-                    "database": "Rajesh Kumar",
-                    "status": "match",
-                    "confidence": 0.98
-                },
-                ...
-            ],
-            "overall_match": True/False,
-            "match_count": int,
-            "mismatch_count": int,
-            "unverified_count": int,
-            "mismatch_fields": ["Date of Birth"]  # list of mismatched field names
-        }
-    """
     comparisons = []
 
 

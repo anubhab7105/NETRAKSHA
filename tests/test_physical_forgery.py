@@ -1,12 +1,3 @@
-"""Tests for physical forgery detection (pipeline/physical_forgery.py).
-
-ELA + copy-move miss whole forgery classes (re-typeset MRZ, swapped
-portraits, screen recaptures, broken layouts). Each test forges the genuine
-specimen accordingly and asserts the RIGHT sub-check fires — while the
-genuine specimen stays clean with margin.
-
-Run:  python -m pytest tests/test_physical_forgery.py -v
-"""
 
 from __future__ import annotations
 

@@ -1,34 +1,3 @@
-"""Module 3 — Deepfake detection.
-
-OPEN ITEM (Tracker.md §0, "Needed by Day 4"): a pretrained open-source forgery
-classifier could not be integrated in the available time on a GPU-less box, so
-per Techspec.md §3 this module uses the explicitly-accepted FALLBACK: the
-FFT-based frequency-artifact heuristic. Tracker.md has been updated to record
-this decision (not left as "Open").
-
-Approach (FFT frequency-artifact heuristic):
-  Deep generative models (GANs / many deepfake pipelines) produce faces whose
-  upsampling leaves characteristic spectral fingerprints — anomalous high-
-  frequency energy, and periodic "checkerboard"/grid artefacts in the Fourier
-  magnitude spectrum. We:
-
-   * 2D FFT of the face (grey, windowed) -> radial power spectrum.
-   * Measure (a) high-frequency energy fraction vs. a clean-photo baseline,
-     (b) spectral "peakedness" at upsampling-period frequencies, and
-     (c) overall sharp / grid anomaly.
-   * Combine into deepfake_score in [0,1]; higher = more synthetic/forged.
-
-Directionality note: on a genuinely captured (camera) photo the spectrum is
-smooth and band-limited, scoring low; on a synthetically generated / heavily
-upsampled image the score rises. This is a heuristic, not a trained classifier,
-so raw metrics are included for explainability (Prd.md §3 "every verdict must
-show why").
-
-Input: a face image / frame (document photo and/or live capture). The doc does
-not pin which input; we run on whichever single face image is passed, and the
-caller may choose to run it on the document photo, the live capture, or both.
-```
-"""
 
 from __future__ import annotations
 
@@ -45,7 +14,6 @@ MODULE_NAME = "deepfake"
 
 
 def _radial_power_spectrum(magnitude: np.ndarray) -> np.ndarray:
-    """Average FFT magnitude by radial frequency (in cycles/image)."""
     h, w = magnitude.shape
     cy, cx = h // 2, w // 2
     yy, xx = np.mgrid[0:h, 0:w]
@@ -108,14 +76,6 @@ def _fft_metrics(face_bgr: np.ndarray) -> dict:
 
 
 def run_deepfake(face_image) -> ModuleResult:
-    """Run FFT frequency-artifact deepfake heuristic on a single face image.
-
-    Signature for the FastAPI route owner:
-        run_deepfake(face_image) -> ModuleResult
-
-    ``face_image`` is a path (str/Path), bytes buffer, PIL Image, or BGR ndarray
-    of a face crop or frame. Returns "ok" or "inconclusive". Never raises.
-    """
     try:
         img = load_image(face_image)
         if img is None or img.size == 0:

@@ -1,18 +1,4 @@
 #!/usr/bin/env python3
-"""Generate Netraksha brand assets for the web frontend.
-
-Outputs (written into frontend/public):
-  favicon.svg          - copy of the hand-authored SVG mark (kept in sync here)
-  favicon.ico          - 16/32/48 px legacy icon
-  favicon-32x32.png    - PNG fallback icon
-  apple-touch-icon.png - 180x180 iOS home-screen icon
-  og-image.png         - 1200x630 social share card (Open Graph / Twitter)
-
-Run from the frontend directory:
-    python scripts/generate-assets.py
-
-Requires only Pillow (already used by the screening pipeline).
-"""
 
 import math
 import os
@@ -44,8 +30,6 @@ FAVICON_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" rol
 
 
 def shield_geometry(size):
-    """Return (shield polygon bbox-relative points, check polyline) in a unit
-    box scaled to `size`. Points mirror the SVG paths above."""
     def px(x, y):
         return (x * size, y * size)
 
@@ -77,7 +61,6 @@ def shield_geometry(size):
 
 
 def vertical_gradient(size, top, bottom):
-    """Diagonal-ish gradient image of `size` (w, h) blending top->bottom."""
     w, h = size
     base = Image.new("RGB", (1, h))
     for y in range(h):
@@ -90,7 +73,6 @@ def vertical_gradient(size, top, bottom):
 
 
 def draw_mark(size, pad_ratio=0.0):
-    """Render the full app icon (tile + shield + check) at `size` px."""
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
 

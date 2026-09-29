@@ -1,4 +1,3 @@
-"""Gabor/Log-Gabor encoding to binary iris code."""
 
 from __future__ import annotations
 import cv2
@@ -6,7 +5,6 @@ import numpy as np
 from typing import Dict, Any
 
 def encode_iris(normalized: np.ndarray, mask=None) -> Dict[str, Any]:
-    """Gabor filter the normalized iris to a binary template + mask."""
     try:
 
         if normalized.ndim == 3:

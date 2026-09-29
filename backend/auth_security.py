@@ -1,16 +1,3 @@
-"""Authentication hardening primitives (no new dependencies).
-
-Covers the "Unsafe Password & Secret Configurations" finding:
-
-* environment-based secrets (APP_ENV / JWT / registry-import strength gates),
-* password policy + forced rotation,
-* supervisor MFA via TOTP (RFC 6238, stdlib-only — no provisioning QR
-  library needed; the manual key + otpauth:// URI are shown instead),
-* in-memory sliding-window login / MFA-code rate limiting (single-process;
-  see deployment notes for multi-worker setups).
-
-All helpers are pure and unit-tested in tests/test_auth_security.py.
-"""
 
 from __future__ import annotations
 
@@ -33,7 +20,6 @@ MIN_SECRET_CHARS = 32
 
 
 def app_env() -> str:
-    """Deployment environment: development | staging | production."""
     return os.environ.get("APP_ENV", os.environ.get("ENVIRONMENT", "development")).strip().lower()
 
 
@@ -42,13 +28,6 @@ def is_production() -> bool:
 
 
 def secret_error(secret: str, *, name: str = "JWT_SECRET") -> str | None:
-    """Return a human-readable problem with a secret, or None if acceptable.
-
-    Production requires an explicitly configured secret of at least
-    MIN_SECRET_CHARS characters that is not the shipped dev default.
-    Non-production only warns on the dev default (returned as a string so
-    callers can log it uniformly).
-    """
     secret = secret or ""
     if not secret or secret == DEV_JWT_DEFAULT:
         if is_production():
@@ -69,7 +48,6 @@ MIN_PASSWORD_CHARS = 10
 
 
 def validate_new_password(password: str) -> None:
-    """Enforce the officer password policy. Raises ValueError with the reason."""
     pw = password or ""
     if len(pw) < MIN_PASSWORD_CHARS:
         raise ValueError(f"Password must be at least {MIN_PASSWORD_CHARS} characters.")
@@ -102,12 +80,10 @@ DUMMY_HASH = "$2b$12$0cqFtMWkcZzA/0B/BAPssOaLTODk0OfimIdj/ergCYVzt4QuXCYwC"
 
 
 def generate_totp_secret() -> str:
-    """Random 160-bit base32 secret for authenticator enrollment."""
     return base64.b32encode(secrets.token_bytes(20)).decode()
 
 
 def otpauth_uri(secret: str, username: str, issuer: str = "Netraksha") -> str:
-    """otpauth:// URI the officer opens (or copy-pastes) in their app."""
     from urllib.parse import quote
 
     return (f"otpauth://totp/{quote(issuer)}:{quote(username)}"
@@ -123,29 +99,18 @@ def _hotp(secret: str, counter: int) -> str:
 
 
 def totp_at(secret: str, for_time: float | None = None, step: int = 30) -> str:
-    """Current TOTP code (for_time injectable for deterministic tests)."""
     counter = int((for_time if for_time is not None else time.time()) // step)
     return _hotp(secret, counter)
 
 
 def verify_totp(secret: str, code: str, *, window: int = 1,
                 for_time: float | None = None, step: int = 30) -> bool:
-    """Verify a 6-digit code, accepting ±window steps of clock drift."""
     return match_window(secret, code, max_window=window,
                         for_time=for_time, step=step) is not None
 
 
 def match_window(secret: str, code: str, *, max_window: int = 10,
                  for_time: float | None = None, step: int = 30) -> int | None:
-    """Find the clock-drift offset (in 30s steps) a code belongs to.
-
-    Returns the smallest-|delta| step offset whose code matches, or None if
-    the code matches nowhere in ±max_window. Positive = code is from the
-    future relative to us (phone ahead) or stale, negative = phone behind —
-    either way the absolute value measures clock disagreement. Used ONLY to
-    explain failures to the already-authenticated enrolling officer; the
-    accept/reject decision always uses verify_totp(window=1).
-    """
     digits = "".join(ch for ch in (code or "") if ch.isdigit())
     if len(digits) != 6:
         return None
@@ -165,7 +130,6 @@ def match_window(secret: str, code: str, *, max_window: int = 10,
 
 
 class RateLimiter:
-    """Allow at most max_attempts events per window_s seconds per key."""
 
     def __init__(self, max_attempts: int = 5, window_s: int = 300):
         self.max_attempts = max_attempts
@@ -182,7 +146,6 @@ class RateLimiter:
         return dq
 
     def check(self, key: str) -> tuple[bool, int]:
-        """Return (allowed, retry_after_seconds)."""
         now = time.time()
         with self._lock:
             dq = self._prune(key, now)
@@ -200,7 +163,6 @@ class RateLimiter:
             self._hits.pop(key, None)
 
     def reset(self) -> None:
-        """Test hook — clear all buckets."""
         with self._lock:
             self._hits.clear()
 
@@ -218,7 +180,6 @@ def rate_limit_from_env(prefix: str, default_max: int, default_window: int) -> R
 
 
 def client_ip(request) -> str:
-    """Best-effort client IP behind proxies (X-Forwarded-For aware)."""
     try:
         xff = (request.headers.get("X-Forwarded-For", "") or "").split(",")[0].strip()
         if xff:

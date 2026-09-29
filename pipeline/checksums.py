@@ -1,14 +1,3 @@
-"""Algorithmic checksum validators for Indian identity documents.
-
-Post-processes AI-extracted document numbers to catch OCR digit hallucinations
-on blurry cards. Each validator is pure-algorithmic (no ML) and deterministic.
-
-Supported documents:
-  * Aadhaar  — 12-digit Verhoeff checksum (last digit is check digit)
-  * Passport — ICAO 9303 modulus-10 weights (7, 3, 1) for MRZ fields
-  * PAN      — [A-Z]{5}[0-9]{4}[A-Z] regex syntax
-  * Voter ID — EPIC alphanumeric format [A-Z]{3}[0-9]{7}
-"""
 
 from __future__ import annotations
 
@@ -51,14 +40,6 @@ _VERHOEFF_INV = [0, 4, 3, 2, 1, 5, 6, 7, 8, 9]
 
 
 def validate_verhoeff(number: str) -> bool:
-    """Validate an Aadhaar number using the Verhoeff checksum algorithm.
-
-    The 12th digit of a valid Aadhaar number is the Verhoeff check digit.
-    Returns True if the number passes the checksum, False otherwise.
-
-    Args:
-        number: The Aadhaar number string (digits only, spaces/hyphens stripped).
-    """
 
     digits = re.sub(r"[\s\-]", "", number)
 
@@ -76,14 +57,6 @@ def validate_verhoeff(number: str) -> bool:
 
 
 def compute_verhoeff_digit(number: str) -> int:
-    """Compute the Verhoeff check digit for the first 11 digits of an Aadhaar.
-
-    Args:
-        number: The first 11 digits of the Aadhaar number.
-
-    Returns:
-        The check digit (0-9).
-    """
     digits = re.sub(r"[\s\-]", "", number)
     if not digits.isdigit() or len(digits) != 11:
         raise ValueError(f"Expected 11 digits, got: {digits!r}")
@@ -104,7 +77,6 @@ _ICAO_WEIGHTS = (7, 3, 1)
 
 
 def _icao_char_value(c: str) -> int:
-    """Map a single MRZ character to its numeric value per ICAO 9303."""
     if c.isdigit():
         return int(c)
     if c == "<" or c == "/":
@@ -115,10 +87,6 @@ def _icao_char_value(c: str) -> int:
 
 
 def icao_check_digit(block: str) -> int:
-    """Compute the ICAO 9303 check digit for a string block.
-
-    Uses modulus-10 with weights (7, 3, 1) cycling.
-    """
     total = 0
     for i, ch in enumerate(block):
         total += _icao_char_value(ch) * _ICAO_WEIGHTS[i % 3]
@@ -126,15 +94,6 @@ def icao_check_digit(block: str) -> int:
 
 
 def validate_icao_9303(mrz_lines: list[str]) -> dict:
-    """Validate ICAO 9303 check digits across passport MRZ fields.
-
-    Expects a list of 2 MRZ lines (TD3 format, 44 chars each).
-    Returns a dict with validation results for each checkable field:
-      - document_number: {ok: bool, given: int, computed: int}
-      - date_of_birth:   {ok: bool, given: int, computed: int}
-      - date_of_expiry:  {ok: bool, given: int, computed: int}
-      - composite:       {ok: bool, given: int, computed: int}
-    """
     result = {}
 
     if not mrz_lines or len(mrz_lines) < 2:
@@ -196,14 +155,6 @@ _PAN_REGEX = re.compile(r"^[A-Z]{5}[0-9]{4}[A-Z]$")
 
 
 def validate_pan_format(pan: str) -> bool:
-    """Validate Indian PAN card format: [A-Z]{5}[0-9]{4}[A-Z].
-
-    Args:
-        pan: The PAN string (10 characters, uppercase).
-
-    Returns:
-        True if the format matches the PAN specification.
-    """
     cleaned = pan.strip().upper()
     return bool(_PAN_REGEX.match(cleaned))
 
@@ -216,14 +167,6 @@ _EPIC_REGEX = re.compile(r"^[A-Z]{3}[0-9]{7}$")
 
 
 def validate_epic_format(epic: str) -> bool:
-    """Validate Indian Voter ID EPIC format: [A-Z]{3}[0-9]{7}.
-
-    Args:
-        epic: The EPIC number (10 characters, uppercase letters + digits).
-
-    Returns:
-        True if the format matches the EPIC specification.
-    """
     cleaned = epic.strip().upper()
     return bool(_EPIC_REGEX.match(cleaned))
 
@@ -233,17 +176,6 @@ def validate_epic_format(epic: str) -> bool:
 
 
 def validate_document_number(doc_type: str, doc_number: str) -> dict:
-    """Validate a document number based on its type.
-
-    Returns:
-        {
-            "document_type": str,
-            "document_number": str,
-            "valid": bool,
-            "method": str,
-            "detail": str
-        }
-    """
     dt = (doc_type or "").lower().strip()
     num = (doc_number or "").strip()
 

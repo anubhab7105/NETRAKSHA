@@ -1,9 +1,3 @@
-"""Shared helpers for the ML/CV pipeline modules.
-
-Defines the single result contract every module returns, plus small
-utilities for reading images, saving evidence files, and resolving the
-vendored OCR runtime. Kept deliberately free of model/algorithm logic.
-"""
 
 from __future__ import annotations
 
@@ -94,7 +88,6 @@ def ensure_evidence_dir() -> pathlib.Path:
 
 
 def new_evidence_path(module: str, ext: str = "png") -> pathlib.Path:
-    """Return a fresh, unique evidence file path under the evidence dir."""
     ensure_evidence_dir()
     name = f"{module}_{uuid.uuid4().hex[:10]}.{ext.lstrip('.')}"
     return EVIDENCE_DIR / name
@@ -107,17 +100,6 @@ def new_evidence_path(module: str, ext: str = "png") -> pathlib.Path:
 
 @dataclass
 class ModuleResult:
-    """Contract returned by every pipeline module.
-
-    Mirrors the ``module_results`` table in Shema.md so a caller (FastAPI route)
-    can drop it straight into storage:
-
-        module_name : str   e.g. "ocr", "tamper", "deepfake", "face_match", "liveness"
-        score       : float|None 0-1, or None when inconclusive
-        status      : str   "ok" | "inconclusive"
-        raw_output  : dict  full per-module evidence for the UI panels
-        evidence_uri: str|None  path to an evidence image, or None
-    """
 
     module_name: str
     score: Optional[float]
@@ -157,7 +139,6 @@ def ok_result(
 
 
 def inconclusive_result(module_name: str, reason: str) -> ModuleResult:
-    """The mandated graceful-degradation branch — never raises."""
     return ModuleResult(
         module_name=module_name,
         score=None,
@@ -171,7 +152,6 @@ def inconclusive_result(module_name: str, reason: str) -> ModuleResult:
 
 
 def _summarise_reason(reason: Any) -> str:
-    """Short, generic reason string. Kept PII-free and truncated for logs."""
     if isinstance(reason, Exception):
         return f"{type(reason).__name__}: {str(reason)[:200]}"
     return str(reason)[:200]
@@ -184,7 +164,6 @@ def _rel_uri(path: Optional[str]) -> Optional[str]:
 
 
 def _json_safe(obj: Any) -> Any:
-    """Recursively convert numpy types / non-serialisable values for JSON."""
     if isinstance(obj, dict):
         return {str(k): _json_safe(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
@@ -203,7 +182,6 @@ def _json_safe(obj: Any) -> Any:
 
 
 def single_log(msg: str) -> None:
-    """Placeholder structured logger. Extend with the team's logging lib later."""
 
 
     print(f"[pipeline] {msg}")
@@ -215,11 +193,6 @@ def single_log(msg: str) -> None:
 
 
 def load_image(src: Any) -> np.ndarray:
-    """Load an image into a BGR uint8 ndarray.
-
-    Accepts a filesystem path (str/Path), a path-like, a URL-ish bytes buffer,
-    a PIL Image, or an ndarray. Raises ValueError on unreadable input.
-    """
     if isinstance(src, np.ndarray):
         return src.astype(np.uint8)
 

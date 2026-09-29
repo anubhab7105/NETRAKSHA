@@ -1,12 +1,3 @@
-"""Parametric synthetic face renderer for specimen/test data.
-
-Render front-facing cartoon-but-structured faces that face detectors
-(InsightFace/ArcFace and MediaPipe face-mesh) can localise. Used ONLY to create
-synthetic specimen data for the demo — never real people's real ID photos.
-
-Features are parameterised so two different "people" get distinct embeddings
-(e.g. A vs B), and the same person with mild perturbation stays similar.
-"""
 
 from __future__ import annotations
 

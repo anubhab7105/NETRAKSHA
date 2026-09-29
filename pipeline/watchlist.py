@@ -1,15 +1,3 @@
-"""Watchlist provider — checks travelers against security watchlists.
-
-Implements a ``WatchlistProvider`` interface and a ``MockWatchlistProvider``
-that seeds high-risk test subjects (Lookout Circulars, Interpol Red Notices).
-
-The mock provider surfaces ``is_mocked = True`` to drive the required
-violet "MOCKED DATA" badge in the dashboard UI.
-
-Design: the interface is a simple callable that accepts a name and/or
-document number and returns a hit-or-miss result. Production deployment
-swaps the mock for a real registry client without touching the Risk Engine.
-"""
 
 from __future__ import annotations
 
@@ -21,7 +9,6 @@ from typing import List, Optional
 
 @dataclass
 class WatchlistHit:
-    """A single watchlist match result."""
     name: str
     id_number: Optional[str]
     flag_reason: str
@@ -31,7 +18,6 @@ class WatchlistHit:
 
 @dataclass
 class WatchlistResult:
-    """Result of a watchlist check."""
     is_hit: bool
     hits: List[WatchlistHit] = field(default_factory=list)
     is_mocked: bool = False
@@ -58,7 +44,6 @@ class WatchlistResult:
 
 
 class WatchlistProvider(ABC):
-    """Abstract interface for watchlist lookups."""
 
     @abstractmethod
     def check(
@@ -66,35 +51,15 @@ class WatchlistProvider(ABC):
         name: Optional[str] = None,
         id_number: Optional[str] = None,
     ) -> WatchlistResult:
-        """Check a person against the watchlist.
-
-        Args:
-            name: Full name to check (fuzzy matched).
-            id_number: Document/ID number to check (exact match).
-
-        Returns:
-            WatchlistResult indicating hit or clear.
-        """
         ...
 
     @property
     @abstractmethod
     def is_mocked(self) -> bool:
-        """Whether this provider uses mock/demo data."""
         ...
 
 
 class DBWatchlistProvider(WatchlistProvider):
-    """Supabase-backed watchlist provider — reads from ``watchlist_entries``.
-
-    Use this in production instead of ``MockWatchlistProvider``. It queries
-    the persistent table seeded by ``backend/seed.py`` so the list survives
-    restarts and can be managed via Supabase dashboard / authority imports.
-
-    ``is_mocked`` is ``False`` by default — hits are treated as real. Pass
-    ``is_mocked=True`` only if the table still contains demo data and you
-    want the violet MOCKED DATA badge to keep showing.
-    """
 
     def __init__(self, entries: List[dict], is_mocked: bool = False) -> None:
         self._entries: List[dict] = list(entries or [])
@@ -154,17 +119,10 @@ class DBWatchlistProvider(WatchlistProvider):
         )
 
     def reload(self, entries: List[dict]) -> None:
-        """Hot-reload entries without restarting (e.g. after an authority import)."""
         self._entries = list(entries or [])
 
 
 class MockWatchlistProvider(DBWatchlistProvider):
-    """Mock watchlist with seeded high-risk test subjects.
-
-    Seeded entries represent fictional individuals for demo/testing.
-    All entries are clearly marked as mocked data. Subclasses
-    ``DBWatchlistProvider`` with ``is_mocked=True``.
-    """
 
     def __init__(self) -> None:
         super().__init__([
@@ -206,7 +164,6 @@ _default_provider: Optional[WatchlistProvider] = None
 
 
 def get_watchlist_provider() -> WatchlistProvider:
-    """Get the global watchlist provider (creates MockWatchlistProvider on first call)."""
     global _default_provider
     if _default_provider is None:
         _default_provider = MockWatchlistProvider()
@@ -214,15 +171,6 @@ def get_watchlist_provider() -> WatchlistProvider:
 
 
 def set_watchlist_provider(provider: WatchlistProvider) -> None:
-    """Override the global watchlist provider (e.g. for production deployment).
-
-    Production note (audit P2 §2): In a production deployment, call this at
-    startup with a ``DBWatchlistProvider`` instance backed by the
-    ``watchlist_entries`` table.  The backend/seed.py already inserts matching
-    records, so switching from the in-process MockWatchlistProvider to a
-    DB-backed provider only requires implementing the ``check()`` query
-    against SQLAlchemy's ``WatchlistEntry`` model.
-    """
     global _default_provider
     _default_provider = provider
 
@@ -231,17 +179,10 @@ def check_watchlist(
     name: Optional[str] = None,
     id_number: Optional[str] = None,
 ) -> WatchlistResult:
-    """Convenience function: check against the current global watchlist provider."""
     return get_watchlist_provider().check(name=name, id_number=id_number)
 
 
 async def load_db_watchlist_provider(is_mocked: bool = False) -> DBWatchlistProvider:
-    """Load entries from Supabase ``watchlist_entries`` and return a DB provider.
-
-    Call this at startup (after ``init_db``/``seed_all``) and pass the result
-    to ``set_watchlist_provider``. Falls back to an empty list if the table is
-    empty or unreachable — caller should then keep the mock for demo.
-    """
     try:
 
         from backend.database import async_session as _async_session

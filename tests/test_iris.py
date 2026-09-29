@@ -1,4 +1,3 @@
-"""Tests for iris pipeline — RGB prototype."""
 
 import pathlib
 import numpy as np

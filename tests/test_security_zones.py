@@ -1,4 +1,3 @@
-"""Tests for security zones."""
 
 import numpy as np
 from pipeline.security_zones import run_security_zones, TEMPLATE_ZONES

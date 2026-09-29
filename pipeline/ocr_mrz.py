@@ -1,27 +1,3 @@
-"""Module 1 — OCR / MRZ extraction.
-
-Approach (Techspec.md §3):
-  * Tesseract (via pytesseract) for visible passport/visa/ID fields, plus
-    best-effort Indian-ID patterns (Aadhaar 12-digit, PAN, Voter EPIC, DOB,
-    gender) so non-passport cards still yield trusted demographics when the
-    cloud AI is offline. Passport MRZ remains authoritative when present.
-  * PassportEye for MRZ line decoding.
-  * ICAO 9303 check-digit validation of the MRZ.
-
-Contract:
-  * Returns an isolated :class:`ModuleResult` shaped to drop straight into the
-    ``module_results`` table (Shema.md).
-  * Visible fields that cannot be read are marked explicitly (value=None,
-    readable=False) rather than guessed / silently fabricated.
-  * Tesseract resolution order (see pipeline/common.py): vendored binary +
-    tessdata when present, otherwise a system-wide install. If no OCR engine
-    is available the visible-field portion degrades (still
-    inconclusive-safe); MRZ/ICAO still runs via the pure-Python PassportEye
-    path when possible.
-
-No image evidence is produced here — the extracted field table IS the evidence
-the UI displays (Techspec.md §3, Appflow.md §3.4).
-"""
 
 from __future__ import annotations
 
@@ -76,7 +52,6 @@ MRZ_FIELDS = [
 
 
 def _tesseract_available() -> bool:
-    """Return True if a working tesseract binary + tessdata can be located."""
     if not TESSERACT_BIN.exists():
         return False
     if not (TESS_TESSDATA / "eng.traineddata").exists():
@@ -92,8 +67,6 @@ def _tesseract_env() -> dict:
 
 
 def _configure_tesseract() -> None:
-    """Point pytesseract (and anything that shells out to it, incl. PassportEye)
-    at the vendored binary + libs + tessdata. Safe to call repeatedly."""
     import pytesseract
 
     pytesseract.pytesseract.tesseract_cmd = str(TESSERACT_BIN)
@@ -102,7 +75,6 @@ def _configure_tesseract() -> None:
 
 
 def _ocr_frame_rgb(pil_rgb) -> str:
-    """Run tesseract on a PIL RGB image, returning raw recognised text."""
     import pytesseract
 
     _configure_tesseract()
@@ -125,21 +97,6 @@ def _clean(text: str) -> str:
 
 
 def _parse_visible_fields(ocr_text: str) -> List[dict]:
-    """Best-effort structured parse of common passport fields from OCR text.
-
-    Matches a label token and its value *within a single OCR line* so we don't
-    accidentally merge neighbouring fields. Fields that cannot be confidently
-    located are returned explicitly as unreadable (value=None, readable=False)
-    — never fabricated.
-
-    Indian-ID fallback: Aadhaar/PAN/Voter cards carry no MRZ and no
-    SURNAME/PASSPORT-NO labels, so when the passport patterns miss, a second
-    full-text pass looks for their bare number formats (PAN, EPIC, Aadhaar
-    12-digit with Verhoeff preferred), an unlabeled DD/MM/YYYY birthdate, a
-    MALE/FEMALE marker, and a NAME label. MRZ lines (containing '<') are
-    excluded from this pass so MRZ digit runs can never be mistaken for an
-    Indian document number.
-    """
     patterns = {
         "surname": re.compile(r"\bSURNAME\b\s*[:\-]?\s*([A-Z]{2,})"),
         "given_names": re.compile(
@@ -243,11 +200,6 @@ def _parse_visible_fields(ocr_text: str) -> List[dict]:
 
 
 def _detect_indian_document_number(text: str):
-    """Return (number, document_type) for Indian IDs found in free OCR text.
-
-    Priority: PAN → Voter EPIC → Aadhaar (Verhoeff-valid 12-digit preferred,
-    any 12-digit otherwise). Returns (None, None) when nothing matches.
-    """
     flat = _clean(text).upper()
     if not flat:
         return None, None
@@ -280,7 +232,6 @@ def _detect_indian_document_number(text: str):
 
 
 def _detect_indian_gender(text: str):
-    """Return 'M'/'F' when an explicit gender marker is present, else None."""
     flat = _clean(text).upper()
     if re.search(r"\bFEMALE\b", flat):
         return "F"
@@ -317,7 +268,6 @@ def _char_value(c: str) -> int:
 
 
 def check_digit(block: str) -> int:
-    """Compute the ICAO 9303 check digit for a string block."""
     total = 0
     for i, ch in enumerate(block):
         total += _char_value(ch) * _WEIGHTS[i % 3]
@@ -325,14 +275,12 @@ def check_digit(block: str) -> int:
 
 
 def validate_checksum(block: str, given: str) -> bool:
-    """True if the given (single-char) check digit equals the computed one."""
     if not block or not given:
         return False
     return check_digit(block) == _char_value(given[0])
 
 
 def _mrz_segments(mrz_lines: List[str]) -> dict:
-    """Extract the individually-checkable MRZ segments per ICAO 9303."""
     return {"_raw": mrz_lines}
 
 
@@ -341,13 +289,6 @@ def _mrz_segments(mrz_lines: List[str]) -> dict:
 
 
 def _parse_mrz_via_passporteye(img_bgr):
-    """Return (mrz_dict, checks, lines) using PassportEye.
-
-    PassportEye's MrzImage only accepts a file path or bytes as input (a PIL
-    image is silently ignored -> None), so we persist the frame to a scratch
-    file and pass its path. The temp file holds no PII (it is the document the
-    caller already owns) and is removed afterwards.
-    """
     from passporteye.mrz.image import read_mrz
 
     import tempfile
@@ -430,15 +371,6 @@ def _as_str(v):
 
 
 def _validate_icao_blocks(fields: dict, mrz) -> dict:
-    """Validate the ICAO 9303 check-digit blocks using PassportEye's parsed
-    field values (for the block body -> our `check_digit`) and its per-block
-    `check_*` attributes (for the given seam digit).
-
-    Returns {block: {"ok": bool, "given": int|None, "computed": int}}. Blocks
-    whose GIVEN digit could not be OCR'd are reported with given=None and
-    ok=False-but-"unverifiable" semantics (the caller treats failed-OCR the
-    same as an inconclusive sub-check).
-    """
     result = {}
 
     def _given(attr):
@@ -506,14 +438,6 @@ def _validate_icao_blocks(fields: dict, mrz) -> dict:
 
 
 def run_ocr_mrz(document_image) -> ModuleResult:
-    """Run OCR/MRZ extraction on a single document image.
-
-    Signature for the FastAPI route owner:
-        run_ocr_mrz(document_image) -> ModuleResult
-
-    ``document_image`` is a path (str/Path), bytes buffer, PIL Image, or BGR
-    ndarray. Returns a result with status "ok" or "inconclusive". Never raises.
-    """
     try:
         img = load_image(document_image)
     except Exception as exc:
@@ -528,7 +452,6 @@ def run_ocr_mrz(document_image) -> ModuleResult:
 
 
 def _run_ocr_mrz_impl(img):
-    """Processing body of run_ocr_mrz; kept separate for exception isolation."""
 
     ocr_text = ""
     tesseract_ok = False

@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-#
-# Provision runtime assets for the screening pipeline.
-#
-#   * pipeline/vendor/models/face_landmarker.task — mediapipe FaceLandmarker
-#     model required by the Liveness Detection module. The file is committed
-#     to the repository; this script only re-downloads it if it was removed
-#     (e.g. stripped by a .gitignore clean-up).
-#   * tesseract — required by OCR & MRZ parsing (Module 2). A system install
-#     is detected and reported; it is NOT bundled because it is platform
-#     specific.
-#
-# Safe to run repeatedly.
+
+
+
+
+
+
+
+
+
+
+
+
 
 set -euo pipefail
 
@@ -21,7 +21,7 @@ TASK_URL="https://storage.googleapis.com/mediapipe-models/face_landmarker/face_l
 
 echo "==> Screening runtime asset check"
 
-# --- 1. mediapipe FaceLandmarker model -----------------------------------
+
 if [[ -f "$TASK" ]]; then
   SIZE=$(wc -c < "$TASK" | tr -d ' ')
   echo "[ok] face_landmarker.task present ($SIZE bytes)"
@@ -37,7 +37,7 @@ else
   echo "[ok] face_landmarker.task downloaded ($SIZE bytes)"
 fi
 
-# --- 2. tesseract OCR -----------------------------------------------------
+
 TESS="$(command -v tesseract || true)"
 if [[ -n "$TESS" ]]; then
   echo "[ok] tesseract found: $TESS"
@@ -54,11 +54,11 @@ else
   echo "     Windows:       winget install UB-Mannheim.TesseractOCR"
 fi
 
-# --- 3. InsightFace buffalo_l (local 3-way face legs) -----------------------
-# The pack (~300MB) is gitignored on purpose — provision it here at
-# build/deploy time so the first screening never pays a cold download (or
-# fails every registry leg when the model zoo is unreachable). Reuses the
-# same on-disk layout the pipeline expects (<root>/models/buffalo_l/).
+
+
+
+
+
 BUFFALO_DIR="$MODEL_DIR/models/buffalo_l"
 if [[ -f "$BUFFALO_DIR/w600k_r50.onnx" && -f "$BUFFALO_DIR/det_10g.onnx" ]]; then
   echo "[ok] buffalo_l pack present ($BUFFALO_DIR)"

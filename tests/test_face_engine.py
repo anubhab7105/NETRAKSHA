@@ -1,9 +1,3 @@
-"""Tests for local face-engine visibility + late-Gemini gate.
-
-Covers pipeline.face_match.local_engine_status / prewarm_local_engine (cheap
-probes that must never trigger a model download) and the pure gating
-function backend.app._needs_late_gemini_face.
-"""
 
 from __future__ import annotations
 

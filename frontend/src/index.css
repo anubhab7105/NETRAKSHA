@@ -2,7 +2,7 @@
 @import "tailwindcss";
 
 @theme {
-  /* Indian Government Secure UI — light-first tokens */
+
   --color-background: #F7F8FA;
   --color-surface: #FFFFFF;
   --color-surface-muted: #EEF1F6;
@@ -51,9 +51,9 @@
     outline-offset: 2px;
     border-radius: 4px;
   }
-  /* Page-level horizontal overflow guard (mobile): `clip` prevents any
-     stray wide child from making the whole site sideways-scrollable, and
-     unlike `hidden` it does not break `position: sticky` descendants. */
+
+
+
   html,
   body {
     max-width: 100%;
@@ -78,7 +78,7 @@
 }
 
 @layer components {
-  /* Enterprise card — white, 1px border, 8px radius, subtle shadow */
+
   .gov-card {
     background: var(--color-surface);
     border: 1px solid var(--color-border);
@@ -131,7 +131,7 @@
   .gov-help { font-size: 12px; color: var(--color-ink-secondary); margin-top: 4px; }
   .gov-divider { border-color: var(--color-border); }
 
-  /* Buttons — navy primary, bordered secondary, muted red danger */
+
   .gov-btn {
     display: inline-flex;
     align-items: center;
@@ -195,7 +195,7 @@
   }
   .gov-icon-btn:hover:not(:disabled) { background: #EEF1F6; color: var(--color-primary); border-color: var(--color-border-strong); }
 
-  /* Inputs */
+
   .gov-input {
     width: 100%;
     height: 40px;
@@ -231,7 +231,7 @@
     box-shadow: 0 0 0 3px rgb(23 105 170 / 0.15);
   }
 
-  /* Tables */
+
   .gov-table-wrap {
     background: #fff;
     border: 1px solid var(--color-border);
@@ -262,7 +262,7 @@
   table.gov-table tbody tr:last-child td { border-bottom: none; }
   table.gov-table tbody tr:hover { background: #F7F9FC; }
 
-  /* Status badges — restrained, always icon + text (never color alone) */
+
   .gov-badge {
     display: inline-flex;
     align-items: center;
@@ -282,7 +282,7 @@
   .gov-badge-grey { background: #EEF1F6; color: var(--color-ink-secondary); border-color: var(--color-border); }
   .gov-badge-violet { background: #F1EBFD; color: #6D28D9; border-color: #C4B0EF; }
 
-  /* Alerts / notices */
+
   .gov-notice {
     display: flex;
     gap: 12px;
@@ -298,7 +298,7 @@
   .gov-notice-blue { background: #EAF2FA; border-color: rgb(23 105 170 / 0.3); color: #123B66; }
   .gov-notice-green { background: var(--color-success-bg); border-color: rgb(22 128 60 / 0.3); color: #0F5C2A; }
 
-  /* Sidebar nav */
+
   .gov-nav-link {
     display: flex;
     align-items: center;
@@ -320,7 +320,7 @@
   }
   .gov-nav-link-active svg { color: var(--color-secondary); }
 
-  /* Step indicator */
+
   .gov-step-dot {
     width: 26px;
     height: 26px;
@@ -346,8 +346,8 @@
     box-shadow: 0 0 0 3px rgb(23 105 170 / 0.14);
   }
 
-  /* Backward compatibility: old dark utility class becomes a light enterprise card.
-     Keeps every existing `glass-panel` usage rendering correctly without edits. */
+
+
   .glass-panel {
     background: var(--color-surface);
     border: 1px solid var(--color-border);

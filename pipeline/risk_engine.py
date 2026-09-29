@@ -1,19 +1,3 @@
-"""Rule-based Risk Engine — composite screening assessment.
-
-Aggregates results from all pipeline modules and produces a final risk
-verdict (Green / Yellow / Red) with a composite risk score and
-recommendations for the reviewing officer.
-
-Hard flag rules (per plan.md §1.6):
-  * Demographic Mismatch (Altered DOB/Name)  → Forces RED or YELLOW
-  * Watchlist Hit                             → Forces RED
-  * Face Verification Mismatch               → Forces RED
-  * Liveness Failure                          → Forces at least YELLOW
-  * Any Module Inconclusive                   → Forces at least YELLOW
-
-The engine never produces a verdict on its own — it only flags risk.
-Only a human officer can deny entry.
-"""
 
 from __future__ import annotations
 
@@ -23,7 +7,6 @@ from typing import Any, List, Optional
 
 @dataclass
 class RiskAssessment:
-    """The output of the risk engine."""
     verdict: str
     risk_score: float
     recommendations: List[str]
@@ -65,25 +48,6 @@ def assess_risk(
     iris_liveness: Optional[dict] = None,
     **kwargs
 ) -> RiskAssessment:
-    """Evaluate composite risk from all module outputs.
-
-    Each parameter corresponds to the output of one pipeline module.
-    Missing/None values are treated as inconclusive.
-    `registry_trust` is {"level": ..., "verified": bool, "reasons": [...]}:
-    an `unverified` registry match floors the verdict at Yellow so a
-    malicious single-writer entry can never read as Green; `legacy`
-    (pre-dual-approval) rows add an informational flag but keep Green
-    possible for demo continuity (see reconciliation report).
-    `db_face_pairs` is {"doc_vs_db_match": bool|None,
-    "live_vs_db_match": bool|None, "evidence": "local"|...}: an
-    evidence-backed (local InsightFace) registry mismatch forces Red —
-    a photo-substituted document can agree with the live impostor while
-    disagreeing with the official record. Anything but local evidence
-    (e.g. simulated guesses) is ignored here.
-
-    Returns:
-        RiskAssessment with verdict, score, flags, and recommendations.
-    """
     flags: List[str] = []
     recommendations: List[str] = []
     risk_components: List[float] = []
@@ -401,7 +365,6 @@ _LEVEL_TO_VERDICT = {0: "Green", 1: "Yellow", 2: "Red"}
 
 
 def _escalate(current: str, proposed: str) -> str:
-    """Return the higher-severity verdict between current and proposed."""
     c = _VERDICT_LEVELS.get(current, 0)
     p = _VERDICT_LEVELS.get(proposed, 0)
     return _LEVEL_TO_VERDICT[max(c, p)]

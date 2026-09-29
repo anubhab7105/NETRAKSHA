@@ -1,4 +1,3 @@
-"""Eye detection for iris pipeline — uses MediaPipe FaceLandmarker eye landmarks."""
 
 from __future__ import annotations
 import cv2
@@ -6,7 +5,6 @@ import numpy as np
 from typing import Dict, Any, Optional
 
 def detect_eyes(bgr: np.ndarray) -> Dict[str, Any]:
-    """Detect left and right eye regions via MediaPipe."""
     try:
         import mediapipe as mp
         from mediapipe.tasks import python as mp_py

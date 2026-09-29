@@ -1,11 +1,9 @@
-"""Iris template matching via Hamming distance."""
 
 from __future__ import annotations
 import numpy as np
 from typing import Dict, Any
 
 def hamming_distance(template_a: bytes, mask_a: bytes, template_b: bytes, mask_b: bytes) -> float:
-    """Compute normalized Hamming distance between two binary templates."""
     try:
         a = np.frombuffer(template_a, dtype=np.uint8)
         b = np.frombuffer(template_b, dtype=np.uint8)
@@ -25,11 +23,6 @@ def hamming_distance(template_a: bytes, mask_a: bytes, template_b: bytes, mask_b
         return 1.0
 
 def _is_degenerate(template: bytes) -> bool:
-    """True when a stored/probe code is near-constant (no iris texture).
-
-    Guards templates minted before the encoder texture gate existed:
-    matching them would false-accept at distance ~0.
-    """
     try:
         a = np.frombuffer(template, dtype=np.uint8)
         if a.size == 0:
@@ -41,7 +34,6 @@ def _is_degenerate(template: bytes) -> bool:
 
 
 def match_templates(probe_template: bytes, probe_mask: bytes, ref_template: bytes, ref_mask: bytes, threshold: float = 0.32) -> Dict[str, Any]:
-    """Match probe against reference. Threshold <0.32 is initial prototype (uncalibrated)."""
     try:
         if not probe_template or not ref_template:
             return {"match": None, "distance": None, "decision": "INCONCLUSIVE",

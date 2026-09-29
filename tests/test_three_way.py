@@ -1,14 +1,3 @@
-"""Tests for the registry-first three-way face comparison.
-
-The advertised 3-way match (document↔live, document↔registry, live↔registry)
-must be EVIDENCED, not claimed: every pair with both inputs present is really
-computed (quality-gated InsightFace), pairs without inputs are marked
-unavailable with a reason, and evidence-backed registry mismatches force Red
-(a photo-substituted document can agree with the live impostor while
-disagreeing with the official record).
-
-Run:  python -m pytest tests/test_three_way.py -v
-"""
 
 from __future__ import annotations
 

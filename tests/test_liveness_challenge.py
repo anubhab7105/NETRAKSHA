@@ -1,4 +1,3 @@
-"""Tests for active liveness challenges."""
 
 import pytest
 from pipeline.liveness import CHALLENGE_TYPES, HEAD_YAW_THRESHOLD, MOUTH_OPEN_THRESHOLD

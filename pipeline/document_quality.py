@@ -1,8 +1,3 @@
-"""Document Image Quality Gate — pre-check before OCR/tamper.
-
-Rejects blurry, dark, cropped, low-res, or otherwise unusable document
-images before any forensic analysis, with actionable recapture guidance.
-"""
 
 from __future__ import annotations
 import cv2

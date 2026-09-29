@@ -1,40 +1,3 @@
-"""Module 5 — Liveness detection.
-
-Approach (Techspec.md §3): multi-signal liveness across a short webcam frame
-burst, using mediapipe face-mesh landmarks. Instead of trusting a single signal
-we fuse three independent cues:
-
-  1. BLINK (Eye-Aspect-Ratio) — an adaptive per-burst EAR baseline replaces the
-     old hard-coded threshold, then validated blink runs are counted.
-  2. MOTION — mean inter-frame landmark displacement normalised by face width.
-     A real person (even when asked to hold still) produces micro-movements; a
-     printed photo or a frozen video frame produces ~zero displacement.
-  3. SCREEN ARTIFACTS — FFT analysis of the face crop for moire / pixel-grid
-     periodic energy, which is a strong tell for photo/video replay from a
-     monitor (any display attack).
-
-Decision logic (status == "ok"):
-  * insufficient face coverage                          -> inconclusive
-  * no motion AND no blink/head/mouth activity          -> NOT live (still image)
-  * strong screen artifacts                             -> NOT live (display replay)
-  * otherwise score = action/motion signal * 0.55
-                       + clean-signal * 0.25
-                       + face coverage * 0.20
-                     live = score >= 0.45
-  The randomly assigned challenge (blink/head_turn/mouth_open) is recorded
-  for audit but NEVER fails a live person: the traveler is not shown the
-  assignment, so ANY genuine action (blink, head turn, or mouth open)
-  certifies liveness. A missed assignment is flagged
-  `challenge_not_observed:<name>` in spoof_signals instead.
-
-Contract flags (Techspec.md §3, for the Risk Engine owner):
-  * ``live: bool`` is unambiguous whenever status == "ok" — never None except
-    when the ENTIRE module is inconclusive. A failed liveness check is one of
-    the two conditions that forces a case to at least Yellow.
-  * We never return live=None on an "ok" result.
-
-Never raises: any internal failure degrades to status="inconclusive", score=None.
-"""
 
 from __future__ import annotations
 
@@ -93,7 +56,6 @@ _RIGHT_EYE = [362, 385, 387, 263, 373, 380]
 
 
 def _ear(landmarks, indices) -> Optional[float]:
-    """Compute eye aspect ratio from a mediapipe landmark list for one eye."""
     try:
         pts = [landmarks[i] for i in indices]
     except (IndexError, TypeError):
@@ -113,11 +75,6 @@ def _ear(landmarks, indices) -> Optional[float]:
 
 
 def _face_mesh():
-    """Create a mediapipe FaceLandmarker running in IMAGE mode.
-
-    mediapipe >= 1.0 exposes the `tasks` API only (the legacy `mp.solutions`
-    was removed), so we use FaceLandmarker with a downloaded .task model.
-    """
     from mediapipe.tasks import python as mp_py
     from mediapipe.tasks.python import vision
 
@@ -135,7 +92,6 @@ def _face_mesh():
 
 
 def _collect_frames(burst_input) -> List[np.ndarray]:
-    """Normalise a frame burst into a list of BGR ndarrays."""
     if isinstance(burst_input, (str, pathlib.Path, os.PathLike)):
         p = pathlib.Path(burst_input)
         if p.suffix.lower() in {".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"}:
@@ -185,7 +141,6 @@ def _frames_from_video(path: pathlib.Path, max_frames: int = 12) -> List[np.ndar
 
 
 def _extract_frame_features(landmarker, mp, frame: np.ndarray):
-    """Return (ear, landmarks_xy, bbox) for one frame, or None if no face."""
     rgb = frame[:, :, ::-1] if frame.ndim == 3 and frame.shape[2] == 3 else frame
     if rgb.dtype != np.uint8:
         rgb = np.clip(rgb, 0, 255).astype(np.uint8)
@@ -208,7 +163,6 @@ def _extract_frame_features(landmarker, mp, frame: np.ndarray):
 
 
 def _mouth_open_ratio(landmarks) -> Optional[float]:
-    """Estimate mouth opening from landmarks (upper lip 13 vs lower lip 14)."""
     try:
 
         upper = np.array([landmarks[13].x, landmarks[13].y])
@@ -223,7 +177,6 @@ def _mouth_open_ratio(landmarks) -> Optional[float]:
 
 
 def _head_yaw(landmarks) -> Optional[float]:
-    """Estimate head yaw via face_quality helper."""
     try:
         from .face_quality import yaw_proxy_from_kps
         kps = [(landmarks[i].x, landmarks[i].y) for i in [33, 263, 1, 61, 291]]
@@ -242,12 +195,6 @@ def _head_yaw(landmarks) -> Optional[float]:
 
 
 def _screen_artifact_score(frame: np.ndarray, bbox) -> float:
-    """Estimate display-replay likelihood from moire/pixel-grid energy.
-
-    A real camera capturing a monitor shows strong periodic high-frequency
-    energy (the screen's pixel grid / refresh pattern); a direct webcam feed
-    of a face does not. Returns 0..1 scale (higher = more screen-like).
-    """
     try:
         import cv2
 
@@ -304,7 +251,6 @@ def _screen_artifact_score(frame: np.ndarray, bbox) -> float:
 
 
 def _analyse_burst(frames: List[np.ndarray]) -> dict:
-    """Extract EAR, motion and screen-artifact signals across the burst."""
     import mediapipe as mp
 
     landmarker = _face_mesh()
@@ -448,20 +394,6 @@ def _analyse_burst(frames: List[np.ndarray]) -> dict:
 
 
 def run_liveness(frame_burst, challenge_type: str = "blink") -> ModuleResult:
-    """Run multi-signal liveness on a short webcam frame burst.
-
-    Signature for the FastAPI route owner:
-        run_liveness(frame_burst, challenge_type="blink") -> ModuleResult
-
-    ``frame_burst`` is one of:
-      * a list of frame images (paths, BGR ndarrays, or PIL Images),
-      * a video file path (decoded into frames), or
-      * a single still (tolerated but low-confidence).
-    ``challenge_type`` is one of "blink" (default), "head_turn", "mouth_open", "smile".
-
-    Returns "ok" or "inconclusive". ``raw_output['live']`` is a bool whenever
-    status == "ok". Never raises.
-    """
     try:
         frames = _collect_frames(frame_burst)
     except Exception as exc:

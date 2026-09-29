@@ -1,11 +1,3 @@
-"""Tests for auth hardening (backend/auth_security.py + app wiring).
-
-Default secrets, weak passwords, single-factor supervisors, and unlimited
-login guessing must all fail closed — in production loudly (startup), in
-every environment at the login boundary.
-
-Run:  python -m pytest tests/test_auth_security.py -v
-"""
 
 from __future__ import annotations
 
@@ -177,9 +169,6 @@ def test_utcnow_naive_is_naive():
 
 
 def test_change_password_stores_postgres_safe_datetimes():
-    """Regression: tz-aware datetimes crash asyncpg (TIMESTAMP WITHOUT TIME
-    ZONE) with a 500 that browsers misreport as CORS. Every DateTime the
-    app writes must be naive UTC."""
     import asyncio
 
     import backend.app as app
@@ -240,8 +229,6 @@ class _AuthedReq:
 
 
 def test_mfa_setup_issues_qr_and_verify_loop():
-    """Full enrollment: setup issues a scannable QR + key, and a code from
-    that key verifies (catches secret round-trip / encoding regressions)."""
     import asyncio
     import base64
 
@@ -291,8 +278,6 @@ def test_mfa_setup_issues_qr_and_verify_loop():
 
 
 def test_unhandled_errors_stay_json():
-    """A crashing endpoint must still return JSON (via CORS middleware), so
-    browsers never again misreport a 500 as a CORS failure."""
     import asyncio
 
     import backend.app as app

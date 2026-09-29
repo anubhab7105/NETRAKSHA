@@ -1,13 +1,3 @@
-"""Document Template & Security Feature Analyzer.
-
-Checks per-document-type layout, photo zone, font/zone placement, and
-decodable marks (QR/barcode) to catch crude forgeries that pass ELA.
-
-Output:
-  * security_score 0-1 (higher = more anomalies)
-  * checks: {photo_zone, mrz_zone, font, qr, barcode, emblem}
-  * evidence_uri: zone overlay image
-"""
 
 from __future__ import annotations
 
@@ -30,7 +20,6 @@ TEMPLATE_ZONES = {
 }
 
 def _detect_qr_barcode(bgr: np.ndarray) -> Dict[str, Any]:
-    """Try to decode QR/barcode; presence is a positive signal for Aadhaar/PAN."""
     try:
         detector = cv2.QRCodeDetector()
         data, bbox, _ = detector.detectAndDecode(bgr)
@@ -41,7 +30,6 @@ def _detect_qr_barcode(bgr: np.ndarray) -> Dict[str, Any]:
     return {"qr_found": False, "qr_data": None}
 
 def _photo_zone_check(bgr: np.ndarray, doc_type: str) -> Dict[str, Any]:
-    """Check if a face is within the expected photo zone."""
     try:
         import mediapipe as mp
         from mediapipe.tasks import python as mp_py
@@ -80,7 +68,6 @@ def _photo_zone_check(bgr: np.ndarray, doc_type: str) -> Dict[str, Any]:
         return {"photo_zone": "error", "photo_in_zone": None, "error": str(e)[:60]}
 
 def run_security_zones(document_image, document_type: str = "unknown", save_evidence: bool = True) -> ModuleResult:
-    """Run template/zone checks on the document image."""
     try:
         bgr = load_image(document_image)
     except Exception as exc:

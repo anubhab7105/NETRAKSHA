@@ -1,21 +1,3 @@
-"""Fairness & bias mitigation for face matching.
-
-Evaluates face verification fairness across demographic and environmental conditions,
-logs metrics per group for later audit, and flags low-confidence cases for manual
-review to avoid unfair targeting.
-
-Design:
-- Keep the biometric threshold fixed (0.55) for transparency, but route the
-  uncertainty band (0.45-0.65) to manual review instead of auto Green/Red.
-  This band is where false-reject/false-accept rates diverge most across
-  groups in ArcFace-style models.
-- Record per-case fairness signals (gender/age band/quality) so aggregate
-  disparity can be audited offline (see `fairness_report`).
-- Environmental quality (blur, lighting, face size) is taken from
-  `face_quality` and also forces manual review when the capture is poor —
-  poor captures correlate with camera hardware and thus with deployment
-  environment, not identity.
-"""
 
 from __future__ import annotations
 
@@ -36,7 +18,6 @@ AGE_BUCKETS = ["<25", "25-40", "40-60", "60+"]
 
 
 def _age_bucket(dob: Optional[str]) -> str:
-    """Bucket age from YYYY-MM-DD or DD/MM/YYYY, fallback to unknown."""
     if not dob:
         return "unknown"
     try:
@@ -63,7 +44,6 @@ def _age_bucket(dob: Optional[str]) -> str:
 
 
 def _env_quality_bucket(quality_report: Optional[Dict[str, Any]]) -> str:
-    """Bucket environmental quality from face_quality report."""
     if not quality_report or not isinstance(quality_report, dict):
         return "unknown"
     gate = quality_report.get("gate", "unknown")
@@ -89,10 +69,6 @@ def log_fairness_case(
     quality_report: Optional[Dict[str, Any]] = None,
     low_confidence: bool = False,
 ) -> Dict[str, Any]:
-    """Record a per-case fairness signal and return it for persistence.
-
-    Called from the screening pipeline after face verification. Never raises.
-    """
     try:
         gender = (demographics or {}).get("gender") or (demographics or {}).get("Gender") or "unknown"
         gender = str(gender).strip().title() if gender else "unknown"
@@ -128,10 +104,6 @@ def log_fairness_case(
 
 
 def get_fairness_report(limit: int = 200) -> Dict[str, Any]:
-    """Aggregate fairness metrics for audit and UI.
-
-    Returns per-group counts, mean similarity, and low-confidence rates.
-    """
     if not _FAIRNESS_LEDGER:
         return {"total": 0, "groups": {}, "low_confidence_rate": 0.0, "note": "No cases yet"}
 
@@ -176,7 +148,6 @@ def get_fairness_report(limit: int = 200) -> Dict[str, Any]:
 
 
 def is_low_confidence(similarity: Optional[float]) -> bool:
-    """Check if similarity is in the low-confidence band that should be manually reviewed."""
     if similarity is None:
         return False
     return 0.45 <= float(similarity) <= 0.65

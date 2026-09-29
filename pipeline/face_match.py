@@ -1,21 +1,3 @@
-"""Module 4 — Face match (1:1).
-
-Approach (Techspec.md §3, Implementationplan.md Day 3):
-  * InsightFace/ArcFace embedding extraction on both the document photo and the
-    live capture.
-  * cosine similarity between the two embeddings -> [0,1] "similarity".
-  * ``match: bool`` derived from a per-module threshold, surfaced as evidence
-    (not a case verdict). The Risk Engine / officer makes the final call.
-
-ONNX runtime path: Techspec.md §2 says GPU is confirmed available, so we try
-CUDA/ROCM GPU execution providers first, falling back to CPU only when no GPU
-exists on the actual runtime (this box has none — flagged in Tracker.md §0).
-
-Evidence: returns a real side-by-side image (doc-photo vs live-capture crops)
-that the Case Result UI (Design.md §5) displays directly.
-
-Never raises: any internal failure degrades to status="inconclusive", score=None.
-"""
 
 from __future__ import annotations
 
@@ -61,7 +43,6 @@ _haar_profile = None
 
 
 def _haar_classifiers():
-    """Lazily load Haar cascades; return (frontal, profile) or (None, None)."""
     global _haar_frontal, _haar_profile
     with _haar_lock:
         if _haar_frontal is not None or _haar_profile is not None:
@@ -83,7 +64,6 @@ def _haar_classifiers():
 
 
 def _haar_fallback_codes(image_bgr) -> list:
-    """Classify a no-face detection: side_angle | no_face | []."""
     try:
         import cv2
 
@@ -106,7 +86,6 @@ def _haar_fallback_codes(image_bgr) -> list:
 
 
 def _quality_failure_result(doc_rep: QualityReport, live_rep: QualityReport) -> ModuleResult:
-    """Build the inconclusive + recapture-requested result (never raises)."""
     quality = combine_reports(doc_rep, live_rep)
     target = quality["recapture_target"]
     reasons = quality["recapture_reasons"]
@@ -130,7 +109,6 @@ def _quality_failure_result(doc_rep: QualityReport, live_rep: QualityReport) -> 
 
 
 def _get_face_analysis():
-    """Lazily build the shared InsightFace FaceAnalysis app (thread-safe)."""
     global _face_analysis, _provider_used
     with _face_analysis_lock:
         if _face_analysis is not None:
@@ -173,14 +151,12 @@ _last_engine_error: Optional[str] = None
 
 
 def _buffalo_pack_dir():
-    """Directory the buffalo_l pack must live in (<root>/models/buffalo_l)."""
     import pathlib
 
     return pathlib.Path(str(INSIGHTFACE_MODEL_ROOT)) / "models" / "buffalo_l"
 
 
 def buffalo_models_present() -> bool:
-    """True when the vendored/downloaded buffalo_l pack is on disk."""
     try:
         pack = _buffalo_pack_dir()
         return all((pack / name).is_file() for name in _REQUIRED_BUFFALO_FILES)
@@ -189,12 +165,6 @@ def buffalo_models_present() -> bool:
 
 
 def local_engine_status() -> dict:
-    """Cheap, never-downloading status probe for ops (`/health`).
-
-    Reports whether the shared InsightFace app is initialised, whether the
-    model files are present (missing pack = first use will attempt a large
-    download), which provider bound, and the last prewarm/init error.
-    """
     return {
         "initialised": _face_analysis is not None,
         "models_present": buffalo_models_present(),
@@ -204,13 +174,6 @@ def local_engine_status() -> dict:
 
 
 def prewarm_local_engine() -> bool:
-    """Initialise the shared InsightFace app now (startup background task).
-
-    Warms the engine (including the first-use model download, when egress
-    allows) BEFORE the first screening, so scans never pay cold-start
-    minutes or fail every local pair. Logs loudly either way and never
-    raises — returns True when ready.
-    """
     global _last_engine_error
     try:
         _get_face_analysis()
@@ -230,7 +193,6 @@ def prewarm_local_engine() -> bool:
 
 
 def _detect_faces(app, image_bgr: np.ndarray):
-    """Detect the largest face; return (face, normalized_embedding) or (None,None)."""
     faces = app.get(image_bgr)
     if not faces:
         return None, None, None
@@ -271,14 +233,6 @@ def _render_side_by_side(jpg_doc: np.ndarray, jpg_live: np.ndarray, out_path) ->
 
 
 def run_face_match(document_photo, live_capture, save_evidence: bool = True) -> ModuleResult:
-    """1:1 face match between a document photo and a live capture.
-
-    Signature for the FastAPI route owner:
-        run_face_match(document_photo, live_capture, save_evidence=True) -> ModuleResult
-
-    Each input is a path (str/Path), bytes buffer, PIL Image, or BGR ndarray.
-    Returns "ok" or "inconclusive". Never raises.
-    """
     try:
         doc = load_image(document_photo)
         live = load_image(live_capture)
@@ -406,7 +360,6 @@ def _crop_face(image_bgr: np.ndarray, face, pad: float = 0.35) -> np.ndarray:
 
 
 def _pair_unavailable(reason: str) -> dict:
-    """Placeholder for a comparison that cannot run (no input image)."""
     return {
         "status": "unavailable",
         "match": None,
@@ -418,7 +371,6 @@ def _pair_unavailable(reason: str) -> dict:
 
 
 def _pair_from_result(res) -> dict:
-    """Normalise a run_face_match ModuleResult into a three-way pair slot."""
     raw = res.raw_output or {}
     if res.status == "ok":
         return {
@@ -452,35 +404,6 @@ def run_three_way_match(
     db_reference=None,
     save_evidence: bool = False,
 ) -> dict:
-    """Compare all three face pairs for one screening (never raises).
-
-    Registry-first three-way comparison: document-face ↔ live-face,
-    document-face ↔ registry-face, and live-face ↔ registry-face — every
-    pair that has both input images is actually computed (each through the
-    same quality gates as :func:`run_face_match`). Pairs without both
-    inputs are marked ``unavailable`` with an explicit reason instead of a
-    silent null, so callers can report completeness honestly.
-
-    Args:
-        document_photo: doc scan (path / bytes / PIL / ndarray).
-        live_capture: live still, or None when no webcam frame exists.
-        db_reference: registry reference photo, or None when no registry
-            record / photo is available.
-        save_evidence: evidence composites are skipped by default here
-            (the primary doc↔live evidence is rendered by run_face_match
-            at the call site when needed).
-
-    Returns:
-        {
-          "pairs": {"live_vs_doc": {...}, "doc_vs_db": {...},
-                    "live_vs_db": {...}},
-          "completeness": "complete" | "partial" | "unavailable",
-          "db_pairs_unavailable_reason": str | None,
-          "recapture_requested": bool, "recapture_target": ...,
-          "recapture_reasons": [...],
-          "primary": {"similarity": float|None, "match": bool|None},
-        }
-    """
     try:
         pairs = {}
         if live_capture is None:

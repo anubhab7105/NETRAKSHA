@@ -1,26 +1,3 @@
-"""Face-image quality gates — run BEFORE biometric matching.
-
-Poor captures (blur, bad light, tiny/off-angle faces, extra people in frame)
-are the top cause of false rejections and wrong 1:1 verdicts. Every check in
-this module is a cheap OpenCV/numpy measurement plus the detector output the
-caller already has — no extra model downloads, no network, never raises.
-
-Two stages (orchestrated by ``face_match.run_face_match``):
-
-1. :func:`assess_capture` — whole-image hygiene, no face detection needed
-   (resolution floor, lens-covered / flash-blown exposure).
-2. :func:`assess_face` — per-face usability on the detector's chosen face
-   crop (blur, brightness, face size, head pose from landmarks, face count,
-   occlusion advisory).
-
-Inputs smaller than :data:`REFERENCE_MAX_DIM` are pre-cropped reference
-thumbnails (e.g. 96px registry photos), not camera captures — hard gates are
-skipped for those (``reference_mode``) so enrolled reference data keeps
-verifying; only face presence is required.
-
-Reason codes are stable strings (see :data:`RECAPTURE_GUIDANCE`) so the API
-and UI can render "please recapture" prompts without parsing free text.
-"""
 
 from __future__ import annotations
 
@@ -95,7 +72,6 @@ _ROLE_LABEL = {"live": "live capture", "document": "document photo"}
 
 @dataclass
 class QualityReport:
-    """Outcome of the quality gates for one input image."""
 
     role: str
     passed: bool = True
@@ -125,11 +101,6 @@ class QualityReport:
 
 
 def laplacian_sharpness(gray: Any, norm_width: int = 200) -> float:
-    """Variance of Laplacian on a width-normalised grayscale crop.
-
-    Normalising first keeps the threshold meaningful across resolutions:
-    a sharp 96px thumbnail and a sharp 1024px frame score comparably.
-    """
     import cv2
 
     g = gray
@@ -140,7 +111,6 @@ def laplacian_sharpness(gray: Any, norm_width: int = 200) -> float:
 
 
 def brightness_stats(bgr: Any) -> Tuple[float, float, float, float]:
-    """Return (mean_V, std_V, dark_frac, bright_frac) for a BGR image."""
     import cv2
     import numpy as np
 
@@ -155,12 +125,6 @@ def brightness_stats(bgr: Any) -> Tuple[float, float, float, float]:
 
 
 def yaw_proxy_from_kps(kps: Any) -> Optional[float]:
-    """Estimate head yaw from 5-point landmarks, independent of image size.
-
-    kps order (InsightFace): left_eye, right_eye, nose, mouth_l, mouth_r.
-    Returns (nose.x − eye_mid.x) / eye_dist — ≈0 frontal, ±0.4+ in profile.
-    Returns None when landmarks are missing/unusable.
-    """
     try:
         import numpy as np
 
@@ -178,13 +142,6 @@ def yaw_proxy_from_kps(kps: Any) -> Optional[float]:
 
 
 def occlusion_hint(face_crop_bgr: Any) -> Tuple[bool, Dict[str, float]]:
-    """Advisory mask/scarf/hand check on a face crop.
-
-    A covering over the mouth region wipes out edges there while the eyes
-    stay textured, so a collapsed lower/upper Canny-edge-density ratio is
-    suspicious. Beards fool naive versions of this test, hence ADVISORY
-    ONLY — never a hard gate (see module docstring).
-    """
     import cv2
     import numpy as np
 
@@ -212,7 +169,6 @@ def occlusion_hint(face_crop_bgr: Any) -> Tuple[bool, Dict[str, float]]:
 
 
 def assess_capture(image_bgr: Any, role: str) -> QualityReport:
-    """Stage 1 — whole-image hygiene (no face detection required)."""
     rep = QualityReport(role=role)
     try:
         h, w = image_bgr.shape[:2]
@@ -252,12 +208,6 @@ def assess_face(
     role: str,
     face_crop_bgr: Any = None,
 ) -> QualityReport:
-    """Stage 2 — usability of the detector's chosen face.
-
-    ``face`` is the InsightFace face object (needs ``bbox``; ``kps`` used
-    for pose when present). ``face_crop_bgr`` may be supplied to skip
-    re-cropping (tests); otherwise it is cropped with padding here.
-    """
     rep = QualityReport(role=role)
     try:
         ih, iw = image_bgr.shape[:2]
@@ -375,7 +325,6 @@ def assess_face(
 
 
 def combine_reports(*reports: QualityReport) -> Dict[str, Any]:
-    """Merge per-input reports into the raw_output quality block."""
     failed_targets = sorted({r.role for r in reports if not r.passed})
     reasons: List[str] = []
     for r in reports:

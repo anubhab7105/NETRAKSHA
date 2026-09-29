@@ -1,12 +1,3 @@
-"""Tests for face-image quality gates (pipeline/face_quality.py + wiring).
-
-Failure modes from the field: poor light, motion blur, tiny/distant faces,
-side-angle captures, and extra people in frame must request a RECAPTURE —
-never a fabricated match/mismatch. Reference thumbnails (tiny registry
-photos) stay exempt so enrolled data keeps verifying.
-
-Run:  python -m pytest tests/test_face_quality.py -v
-"""
 
 from __future__ import annotations
 
@@ -29,7 +20,6 @@ from pipeline.face_quality import (
 
 
 def _checkerboard(size: int = 400, squares: int = 8) -> np.ndarray:
-    """High-texture synthetic capture (BGR)."""
     tile = size // squares
     board = np.zeros((size, size), np.uint8)
     for y in range(squares):

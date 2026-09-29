@@ -1,4 +1,3 @@
-"""Rubber-sheet (polar) normalization of segmented iris."""
 
 from __future__ import annotations
 import cv2
@@ -6,7 +5,6 @@ import numpy as np
 from typing import Dict, Any
 
 def normalize_iris(eye_bgr: np.ndarray, pupil: tuple, iris: tuple, mask=None) -> Dict[str, Any]:
-    """Unwrap iris ring to polar representation (64x512)."""
     try:
         px, py, pr = pupil
         ix, iy, ir = iris

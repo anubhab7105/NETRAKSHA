@@ -1,15 +1,3 @@
-"""ORM models for the AI Document Screening System.
-
-All 7 entities from Schema.md:
-  1. Officer        — authenticated security personnel
-  2. CitizenRegistry — official reference identity records
-  3. ScreeningCase  — a single document screening event
-  4. ExtractedField — per-field OCR extraction with DB reconciliation
-  5. ModuleResult   — per-pipeline-module output with evidence
-  6. OfficerAction  — human override decisions (clear/deny/escalate)
-  7. AuditLog       — append-only immutable event ledger
-  + WatchlistEntry  — mocked watchlist records
-"""
 
 from __future__ import annotations
 
@@ -33,7 +21,6 @@ from sqlalchemy.orm import DeclarativeBase, relationship
 
 
 class Base(DeclarativeBase):
-    """Declarative base for all ORM models."""
     pass
 
 
@@ -133,14 +120,6 @@ class CitizenRegistry(Base):
 
 
 class RegistryEnrollment(Base):
-    """Controlled-enrollment request for the master citizen registry.
-
-    Single-supervisor direct writes to ``citizens_registry`` are closed.
-    A supervisor REQUESTS (create or delete); a DIFFERENT supervisor must
-    APPROVE (or reject) before anything touches the authoritative table.
-    Signed authority imports bypass this queue (the HMAC signature from the
-    issuing authority is the second factor) and are recorded as such.
-    """
 
     __tablename__ = "registry_enrollments"
 
@@ -450,7 +429,6 @@ class AuditLog(Base):
 
     @staticmethod
     async def create_with_chain(session, **kwargs):
-        """Create an audit log entry with hash chaining."""
         import hashlib, hmac, os
 
         try:
@@ -482,18 +460,6 @@ class AuditLog(Base):
 
 
 class IdempotencyRecord(Base):
-    """Deduplicates screening requests across network retries.
-
-    Scope (per fix spec): authenticated officer + capture session (JWT jti)
-    + input hash (SHA-256 over input file hashes) + client idempotency key.
-
-    * (officer_id, idempotency_key) is UNIQUE — same key replayed with a
-      different payload/session is rejected with 422.
-    * Same officer + session + input hash within a short window suppresses
-      double-click duplicates even when the client generated a fresh key.
-    * New table (not a column addition) so deployed DBs pick it up via
-      ``create_all`` on next restart with no manual migration.
-    """
 
     __tablename__ = "screening_idempotency"
     __table_args__ = (

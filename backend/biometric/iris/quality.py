@@ -1,4 +1,3 @@
-"""Iris quality assessment."""
 
 from __future__ import annotations
 import cv2
@@ -6,7 +5,6 @@ import numpy as np
 from typing import Dict, Any
 
 def assess_iris_quality(eye_bgr) -> Dict[str, Any]:
-    """Check blur, illumination, iris area, reflections."""
     try:
         from pipeline.common import load_image
         bgr = load_image(eye_bgr) if not isinstance(eye_bgr, np.ndarray) else eye_bgr

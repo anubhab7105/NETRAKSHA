@@ -1,12 +1,3 @@
-"""BiometricProvider abstraction for iris verification.
-
-RGBProvider is the smartphone prototype (visible-light).
-NIRProvider is a future stub for dedicated IR hardware.
-
-The architecture isolates the pipeline so the same enroll/verify
-calls work for both, and the risk engine only sees the provider's
-output, not its internals.
-"""
 
 from __future__ import annotations
 
@@ -16,26 +7,21 @@ from typing import Dict, Any, Optional
 import numpy as np
 
 class BiometricProvider(abc.ABC):
-    """Abstract iris provider."""
 
     @abc.abstractmethod
     def enroll(self, eye_image, eye: str = "left") -> Dict[str, Any]:
-        """Process an eye image into a template. Returns {template, mask, quality}."""
         raise NotImplementedError
 
     @abc.abstractmethod
     def verify(self, probe_image, reference_template: bytes, reference_mask: bytes) -> Dict[str, Any]:
-        """Compare a probe eye image against a stored template."""
         raise NotImplementedError
 
     @abc.abstractmethod
     def quality(self, eye_image) -> Dict[str, Any]:
-        """Assess iris image quality."""
         raise NotImplementedError
 
     @abc.abstractmethod
     def liveness(self, eye_frames) -> Dict[str, Any]:
-        """Iris PAD on a short eye frame burst."""
         raise NotImplementedError
 
     @property
@@ -50,12 +36,6 @@ class BiometricProvider(abc.ABC):
 
 
 class RGBProvider(BiometricProvider):
-    """Visible-light smartphone iris (prototype).
-
-    Uses classical CV (Hough circles + Gabor) on RGB. Not equivalent to NIR,
-    but allows the full workflow on Android Chrome without specialized hardware.
-    Documented as prototype/research grade.
-    """
 
     name = "RGBProvider"
     version = "1.0-rgb-prototype"
@@ -113,13 +93,6 @@ class RGBProvider(BiometricProvider):
 
 
 class NIRProvider(BiometricProvider):
-    """Future NIR hardware provider — stub.
-
-    Real NIR acquisition requires 850nm illumination and an IR sensor
-    (e.g., IriTech IriShield). This stub documents the interface and
-    returns inconclusive so the system remains functional until hardware
-    is integrated. Do not pretend RGB is equivalent to NIR.
-    """
 
     name = "NIRProvider"
     version = "0.1-stub"
@@ -138,7 +111,6 @@ class NIRProvider(BiometricProvider):
 
 
 def get_provider(name: str = "rgb") -> BiometricProvider:
-    """Factory — 'rgb' (default) or 'nir'."""
     name = (name or "rgb").strip().lower()
     if name in ("nir", "ir"):
         return NIRProvider()

@@ -1,17 +1,3 @@
-"""Comprehensive tests for all pipeline modules.
-
-Covers the 6 test scenarios from plan.md Phase 4:
-  1. Genuine document + matching face + matching DB → Green
-  2. Forged birthdate on physical document vs. DB → Yellow/Red with discrepancy table
-  3. Tampered document image (copy-move) → Red/Yellow with ELA heatmap
-  4. Imposter face / photo substitution → Red with 3-way face mismatch
-  5. Watchlist hit → Red with violet "MOCKED DATA" badge
-  6. Sub-second tamper execution assertion (< 1.5s)
-
-Also includes the original 5-module tests and fault isolation checks.
-
-Run:  python -m pytest tests/ -v
-"""
 
 from __future__ import annotations
 
@@ -41,7 +27,6 @@ FACES = [FACE_A, FACE_A2, FACE_B]
 
 
 def assert_contract(result):
-    """Every module result must satisfy the shared contract (Shema.md)."""
     assert result.module_name in {
         "ocr", "tamper", "deepfake", "face_match", "liveness",
     }
@@ -183,10 +168,8 @@ def test_evidence_images_written():
 
 
 class TestChecksums:
-    """Unit tests for all algorithmic checksum validators."""
 
     def test_verhoeff_valid_aadhaar(self):
-        """Valid Aadhaar numbers should pass Verhoeff."""
 
 
         digit = checksums.compute_verhoeff_digit("12345678901")
@@ -194,7 +177,6 @@ class TestChecksums:
         assert checksums.validate_verhoeff(full) is True
 
     def test_verhoeff_invalid_aadhaar(self):
-        """Invalid Aadhaar should fail Verhoeff."""
         assert checksums.validate_verhoeff("123456789012") is False or \
                checksums.validate_verhoeff("000000000000") is True
 
@@ -204,42 +186,35 @@ class TestChecksums:
         assert checksums.validate_verhoeff(bad_full) is False
 
     def test_verhoeff_with_spaces(self):
-        """Aadhaar with spaces/hyphens should still validate."""
         digit = checksums.compute_verhoeff_digit("12345678901")
         full = f"1234 5678 901{digit}"
         assert checksums.validate_verhoeff(full) is True
 
     def test_verhoeff_wrong_length(self):
-        """Non-12-digit strings should fail."""
         assert checksums.validate_verhoeff("123") is False
         assert checksums.validate_verhoeff("") is False
         assert checksums.validate_verhoeff("abcdefghijkl") is False
 
     def test_pan_valid(self):
-        """Valid PAN format should pass."""
         assert checksums.validate_pan_format("ABCPD1234E") is True
         assert checksums.validate_pan_format("ZZZZZ9999Z") is True
 
     def test_pan_invalid(self):
-        """Invalid PAN format should fail."""
         assert checksums.validate_pan_format("1BCPD1234E") is False
         assert checksums.validate_pan_format("ABCPD12345") is False
         assert checksums.validate_pan_format("ABCPD123") is False
         assert checksums.validate_pan_format("") is False
 
     def test_epic_valid(self):
-        """Valid EPIC format should pass."""
         assert checksums.validate_epic_format("ABC1234567") is True
         assert checksums.validate_epic_format("XYZ0000000") is True
 
     def test_epic_invalid(self):
-        """Invalid EPIC format should fail."""
         assert checksums.validate_epic_format("AB12345678") is False
         assert checksums.validate_epic_format("ABCD123456") is False
         assert checksums.validate_epic_format("") is False
 
     def test_icao_9303_valid_mrz(self):
-        """ICAO 9303 validation on correctly-checksummed MRZ lines."""
 
         doc_num = "AB1234567"
         doc_check = str(checksums.icao_check_digit(doc_num))
@@ -279,7 +254,6 @@ class TestChecksums:
         assert result["composite"]["ok"] is True
 
     def test_validate_document_number_dispatch(self):
-        """Test the unified dispatch function."""
         digit = checksums.compute_verhoeff_digit("23456789012")
         r = checksums.validate_document_number("aadhaar", f"23456789012{digit}")
         assert r["valid"] is True
@@ -300,7 +274,6 @@ class TestChecksums:
 
 
 class TestDemographic:
-    """Tests for demographic reconciliation."""
 
     def test_perfect_match(self):
         extracted = {
@@ -324,7 +297,6 @@ class TestDemographic:
         assert result["mismatch_count"] == 0
 
     def test_dob_mismatch_flags_critical(self):
-        """Forged birthdate → critical mismatch (plan scenario 2)."""
         extracted = {
             "full_name": "Rajesh Kumar",
             "date_of_birth": "1995-04-12",
@@ -343,7 +315,6 @@ class TestDemographic:
         assert "Date of Birth" in result["critical_mismatches"]
 
     def test_name_fuzzy_match(self):
-        """Names with minor differences should still match (token-sort)."""
         extracted = {"full_name": "Kumar Rajesh", "date_of_birth": "1988-04-12",
                      "document_number": "234567890123"}
         db_record = {"full_name": "Rajesh Kumar", "date_of_birth": "1988-04-12",
@@ -353,7 +324,6 @@ class TestDemographic:
         assert name_comp["status"] == "match"
 
     def test_date_format_normalization(self):
-        """Different date formats should still match."""
         extracted = {"full_name": "Test", "date_of_birth": "12/04/1988",
                      "document_number": "123"}
         db_record = {"full_name": "Test", "date_of_birth": "1988-04-12",
@@ -368,17 +338,14 @@ class TestDemographic:
 
 
 class TestWatchlist:
-    """Tests for watchlist provider."""
 
     def test_mock_provider_clear(self):
-        """Non-watchlisted person should be clear."""
         result = watchlist.check_watchlist(name="Rajesh Kumar", id_number="234567890123")
         assert result.is_hit is False
         assert result.is_mocked is True
         assert len(result.hits) == 0
 
     def test_mock_provider_hit_by_name(self):
-        """Watchlisted person should be detected by name (plan scenario 5)."""
         result = watchlist.check_watchlist(name="Vikram Singh Chauhan")
         assert result.is_hit is True
         assert result.is_mocked is True
@@ -386,13 +353,11 @@ class TestWatchlist:
         assert "Lookout Circular" in result.hits[0].source
 
     def test_mock_provider_hit_by_id(self):
-        """Watchlisted person should be detected by ID number."""
         result = watchlist.check_watchlist(id_number="BFKPT4567R")
         assert result.is_hit is True
         assert len(result.hits) >= 1
 
     def test_watchlist_result_serialization(self):
-        """WatchlistResult should serialize to dict correctly."""
         result = watchlist.check_watchlist(name="Vikram Singh Chauhan")
         d = result.to_dict()
         assert "is_hit" in d
@@ -405,10 +370,8 @@ class TestWatchlist:
 
 
 class TestRiskEngine:
-    """Tests for the composite risk engine."""
 
     def test_all_clear_green(self):
-        """All modules clear → Green verdict (plan scenario 1)."""
         assessment = risk_engine.assess_risk(
             demographic_result={
                 "overall_match": True,
@@ -428,7 +391,6 @@ class TestRiskEngine:
         assert len(assessment.flags) == 0
 
     def test_demographic_mismatch_forces_red(self):
-        """Critical demographic mismatch → Red (plan scenario 2)."""
         assessment = risk_engine.assess_risk(
             demographic_result={
                 "overall_match": False,
@@ -445,7 +407,6 @@ class TestRiskEngine:
         assert any("DEMOGRAPHIC" in f for f in assessment.flags)
 
     def test_tampered_doc_flags_red(self):
-        """High tamper score → Red (plan scenario 3)."""
         assessment = risk_engine.assess_risk(
             tamper_score=0.85,
             face_similarity=0.9,
@@ -455,7 +416,6 @@ class TestRiskEngine:
         assert any("TAMPER" in f for f in assessment.flags)
 
     def test_face_mismatch_forces_red(self):
-        """Face mismatch → Red (plan scenario 4)."""
         assessment = risk_engine.assess_risk(
             face_similarity=0.25,
             face_match=False,
@@ -465,7 +425,6 @@ class TestRiskEngine:
         assert "FACE_MISMATCH" in assessment.flags
 
     def test_watchlist_hit_forces_red(self):
-        """Watchlist hit → Red (plan scenario 5)."""
         assessment = risk_engine.assess_risk(
             watchlist_hit=True,
             watchlist_result={"is_hit": True, "is_mocked": True},
@@ -477,7 +436,6 @@ class TestRiskEngine:
         assert "WATCHLIST_HIT" in assessment.flags
 
     def test_liveness_failure_forces_yellow(self):
-        """Liveness failure → at least Yellow."""
         assessment = risk_engine.assess_risk(
             liveness_live=False,
             liveness_score=0.1,
@@ -489,7 +447,6 @@ class TestRiskEngine:
         assert "LIVENESS_FAILURE" in assessment.flags
 
     def test_inconclusive_module_forces_yellow(self):
-        """Any inconclusive module → at least Yellow."""
         assessment = risk_engine.assess_risk(
             tamper_status="inconclusive",
             face_similarity=0.92,
@@ -499,7 +456,6 @@ class TestRiskEngine:
         assert any("INCONCLUSIVE" in f for f in assessment.flags)
 
     def test_risk_assessment_serialization(self):
-        """RiskAssessment should serialize to dict."""
         assessment = risk_engine.assess_risk(tamper_score=0.5)
         d = assessment.to_dict()
         assert "verdict" in d
@@ -513,19 +469,12 @@ class TestRiskEngine:
 
 
 class TestGeminiScanner:
-    """Tests for the Gemini AI scanner (offline simulation mode)."""
 
     @pytest.fixture(autouse=True)
     def _force_offline_gemini(self, monkeypatch):
-        """Isolate from any real GEMINI_API_KEY in the developer's .env.
-
-        These tests assert offline-simulation behaviour, so the key must be
-        absent regardless of local config (the scanner reads env lazily).
-        """
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 
     def test_scan_returns_structured_output(self):
-        """Scanner should return complete structured JSON."""
         result = scan_document(str(GENUINE), str(FACE_A))
         assert "document_type" in result
         assert "demographics" in result
@@ -534,7 +483,6 @@ class TestGeminiScanner:
         assert result["is_simulated"] is True
 
     def test_scan_demographics_populated(self):
-        """Demographics should have key fields."""
         result = scan_document(str(GENUINE), str(FACE_A))
         demo = result["demographics"]
         assert "full_name" in demo
@@ -542,7 +490,6 @@ class TestGeminiScanner:
         assert "document_number" in demo
 
     def test_scan_face_match_populated(self):
-        """Face match data should be populated."""
         result = scan_document(str(GENUINE), str(FACE_A))
         fm = result["three_way_face_match"]
         assert "live_vs_doc_match" in fm
@@ -550,7 +497,6 @@ class TestGeminiScanner:
         assert 0.0 <= fm["similarity_score"] <= 1.0
 
     def test_mismatch_simulation(self):
-        """Mismatch simulation should produce low scores."""
         result = simulate_mismatch_scan(str(GENUINE), str(FACE_B))
         assert result["three_way_face_match"]["live_vs_doc_match"] is False
         assert result["three_way_face_match"]["similarity_score"] < 0.5
@@ -562,7 +508,6 @@ class TestGeminiScanner:
 
 
 def test_tamper_execution_speed():
-    """Tamper detection must complete in < 1.5 seconds on CPU."""
     start = time.perf_counter()
     r = tamper.run_tamper(GENUINE)
     elapsed = time.perf_counter() - start
@@ -571,7 +516,6 @@ def test_tamper_execution_speed():
 
 
 def test_tamper_execution_speed_tampered():
-    """Tampered doc analysis must also complete in < 1.5 seconds."""
     start = time.perf_counter()
     r = tamper.run_tamper(TAMPERED)
     elapsed = time.perf_counter() - start

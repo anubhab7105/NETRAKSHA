@@ -1,4 +1,3 @@
-"""Iris PAD — separate from face liveness."""
 
 from __future__ import annotations
 import cv2
@@ -6,14 +5,6 @@ import numpy as np
 from typing import Dict, Any, List
 
 def check_iris_liveness(eye_frames) -> Dict[str, Any]:
-    """Check iris liveness across a short eye burst.
-
-    Signals:
-    - Temporal pupil/iris movement
-    - Corneal reflections
-    - Texture variance
-    - Screen replay (FFT)
-    """
     try:
         from pipeline.common import load_image
         frames = []

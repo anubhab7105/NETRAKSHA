@@ -1,10 +1,3 @@
-"""Tests for registry reference-photo resolution (backend.app._resolve_db_photo).
-
-Citizen `photo_uri` values may be server-local paths (legacy seed rows) or
-remote Supabase Storage signed URLs (real enrollments). The resolver must
-turn both into a local file for the 3-way face matcher — and degrade with
-an explicit reason, never raise.
-"""
 
 from __future__ import annotations
 
@@ -26,7 +19,6 @@ class _QuietHandler(SimpleHTTPRequestHandler):
 
 @pytest.fixture()
 def file_server():
-    """Serve samples/ over loopback HTTP (stands in for Supabase Storage)."""
     handler = functools.partial(_QuietHandler, directory=str(SAMPLES))
     srv = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=srv.serve_forever, daemon=True)
