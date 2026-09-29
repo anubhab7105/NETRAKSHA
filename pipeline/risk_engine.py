@@ -51,6 +51,7 @@ def assess_risk(
     flags: List[str] = []
     recommendations: List[str] = []
     risk_components: List[float] = []
+    # Fail-closed floor: hard flags only escalate min_verdict, never de-escalate it.
     min_verdict = "Green"
 
 

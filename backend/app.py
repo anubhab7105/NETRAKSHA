@@ -86,6 +86,7 @@ _MFA_TOKEN_MINUTES = int(os.environ.get("MFA_TOKEN_MINUTES", "5"))
 
 
 def _utcnow_naive() -> datetime:
+    # Naive timestamps only: asyncpg rejects aware datetimes for TIMESTAMP WITHOUT TIME ZONE.
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 try:
@@ -485,6 +486,7 @@ async def _auth(request, allow_stale_password: bool = False,
         raise HTTPException(status_code=401, detail="Missing Bearer token")
     token = auth[7:]
     payload = _decode_token(token)
+    # Reject short-lived MFA step-up tokens here so they cannot be reused as session credentials.
     if payload.get("purpose", "session") != "session":
         raise HTTPException(status_code=401, detail="Invalid token purpose for this endpoint")
 
@@ -537,6 +539,7 @@ async def login(req: LoginRequest, request: Request):
         officer = result.scalar_one_or_none()
 
 
+    # Dummy-verify unknown users to keep response timing uniform and prevent username enumeration.
     password_ok = _verify_password(
         req.password, officer.password_hash if officer else DUMMY_HASH)
     if not officer or not password_ok:
@@ -825,6 +828,7 @@ _IDEMPOTENCY_HASH_WINDOW_MINUTES = 10
 
 
 def _extract_idempotency_key(request: Request, form_fallback: Optional[str] = None) -> str:
+    # Accept header or form field: some proxies strip custom headers on multipart uploads.
     key = (
         request.headers.get("Idempotency-Key")
         or request.headers.get("X-Idempotency-Key")
@@ -2731,11 +2735,13 @@ async def override_case(case_id: int, req: OverrideRequest, request: Request):
 
 
 
+        # Decided cases are immutable so audit history cannot be rewritten by a second override.
         if case.status == "decided":
             raise HTTPException(status_code=409, detail="Conflict: case already has a final decision and cannot be modified")
 
         client_version = req.version
 
+        # Optimistic concurrency: reject stale overrides so two officers cannot silently overwrite each other.
         if_match = request.headers.get("If-Match")
         if if_match is not None:
             try:
@@ -2749,6 +2755,7 @@ async def override_case(case_id: int, req: OverrideRequest, request: Request):
                 detail=f"Conflict: case was modified by another officer (expected version {client_version}, current {current_version}). Please refresh and retry.",
             )
 
+        # Officers may escalate but never finally deny: denials require supervisor four-eyes approval.
         if req.action == "deny" and role == "officer":
             raise HTTPException(
                 status_code=403,
@@ -4651,7 +4658,7 @@ def _verify_evidence_token(token: str) -> dict:
 
 
 async def _check_evidence_access(filename: str, officer: dict) -> None:
-
+    # Reject path traversal before the DB lookup so crafted filenames cannot escape the evidence dir.
     safe_name = Path(filename).name
     if safe_name != filename or "/" in filename or "\\" in filename or ".." in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
@@ -4765,6 +4772,7 @@ async def health():
 
 @app.get("/evidence/{path:path}")
 async def block_public_evidence(path: str):
+    # No public evidence mount: heatmaps may contain PII, so only signed /api/evidence/* links are valid.
     raise HTTPException(status_code=404, detail="Evidence files are now served via authenticated /api/evidence endpoints — please use the case report view")
 
 
@@ -4774,6 +4782,7 @@ async def block_public_evidence(path: str):
 
 @app.get("/{full_path:path}")
 async def serve_spa(full_path: str):
+    # Catch-all SPA fallback must stay last or it would swallow /api/* routes.
     from fastapi.responses import FileResponse
 
     if full_path.startswith("api/"):

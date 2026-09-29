@@ -257,7 +257,7 @@ export default function Scanner() {
   const [idempotencyKey, setIdempotencyKey] = useState(() => newIdempotencyKey());
 
   
-  
+  // Mint a fresh key when inputs change: the backend rejects a reused key with different bytes as 422.
   useEffect(() => {
     setIdempotencyKey(newIdempotencyKey());
     
@@ -298,6 +298,7 @@ export default function Scanner() {
     }
 
     try {
+      // Send the key in both header and form: proxies may strip custom headers on multipart uploads.
       const res = await api.post('/screen', formData, {
         headers: {
           
@@ -306,6 +307,7 @@ export default function Scanner() {
       });
       
       
+      // Rotate after success so a retry starts a new screening instead of replaying the last case.
       setIdempotencyKey(newIdempotencyKey());
       navigate(`/case/${res.data.case_id}`);
     } catch (err) {

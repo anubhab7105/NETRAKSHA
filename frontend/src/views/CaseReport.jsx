@@ -103,6 +103,7 @@ const maskAadhaar = (fieldName, value) => {
 
 
 const EvidenceImage = ({ evidenceUri, alt }) => {
+  // Evidence has no public mount: each image needs a short-lived signed token tied to this officer.
   const [src, setSrc] = useState(null);
   const [error, setError] = useState(false);
   useEffect(() => {

@@ -237,6 +237,7 @@ def scan_document(
 
     result = _simulate_scan(document_image_path, live_capture_path, db_reference_path)
     elapsed = (time.perf_counter() - start) * 1000
+    # Simulated scans must never force Red: without cloud evidence the verdict stays advisory Yellow.
     result["is_simulated"] = True
 
     _has_real_key = bool(

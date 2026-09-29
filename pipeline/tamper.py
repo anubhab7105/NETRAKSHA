@@ -104,6 +104,7 @@ def _copy_move_detect(
                 if (dx * dx + dy * dy) ** 0.5 < min_dist:
                     continue
                 key = (round(dx / stride), round(dy / stride))
+                # Ignore horizontal-only repeats: printed text rows naturally duplicate sideways.
                 if abs(dy) >= 2:
                     offsets[key] += 1
                     n_matches += 1

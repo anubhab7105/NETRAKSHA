@@ -123,6 +123,7 @@ Base URL: ${SITE_URL.replace('netraksha.xyz', 'api.netraksha.xyz')}/
 function seoFiles() {
   return {
     name: 'ssb-seo-files',
+    // Only index.html gets %SITE_URL% replacement: files under public/ ship verbatim.
     transformIndexHtml(html) {
       return html.replaceAll('%SITE_URL%', SITE_URL)
     },

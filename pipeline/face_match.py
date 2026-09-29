@@ -28,8 +28,10 @@ MODULE_NAME = "face_match"
 
 
 
+# Calibrated operating point: 0.45-0.65 is the review band, 0.55 forces Red below it.
 MATCH_THRESHOLD = 0.55
 
+# InsightFace inference is not thread-safe: serialize access to the shared session.
 _face_analysis_lock = threading.Lock()
 _face_analysis = None
 _provider_used = None
@@ -122,6 +124,7 @@ def _get_face_analysis():
 
         from onnxruntime import get_available_providers
         available = get_available_providers()
+        # Prefer GPU when present but always fall back to CPU: production deploys are CPU-only.
         pref = ("CUDAExecutionProvider", "ROCMExecutionProvider",
                 "TensorrtExecutionProvider", "CoreMLExecutionProvider",
                 "CPUExecutionProvider")

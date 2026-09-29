@@ -3,6 +3,7 @@ import axios from 'axios';
 const envBase = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
 
 function resolveBaseURL() {
+  // Dev and :8000 always use same-origin /api so VITE_API_BASE_URL cannot misroute local traffic.
   if (typeof window === 'undefined') {
     return envBase && envBase.endsWith('/api') ? envBase : `${envBase || 'http://localhost:8000'}/api`;
   }
@@ -61,6 +62,7 @@ api.interceptors.response.use(
   (res) => res,
   (err) => {
     const url = err.config?.url || '';
+    // Exempt step-up calls from session wipe so MFA enrollment cannot log itself out.
     const isStepUp = STEP_UP_URLS.some((u) => url.includes(u));
     if (err.response && err.response.status === 401 && !isStepUp) {
       localStorage.removeItem('token');

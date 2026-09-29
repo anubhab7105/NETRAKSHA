@@ -526,6 +526,7 @@ def _run_ocr_mrz_impl(img):
     }
 
     if not tesseract_ok and not mrz_fields:
+        # Missing Tesseract degrades to inconclusive (Yellow floor) rather than failing the screening.
         return inconclusive_result(MODULE_NAME, "no OCR engine and no MRZ parsed")
 
     return ok_result(MODULE_NAME, round(clarity, 4), raw, evidence_uri=None)

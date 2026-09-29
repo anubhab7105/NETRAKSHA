@@ -100,7 +100,7 @@ def new_evidence_path(module: str, ext: str = "png") -> pathlib.Path:
 
 @dataclass
 class ModuleResult:
-
+    # status is ok|inconclusive only: modules must degrade gracefully, never raise into the request.
     module_name: str
     score: Optional[float]
     status: str
@@ -139,6 +139,7 @@ def ok_result(
 
 
 def inconclusive_result(module_name: str, reason: str) -> ModuleResult:
+    # score=None forces the risk engine to floor the verdict at Yellow instead of trusting a partial signal.
     return ModuleResult(
         module_name=module_name,
         score=None,

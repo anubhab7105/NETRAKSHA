@@ -66,6 +66,7 @@ else:
         "max_overflow": int(os.environ.get("DB_MAX_OVERFLOW", "10")),
         "pool_pre_ping": True,
         "connect_args": {
+            # Disable server-side statement cache: Supabase pooler (pgbouncer) rejects prepared statements.
             "statement_cache_size": 0
         },
     }

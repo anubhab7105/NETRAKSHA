@@ -72,6 +72,7 @@ class DBWatchlistProvider(WatchlistProvider):
     def _normalize(self, s: Optional[str]) -> str:
         if not s:
             return ""
+        # Normalize before matching so spacing/hyphen variants cannot evade the watchlist.
         return re.sub(r"[\s\-]", "", s.strip().lower())
 
     def _fuzzy_name_match(self, query: str, target: str) -> float:

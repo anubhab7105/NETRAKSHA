@@ -86,6 +86,7 @@ const ProtectedRoute = ({ children }) => {
 
 
 const SecurityGate = ({ children }) => {
+  // /change-password stays outside this gate or forced-rotation users would redirect-loop.
   const token = localStorage.getItem('token');
   if (!token) return <Navigate to="/login" replace />;
   if (localStorage.getItem('must_change_password') === '1' ||

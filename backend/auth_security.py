@@ -73,6 +73,7 @@ def validate_new_password(password: str) -> None:
 
 
 DUMMY_HASH = "$2b$12$0cqFtMWkcZzA/0B/BAPssOaLTODk0OfimIdj/ergCYVzt4QuXCYwC"
+# Fixed bcrypt hash for unknown users: keeps login timing uniform to prevent username enumeration.
 
 
 
@@ -105,6 +106,7 @@ def totp_at(secret: str, for_time: float | None = None, step: int = 30) -> str:
 
 def verify_totp(secret: str, code: str, *, window: int = 1,
                 for_time: float | None = None, step: int = 30) -> bool:
+    # Narrow ±1-step window tolerates authenticator clock drift without widening the replay window.
     return match_window(secret, code, max_window=window,
                         for_time=for_time, step=step) is not None
 
