@@ -30,6 +30,7 @@ def _normalize_date(date_str: Optional[str]) -> str:
     m = re.match(r"^(\d{2})(\d{2})(\d{2})$", s)
     if m and 1 <= int(m.group(2)) <= 12 and 1 <= int(m.group(3)) <= 31:
         yy = int(m.group(1))
+        # YY<=39 maps to 2000s: border travelers' birth years fall within the last ~40 years.
         year = 2000 + yy if yy <= 39 else 1900 + yy
         return f"{year:04d}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
 

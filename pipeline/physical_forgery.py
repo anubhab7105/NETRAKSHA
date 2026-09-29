@@ -660,6 +660,7 @@ def run_physical_forgery(
 
     doc_type = _norm_type(document_type_hint)
     per_check: Dict[str, dict] = {}
+    # Isolate each heuristic: one failing check degrades to error rather than sinking the whole module.
     for name in _CHECK_ORDER:
         try:
             if name == "layout":

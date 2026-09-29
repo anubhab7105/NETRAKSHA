@@ -171,6 +171,7 @@ async def seed_all() -> dict:
             "must_change": True,
         }]
     else:
+        # Force rotation on first login so published demo credentials cannot be reused beyond setup.
         officers_to_seed = [{**o, "must_change": True} for o in OFFICERS]
 
     async with async_session() as session:

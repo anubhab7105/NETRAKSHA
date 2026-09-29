@@ -34,6 +34,7 @@ def _fft_metrics(face_bgr: np.ndarray) -> dict:
 
 
     h, w = gray.shape
+    # Hanning window suppresses edge discontinuities that would otherwise leak into high frequencies.
     win = cv2.createHanningWindow((w, h), cv2.CV_64F)
     windowed = gray.astype(np.float64) * win
 
