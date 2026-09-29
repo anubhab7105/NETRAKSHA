@@ -1,0 +1,6 @@
+# Railway Nixpacks — use Python launcher so $PORT is read via os.environ.
+# Shell form `sh -c 'exec python -m uvicorn ... --port ${PORT:-8000}'` also works,
+# but `python start.py` works even when start runs in exec form without a shell.
+
+[start]
+cmd = "python start.py"
