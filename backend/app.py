@@ -659,7 +659,7 @@ async def _revoke_jti(jti: str, officer_id: int, reason: str,
 
 @app.post("/auth/login", response_model=LoginResponse, include_in_schema=False)
 @app.post("/api/auth/login", response_model=LoginResponse)
-async def login(req: LoginRequest, request: Request):
+async def login(req: LoginRequest, request: Request, response: Response = None):
     """Authenticate officer, generate JWT session.
 
     Brute-force throttled per client IP and per username (429 when tripped).
@@ -743,10 +743,10 @@ async def login(req: LoginRequest, request: Request):
         role=officer.role,
         must_change_password=must_change,
         mfa_setup_required=mfa_setup_required,
-    ).model_dump()
-    resp = JSONResponse(body)
-    resp.set_cookie("nc_session", token, **_session_cookie_kwargs())
-    return resp
+    )
+    if response is not None:
+        response.set_cookie("nc_session", token, **_session_cookie_kwargs())
+    return body
 
 
 def _drift_hint(secret, code) -> str:
@@ -771,7 +771,7 @@ def _drift_hint(secret, code) -> str:
 
 
 @app.post("/api/auth/mfa/challenge", response_model=LoginResponse)
-async def mfa_challenge(req: MfaChallengeRequest, request: Request):
+async def mfa_challenge(req: MfaChallengeRequest, request: Request, response: Response = None):
     """Complete supervisor MFA login with a TOTP code. Issues the session."""
     try:
         payload = _decode_token(req.mfa_token)
@@ -809,14 +809,14 @@ async def mfa_challenge(req: MfaChallengeRequest, request: Request):
         role=officer.role,
         must_change_password=bool(getattr(officer, "must_change_password", False)),
         mfa_setup_required=False,
-    ).model_dump()
-    resp = JSONResponse(body)
-    resp.set_cookie("nc_session", token, **_session_cookie_kwargs())
-    return resp
+    )
+    if response is not None:
+        response.set_cookie("nc_session", token, **_session_cookie_kwargs())
+    return body
 
 
 @app.post("/api/auth/change-password")
-async def change_password(req: ChangePasswordRequest, request: Request):
+async def change_password(req: ChangePasswordRequest, request: Request, response: Response = None):
     """Rotate the caller's password (also clears the must-change flag)."""
     officer = await _auth(request, allow_stale_password=True, allow_mfa_setup=True)
     officer_id = int(officer["sub"])
@@ -848,9 +848,9 @@ async def change_password(req: ChangePasswordRequest, request: Request):
         await session.commit()
     await _revoke_jti(officer.get("jti") or "", officer_id, "password_changed",
                       _token_expiry_naive(officer))
-    resp = JSONResponse({"status": "ok", "message": "Password changed. Sign in again."})
-    resp.delete_cookie("nc_session", path="/")
-    return resp
+    if response is not None:
+        response.delete_cookie("nc_session", path="/")
+    return {"status": "ok", "message": "Password changed. Sign in again."}
 
 
 @app.post("/api/auth/mfa/setup")
@@ -931,7 +931,7 @@ async def mfa_verify(req: MfaVerifyRequest, request: Request):
 
 
 @app.post("/api/auth/mfa/disable")
-async def mfa_disable(req: MfaDisableRequest, request: Request):
+async def mfa_disable(req: MfaDisableRequest, request: Request, response: Response = None):
     """Disable your own supervisor MFA (password + current code required)."""
     officer = await _auth(request, allow_stale_password=True, allow_mfa_setup=True)
     _require_role(officer, "supervisor")
@@ -957,9 +957,9 @@ async def mfa_disable(req: MfaDisableRequest, request: Request):
         await session.commit()
     await _revoke_jti(officer.get("jti") or "", officer_id, "mfa_disabled",
                       _token_expiry_naive(officer))
-    resp = JSONResponse({"status": "ok", "message": "MFA disabled. Sign in and re-enroll before continuing operational work."})
-    resp.delete_cookie("nc_session", path="/")
-    return resp
+    if response is not None:
+        response.delete_cookie("nc_session", path="/")
+    return {"status": "ok", "message": "MFA disabled. Sign in and re-enroll before continuing operational work."}
 
 
 
@@ -968,7 +968,7 @@ async def mfa_disable(req: MfaDisableRequest, request: Request):
 
 @app.post("/auth/logout", include_in_schema=False)
 @app.post("/api/auth/logout")
-async def logout(request: Request):
+async def logout(request: Request, response: Response = None):
     """Terminate the caller's session: deny-list the JWT + clear the cookie."""
     try:
         officer = await _auth(request, allow_stale_password=True, allow_mfa_setup=True)
@@ -989,9 +989,9 @@ async def logout(request: Request):
     except Exception:
         pass
 
-    resp = JSONResponse({"status": "ok", "message": "Logged out"})
-    resp.delete_cookie("nc_session", path="/")
-    return resp
+    if response is not None:
+        response.delete_cookie("nc_session", path="/")
+    return {"status": "ok", "message": "Logged out"}
 
 
 
