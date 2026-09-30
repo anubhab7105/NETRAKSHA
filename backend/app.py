@@ -242,7 +242,7 @@ def collect_provenance(file_hashes: Optional[dict] = None, extra: Optional[dict]
 
     try:
         payload = json.dumps(prov, sort_keys=True).encode()
-        sig = _hmac.new(_JWT_SECRET.encode(), payload, _hashlib.sha256).hexdigest()
+        sig = _hmac.new(active_secret("JWT_SECRET").encode(), payload, _hashlib.sha256).hexdigest()
     except Exception:
         sig = ""
     return prov, sig
@@ -4992,7 +4992,10 @@ async def create_watchlist_entry(req: WatchlistCreateRequest, request: Request):
         from pipeline.watchlist import load_db_watchlist_provider, set_watchlist_provider
         _is_mocked = os.environ.get("WATCHLIST_MOCKED", "").lower() in ("1","true","yes")
         provider = await load_db_watchlist_provider(is_mocked=_is_mocked)
-        set_watchlist_provider(provider)
+        if provider._entries:
+            set_watchlist_provider(provider)
+        else:
+            print("[watchlist] reload after create: DB empty/unreachable — keeping current provider")
     except Exception as e:
         print(f"[watchlist] reload after create warning: {e}")
     return {"status": "ok", "entry": created}
@@ -5014,7 +5017,10 @@ async def delete_watchlist_entry(entry_id: int, request: Request):
         from pipeline.watchlist import load_db_watchlist_provider, set_watchlist_provider
         _is_mocked = os.environ.get("WATCHLIST_MOCKED", "").lower() in ("1","true","yes")
         provider = await load_db_watchlist_provider(is_mocked=_is_mocked)
-        set_watchlist_provider(provider)
+        if provider._entries:
+            set_watchlist_provider(provider)
+        else:
+            print("[watchlist] reload after delete: DB empty/unreachable — keeping current provider")
     except Exception as e:
         print(f"[watchlist] reload after delete warning: {e}")
     return {"status": "ok", "deleted_id": entry_id}
@@ -5024,9 +5030,14 @@ async def reload_watchlist(request: Request):
     """Hot-reload watchlist provider from DB — supervisor only (use after bulk Supabase edits)."""
     officer = await _auth(request)
     _require_role(officer, "supervisor")
-    from pipeline.watchlist import load_db_watchlist_provider, set_watchlist_provider
+    from pipeline.watchlist import load_db_watchlist_provider, set_watchlist_provider, get_watchlist_provider
     _is_mocked = os.environ.get("WATCHLIST_MOCKED", "").lower() in ("1","true","yes")
     provider = await load_db_watchlist_provider(is_mocked=_is_mocked)
+    if not provider._entries:
+        current = get_watchlist_provider()
+        return {"status": "ok", "count": len(getattr(current, "_entries", []) or []),
+                "is_mocked": current.is_mocked, "provider_type": type(current).__name__,
+                "note": "DB empty/unreachable — kept current provider instead of installing an empty one"}
     set_watchlist_provider(provider)
     return {"status": "ok", "count": len(provider._entries), "is_mocked": provider.is_mocked, "provider_type": type(provider).__name__}
 
@@ -5058,7 +5069,12 @@ def _encrypt_template(data: bytes) -> str:
 
 
 def _decrypt_template(enc: str) -> bytes:
-    """Decode a stored template, verifying its HMAC first (fail-closed)."""
+    """Decode a stored template, verifying its HMAC first (fail-closed).
+
+    Accepts the current full-SHA256 format and, transitionally, the legacy
+    truncated (16-hex) format — the legacy prefix is still HMAC-verified,
+    and callers should re-enroll to the full format on next write.
+    """
     import base64, hmac, hashlib
 
     try:
@@ -5073,9 +5089,11 @@ def _decrypt_template(enc: str) -> bytes:
     except Exception:
         raise HTTPException(status_code=500, detail="Stored iris template is corrupt.")
     expected = hmac.new(_iris_key(), raw, hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(expected, sig):
-        raise HTTPException(status_code=500, detail="Stored iris template failed integrity check.")
-    return raw
+    if hmac.compare_digest(expected, sig):
+        return raw
+    if len(sig) == 16 and hmac.compare_digest(expected[:16], sig):
+        return raw
+    raise HTTPException(status_code=500, detail="Stored iris template failed integrity check.")
 
 
 @app.post("/api/biometric/iris/enroll", include_in_schema=False)
@@ -5184,9 +5202,11 @@ async def verify_iris(
             raise HTTPException(status_code=404, detail="No iris template enrolled for this citizen")
         ref_template = _decrypt_template(tmpl.template)
         ref_mask = _decrypt_template(tmpl.mask) if tmpl.mask else None
-    eye_bytes = await eye_image.read()
+    eye_bytes = await eye_image.read(5_000_001)
     if len(eye_bytes) > 5_000_000:
         raise HTTPException(status_code=400, detail="Eye image too large")
+    if not eye_bytes:
+        raise HTTPException(status_code=400, detail="Eye image is empty")
     import tempfile
     with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
         tmp.write(eye_bytes)
@@ -5288,11 +5308,17 @@ async def _check_evidence_access(filename: str, officer: dict) -> None:
 
     async with async_session() as session:
         result = await session.execute(
-            select(ModuleResultDB).where(ModuleResultDB.evidence_uri.contains(safe_name))
+            select(ModuleResultDB).where(ModuleResultDB.evidence_uri == safe_name)
         )
         modules = result.scalars().all()
         if not modules:
-            raise HTTPException(status_code=404, detail="Evidence file not found")
+            result = await session.execute(select(ModuleResultDB))
+            for mod in result.scalars().all():
+                uri = mod.evidence_uri or ""
+                if uri == safe_name or uri.endswith("/" + safe_name):
+                    modules.append(mod)
+            if not modules:
+                raise HTTPException(status_code=404, detail="Evidence file not found")
 
         for mod in modules:
             case_res = await session.execute(select(ScreeningCase).where(ScreeningCase.id == mod.case_id))
@@ -5326,10 +5352,14 @@ async def view_evidence_by_token(token: str = Query(...)):
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail="Evidence file not found")
 
+    import mimetypes as _mimetypes
 
+    _media_type, _ = _mimetypes.guess_type(safe_name)
+    if _media_type not in ("image/png", "image/jpeg", "image/webp"):
+        _media_type = "application/octet-stream"
 
     from fastapi.responses import FileResponse
-    return FileResponse(str(file_path), media_type="image/png", headers={"Cache-Control": "no-store, max-age=0"})
+    return FileResponse(str(file_path), media_type=_media_type, headers={"Cache-Control": "no-store, max-age=0"})
 
 
 @app.get("/api/evidence/token/{filename}")
@@ -5358,8 +5388,13 @@ async def get_evidence_file(filename: str, request: Request):
             raise HTTPException(status_code=403, detail="Access denied: path traversal")
     if not file_path.is_file():
         raise HTTPException(status_code=404, detail="Evidence file not found on disk")
+    import mimetypes as _mimetypes
+
+    _media_type, _ = _mimetypes.guess_type(safe_name)
+    if _media_type not in ("image/png", "image/jpeg", "image/webp"):
+        _media_type = "application/octet-stream"
     from fastapi.responses import FileResponse
-    return FileResponse(str(file_path), media_type="image/png", headers={"Cache-Control": "no-store"})
+    return FileResponse(str(file_path), media_type=_media_type, headers={"Cache-Control": "no-store"})
 
 
 

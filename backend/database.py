@@ -77,8 +77,8 @@ if IS_SQLITE:
 else:
     _engine_kwargs = {
         "echo": os.environ.get("DB_ECHO", "").lower() in ("1", "true"),
-        "pool_size": int(os.environ.get("DB_POOL_SIZE", "5")),
-        "max_overflow": int(os.environ.get("DB_MAX_OVERFLOW", "10")),
+        "pool_size": int(os.environ.get("DB_POOL_SIZE", os.environ.get("POOL_SIZE", "5")) or 5),
+        "max_overflow": int(os.environ.get("DB_MAX_OVERFLOW", os.environ.get("MAX_OVERFLOW", "10")) or 10),
         "pool_pre_ping": True,
         "connect_args": {
             "statement_cache_size": 0
@@ -360,15 +360,7 @@ async def ensure_sequences() -> dict:
 
 
 def get_engine_info() -> dict:
-    """Return diagnostic info about the current database engine."""
+    """Non-sensitive engine summary for /health (no hosts, paths, or creds)."""
     if IS_SQLITE:
-        return {
-            "url": DATABASE_URL,
-            "driver": "aiosqlite",
-            "backend": "sqlite",
-        }
-    return {
-        "url": DATABASE_URL.split("@")[-1] if "@" in DATABASE_URL else DATABASE_URL,
-        "driver": "asyncpg",
-        "backend": "postgresql",
-    }
+        return {"backend": "sqlite", "configured": False}
+    return {"backend": "postgresql", "configured": True}
