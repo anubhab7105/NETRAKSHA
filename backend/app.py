@@ -1124,7 +1124,29 @@ async def screen_document(
 
     import tempfile
 
-    doc_bytes = await document_image.read()
+    _DOC_MAX_BYTES = 10_000_000
+    _LIVE_MAX_BYTES = 5_000_000
+    _MAX_LIVE_FRAMES = 10
+    _ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+
+    async def _read_capped(upload: UploadFile, limit: int, what: str) -> bytes:
+        data = await upload.read(limit + 1)
+        if len(data) > limit:
+            raise HTTPException(
+                status_code=413,
+                detail=f"{what} too large (max {limit // 1_000_000} MB). Recapture or compress the image.",
+            )
+        if not data:
+            raise HTTPException(status_code=400, detail=f"{what} is empty.")
+        ctype = (upload.content_type or "").split(";")[0].strip().lower()
+        if ctype and ctype not in _ALLOWED_IMAGE_TYPES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{what} must be a JPEG, PNG or WEBP image (got {ctype}).",
+            )
+        return data
+
+    doc_bytes = await _read_capped(document_image, _DOC_MAX_BYTES, "Document image")
 
     doc_hash = hashlib.sha256(doc_bytes).hexdigest()
     file_hashes = {"document": doc_hash}
@@ -1134,7 +1156,7 @@ async def screen_document(
 
     live_tmp = None
     if live_capture and live_capture.filename:
-        live_bytes = await live_capture.read()
+        live_bytes = await _read_capped(live_capture, _LIVE_MAX_BYTES, "Live capture")
         file_hashes["live_capture"] = hashlib.sha256(live_bytes).hexdigest()
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix="screen_live_") as tmp:
             tmp.write(live_bytes)
@@ -1143,13 +1165,24 @@ async def screen_document(
 
     live_frame_tmps = []
     if live_frames:
-        for i, f in enumerate(live_frames):
-            if f and f.filename:
-                fb = await f.read()
-                file_hashes[f"live_frame_{i}"] = hashlib.sha256(fb).hexdigest()
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix=f"screen_burst_{i}_") as tmp:
-                    tmp.write(fb)
-                    live_frame_tmps.append(Path(tmp.name))
+        dated = [(f, (f.filename or "")) for f in (live_frames or []) if f and f.filename]
+        if len(dated) > _MAX_LIVE_FRAMES:
+            for p in [doc_tmp, live_tmp]:
+                try:
+                    if p:
+                        p.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            raise HTTPException(
+                status_code=400,
+                detail=f"Too many live frames (max {_MAX_LIVE_FRAMES}).",
+            )
+        for i, (f, _name) in enumerate(dated):
+            fb = await _read_capped(f, _LIVE_MAX_BYTES, f"Live frame {i}")
+            file_hashes[f"live_frame_{i}"] = hashlib.sha256(fb).hexdigest()
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix=f"screen_burst_{i}_") as tmp:
+                tmp.write(fb)
+                live_frame_tmps.append(Path(tmp.name))
 
     burst = [str(p) for p in live_frame_tmps] or (
         [str(live_tmp)] if live_tmp else None
@@ -1163,7 +1196,7 @@ async def screen_document(
     iris_eye_val = (iris_eye or "auto").strip().lower()
     iris_derived = False
     if iris_image and iris_image.filename:
-        iris_bytes = await iris_image.read()
+        iris_bytes = await _read_capped(iris_image, _LIVE_MAX_BYTES, "Iris image")
         file_hashes["iris"] = hashlib.sha256(iris_bytes).hexdigest()
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png", prefix="screen_iris_") as tmp:
             tmp.write(iris_bytes)
@@ -4973,9 +5006,11 @@ async def enroll_iris(
         if not citizen:
             raise HTTPException(status_code=404, detail="Citizen not found")
 
-    eye_bytes = await eye_image.read()
+    eye_bytes = await eye_image.read(5_000_001)
     if len(eye_bytes) > 5_000_000:
         raise HTTPException(status_code=400, detail="Eye image too large (max 5 MB)")
+    if not eye_bytes:
+        raise HTTPException(status_code=400, detail="Eye image is empty.")
 
     try:
         from backend.biometric.iris.provider import get_provider
