@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   ShieldAlert, CheckCircle2, AlertTriangle, ArrowLeft, Loader2, UserRound,
   FileText, Image as ImageIcon, Check, X, ShieldCheck, Activity, ScanLine,
-  Eye, Fingerprint, Hash, Radio, ChevronDown,
+  Eye, Fingerprint, Hash, Radio, ChevronDown, Download,
 } from 'lucide-react';
 import api from '../api';
 import SEO from '../components/SEO';
@@ -157,7 +157,29 @@ export default function CaseReport() {
   const [reason, setReason] = useState('');
   const [provenance, setProvenance] = useState(null);
   const [provVerified, setProvVerified] = useState(null);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
   const caseLabel = `Case #${(id ?? '').toString().padStart(4, '0')}`;
+
+  const handleDownloadPdf = async () => {
+    setDownloadingPdf(true);
+    try {
+      const res = await api.get(`/cases/${id}/pdf`, { responseType: 'blob' });
+      const blob = new Blob([res.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Screening_Report_Case_${String(id).padStart(4, '0')}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err) {
+      if (import.meta.env.DEV) console.error(err);
+      alert('Could not download PDF report. Please verify connection and try again.');
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
 
   useEffect(() => {
     const fetchCase = async () => {
@@ -321,22 +343,38 @@ export default function CaseReport() {
         noindex
       />
       <Breadcrumbs items={[{ label: 'Overview', to: '/' }, { label: 'Case Queue', to: '/' }, { label: caseLabel }]} />
-      <div className="flex items-start gap-3">
-        <button onClick={() => navigate('/')} aria-label="Back to case dashboard" className="gov-icon-btn mt-1">
-          <ArrowLeft size={20} aria-hidden="true" />
-        </button>
-        <div className="min-w-0">
-          <h1 className="gov-page-title flex flex-wrap items-center gap-2">
-            {caseLabel}
-            <span className="gov-badge gov-badge-grey">
-              <FileText size={13} aria-hidden="true" /> {c.document_type?.toUpperCase() || 'UNKNOWN'}
-            </span>
-            {(data.is_demo || geminiModule?.is_mocked || watchlistModule?.is_mocked) && (
-              <MockedDataBadge />
-            )}
-          </h1>
-          <p className="gov-subtitle">{new Date(c.timestamp).toLocaleString('en-IN')} · Version v{c.version ?? 0} · Status: {String(c.status || '').replace('_', ' ')}</p>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3">
+          <button onClick={() => navigate('/')} aria-label="Back to case dashboard" className="gov-icon-btn mt-1">
+            <ArrowLeft size={20} aria-hidden="true" />
+          </button>
+          <div className="min-w-0">
+            <h1 className="gov-page-title flex flex-wrap items-center gap-2">
+              {caseLabel}
+              <span className="gov-badge gov-badge-grey">
+                <FileText size={13} aria-hidden="true" /> {c.document_type?.toUpperCase() || 'UNKNOWN'}
+              </span>
+              {(data.is_demo || geminiModule?.is_mocked || watchlistModule?.is_mocked) && (
+                <MockedDataBadge />
+              )}
+            </h1>
+            <p className="gov-subtitle">{new Date(c.timestamp).toLocaleString('en-IN')} · Version v{c.version ?? 0} · Status: {String(c.status || '').replace('_', ' ')}</p>
+          </div>
         </div>
+        <button
+          type="button"
+          onClick={handleDownloadPdf}
+          disabled={downloadingPdf}
+          className="gov-btn gov-btn-secondary flex items-center gap-2 self-start sm:self-auto shrink-0 shadow-sm"
+          title="Download Official Forensic PDF Report"
+        >
+          {downloadingPdf ? (
+            <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+          ) : (
+            <Download size={16} aria-hidden="true" />
+          )}
+          <span>{downloadingPdf ? 'Generating PDF…' : 'Download PDF Report'}</span>
+        </button>
       </div>
 
       <VerdictCard verdict={c.verdict} riskScore={c.risk_score} anomalyCount={anomalyCount} similarity={faceMatch.similarity_score} />
