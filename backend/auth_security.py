@@ -32,6 +32,23 @@ DEV_JWT_DEFAULT = "sih-hackathon-dev-secret-change-in-prod"
 MIN_SECRET_CHARS = 32
 
 
+def active_secret(name: str = "JWT_SECRET") -> str:
+    """Return the configured secret, failing closed in production.
+
+    Non-production keeps the shipped dev default (out-of-the-box demo),
+    but production raises RuntimeError when the secret is missing, too
+    short, or still the public dev default — so a forged session can
+    never be minted from a misconfigured install.
+    """
+    secret = os.environ.get(name, "")
+    if not secret and name == "JWT_SECRET":
+        secret = DEV_JWT_DEFAULT
+    problem = secret_error(secret, name=name)
+    if problem and is_production():
+        raise RuntimeError(f"[security] {problem}")
+    return secret or DEV_JWT_DEFAULT
+
+
 def app_env() -> str:
     """Deployment environment: development | staging | production."""
     return os.environ.get("APP_ENV", os.environ.get("ENVIRONMENT", "development")).strip().lower()
@@ -95,6 +112,37 @@ def validate_new_password(password: str) -> None:
 
 
 DUMMY_HASH = "$2b$12$0cqFtMWkcZzA/0B/BAPssOaLTODk0OfimIdj/ergCYVzt4QuXCYwC"
+
+
+def _password_context():
+    """Shared bcrypt context (built once — per-call construction is CPU DoS)."""
+    from passlib.context import CryptContext
+
+    return CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+_PWD_CTX = None
+
+
+def password_context():
+    """Process-wide shared CryptContext for bcrypt verify/hash."""
+    global _PWD_CTX
+    if _PWD_CTX is None:
+        _PWD_CTX = _password_context()
+    return _PWD_CTX
+
+
+def verify_password_hash(plain: str, hashed: str) -> bool:
+    """Verify a password, returning False (never raising) on corrupt hashes."""
+    try:
+        return password_context().verify(plain or "", hashed or "")
+    except Exception:
+        return False
+
+
+def hash_password(plain: str) -> str:
+    """Hash a new password with bcrypt."""
+    return password_context().hash(plain or "")
 
 
 
@@ -218,11 +266,19 @@ def rate_limit_from_env(prefix: str, default_max: int, default_window: int) -> R
 
 
 def client_ip(request) -> str:
-    """Best-effort client IP behind proxies (X-Forwarded-For aware)."""
+    """Best-effort client IP behind proxies (X-Forwarded-For aware).
+
+    X-Forwarded-For is only trusted when TRUST_PROXY=1 is set explicitly
+    (app runs behind a known reverse proxy that sanitises the header).
+    Otherwise the direct socket peer is used, so a client cannot spoof
+    its IP to bypass login throttling or poison audit logs.
+    """
     try:
-        xff = (request.headers.get("X-Forwarded-For", "") or "").split(",")[0].strip()
-        if xff:
-            return xff[:64]
+        trust_proxy = os.environ.get("TRUST_PROXY", "").lower() in ("1", "true", "yes")
+        if trust_proxy:
+            xff = (request.headers.get("X-Forwarded-For", "") or "").split(",")[0].strip()
+            if xff:
+                return xff[:64]
         if request.client and request.client.host:
             return str(request.client.host)[:64]
     except Exception:

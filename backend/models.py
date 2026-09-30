@@ -378,9 +378,28 @@ class ModuleResultDB(Base):
 
 
 
+class RevokedToken(Base):
+    """Deny-list for logged-out / rotated JWT sessions (checked in _auth).
+
+    jti = the JWT ID minted in _create_token. Rows are pruned once past
+    expires_at so the table stays tiny. Created via create_all on startup
+    (no manual migration).
+    """
+
+    __tablename__ = "revoked_tokens"
+
+    jti = Column(String(64), primary_key=True)
+    officer_id = Column(Integer, ForeignKey("officers.id"), nullable=True)
+    reason = Column(String(40), nullable=True)
+    revoked_at = Column(DateTime, server_default=func.now())
+    expires_at = Column(DateTime, nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<RevokedToken(jti={self.jti!r} reason={self.reason!r})>"
+
+
 class OfficerAction(Base):
     __tablename__ = "officer_actions"
-
     id = Column(Integer, primary_key=True, autoincrement=True)
     case_id = Column(Integer, ForeignKey("screening_cases.id"), nullable=False)
     officer_id = Column(Integer, ForeignKey("officers.id"), nullable=False)
@@ -465,9 +484,13 @@ class AuditLog(Base):
             prev_hash = "0" * 64
 
         try:
-            secret = os.environ.get("JWT_SECRET", "sih-hackathon-dev-secret-change-in-prod")
+            from backend.auth_security import active_secret as _active_secret
+
+            secret = _active_secret("JWT_SECRET")
             payload = f"{prev_hash}{kwargs.get('actor','')}{kwargs.get('action','')}{kwargs.get('entity','')}".encode()
             entry_hash = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+        except RuntimeError:
+            raise
         except Exception:
             entry_hash = None
         kwargs["prev_hash"] = prev_hash

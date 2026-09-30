@@ -58,15 +58,18 @@ except Exception:
 from backend.database import async_session, get_session, init_db
 from backend.auth_security import (
     DUMMY_HASH,
+    active_secret,
     app_env,
     client_ip,
     generate_totp_secret,
+    hash_password,
     is_production,
     match_window,
     otpauth_uri,
     rate_limit_from_env,
     secret_error,
     validate_new_password,
+    verify_password_hash,
     verify_totp,
 )
 from backend.models import (
@@ -79,6 +82,7 @@ from backend.models import (
     Officer,
     OfficerAction,
     RegistryEnrollment,
+    RevokedToken,
     ScreeningCase,
     WatchlistEntry,
 )
@@ -89,13 +93,24 @@ from backend.models import (
 
 _JWT_SECRET = os.environ.get("JWT_SECRET", "sih-hackathon-dev-secret-change-in-prod")
 _JWT_ALGORITHM = "HS256"
-_JWT_EXPIRY_HOURS = int(os.environ.get("JWT_EXPIRY_HOURS", "8"))
+
+
+def _safe_int_env(name: str, default: int, minimum: int, maximum: int) -> int:
+    """Parse an int env var without crash-looping on garbage. Clamps to range."""
+    try:
+        value = int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+_JWT_EXPIRY_HOURS = _safe_int_env("JWT_EXPIRY_HOURS", 8, 1, 72)
 _DEMO_MODE = os.environ.get("DEMO_MODE", "").lower() in ("1", "true", "yes")
 
 
 _LOGIN_LIMITER = rate_limit_from_env("LOGIN_RATE_LIMIT", 5, 300)
 _MFA_LIMITER = rate_limit_from_env("MFA_RATE_LIMIT", 5, 300)
-_MFA_TOKEN_MINUTES = int(os.environ.get("MFA_TOKEN_MINUTES", "5"))
+_MFA_TOKEN_MINUTES = _safe_int_env("MFA_TOKEN_MINUTES", 5, 1, 15)
 
 
 def _utcnow_naive() -> datetime:
@@ -113,7 +128,10 @@ try:
     import jwt as pyjwt
     _HAS_PYJWT = True
 except ImportError:
-    _HAS_PYJWT = False
+    raise RuntimeError(
+        "PyJWT is required for signed session tokens (requirements.txt: PyJWT). "
+        "Refusing to start without it — unsigned fallback tokens are forgeable."
+    )
 
 
 def _create_token(officer_id: int, username: str, role: str, unit: str = "BORDER_UNIT_1",
@@ -126,48 +144,27 @@ def _create_token(officer_id: int, username: str, role: str, unit: str = "BORDER
     import uuid as _uuid
     jti = _uuid.uuid4().hex
     minutes = expiry_minutes if expiry_minutes is not None else _JWT_EXPIRY_HOURS * 60
-    if _HAS_PYJWT:
-        payload = {
-            "sub": str(officer_id),
-            "username": username,
-            "role": role,
-            "unit": unit,
-            "jti": jti,
-            "purpose": purpose,
-            "exp": datetime.now(timezone.utc) + timedelta(minutes=minutes),
-            "iat": datetime.now(timezone.utc),
-        }
-        return pyjwt.encode(payload, _JWT_SECRET, algorithm=_JWT_ALGORITHM)
-    else:
-
-        import base64
-        payload = json.dumps({
-            "sub": str(officer_id),
-            "username": username,
-            "role": role,
-            "unit": unit,
-            "jti": jti,
-            "purpose": purpose,
-        })
-        return base64.b64encode(payload.encode()).decode()
+    payload = {
+        "sub": str(officer_id),
+        "username": username,
+        "role": role,
+        "unit": unit,
+        "jti": jti,
+        "purpose": purpose,
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=minutes),
+        "iat": datetime.now(timezone.utc),
+    }
+    return pyjwt.encode(payload, active_secret("JWT_SECRET"), algorithm=_JWT_ALGORITHM)
 
 
 def _decode_token(token: str) -> dict:
-    """Decode and validate a JWT token."""
-    if _HAS_PYJWT:
-        try:
-            return pyjwt.decode(token, _JWT_SECRET, algorithms=[_JWT_ALGORITHM])
-        except pyjwt.ExpiredSignatureError:
-            raise HTTPException(status_code=401, detail="Token expired")
-        except pyjwt.InvalidTokenError:
-            raise HTTPException(status_code=401, detail="Invalid token")
-    else:
-        import base64
-        try:
-            payload = json.loads(base64.b64decode(token).decode())
-            return payload
-        except Exception:
-            raise HTTPException(status_code=401, detail="Invalid token")
+    """Decode and validate a JWT token (signature + expiry enforced)."""
+    try:
+        return pyjwt.decode(token, active_secret("JWT_SECRET"), algorithms=[_JWT_ALGORITHM])
+    except pyjwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except pyjwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 
 def collect_provenance(file_hashes: Optional[dict] = None, extra: Optional[dict] = None) -> tuple[dict, str]:
@@ -251,14 +248,13 @@ def collect_provenance(file_hashes: Optional[dict] = None, extra: Optional[dict]
 
 
 def _verify_password(plain: str, hashed: str) -> bool:
-    """Verify a password against its hash.
+    """Verify a password against its bcrypt hash (shared context, never raises).
 
     Requires passlib[bcrypt] — the SHA-256 fallback has been removed per
     audit finding P3 §1 to prevent weak credential storage in demo builds.
+    Corrupt hashes verify as False instead of 500ing the login.
     """
-    from passlib.context import CryptContext
-    ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
-    return ctx.verify(plain, hashed)
+    return verify_password_hash(plain, hashed)
 
 
 
@@ -539,32 +535,55 @@ async def _auth(request, allow_stale_password: bool = False,
     only for the endpoints that clear those states (change-password, MFA
     setup/verify, logout). MFA step-up tokens (purpose="mfa") are rejected
     everywhere — they are only valid at POST /api/auth/mfa/challenge.
+
+    Fail-closed: a missing/unparseable officer id is 401, a revoked jti is
+    401, and any database failure while enriching is 503 (never silently
+    trusted stale JWT claims). When no Bearer header is present, the
+    HttpOnly `nc_session` cookie is accepted as a fallback (set on login).
     """
     auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
+    if auth.startswith("Bearer "):
+        token = auth[7:].strip()
+    else:
+        token = (request.cookies.get("nc_session") or "").strip()
+    if not token:
         raise HTTPException(status_code=401, detail="Missing Bearer token")
-    token = auth[7:]
     payload = _decode_token(token)
     if payload.get("purpose", "session") != "session":
         raise HTTPException(status_code=401, detail="Invalid token purpose for this endpoint")
 
-    must_change = False
-    mfa_pending = False
+    try:
+        officer_id = int(payload.get("sub", 0) or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=401, detail="Invalid token")
+    if officer_id <= 0:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
     try:
         async with async_session() as session:
-            res = await session.execute(select(Officer).where(Officer.id == int(payload.get("sub", 0))))
+            res = await session.execute(select(Officer).where(Officer.id == officer_id))
             off = res.scalar_one_or_none()
-            if off:
-                payload["unit"] = getattr(off, "unit", None) or payload.get("unit") or "BORDER_UNIT_1"
-                payload["role"] = off.role or payload.get("role", "officer")
-                payload["username"] = off.username
-                must_change = bool(getattr(off, "must_change_password", False))
-                mfa_pending = (
-                    payload["role"] == "supervisor"
-                    and not bool(getattr(off, "totp_enabled", False))
+            if off is None:
+                raise HTTPException(status_code=401, detail="Invalid token")
+            payload["unit"] = getattr(off, "unit", None) or payload.get("unit") or "BORDER_UNIT_1"
+            payload["role"] = off.role or payload.get("role", "officer")
+            payload["username"] = off.username
+            must_change = bool(getattr(off, "must_change_password", False))
+            mfa_pending = (
+                payload["role"] == "supervisor"
+                and not bool(getattr(off, "totp_enabled", False))
+            )
+            jti = payload.get("jti") or ""
+            if jti:
+                revoked = await session.execute(
+                    select(RevokedToken).where(RevokedToken.jti == jti)
                 )
+                if revoked.scalar_one_or_none() is not None:
+                    raise HTTPException(status_code=401, detail="Session revoked — sign in again.")
+    except HTTPException:
+        raise
     except Exception:
-        pass
+        raise HTTPException(status_code=503, detail="Authentication store unavailable — retry shortly.")
     payload.setdefault("unit", "BORDER_UNIT_1")
     payload.setdefault("role", "officer")
     if must_change and not allow_stale_password:
@@ -572,6 +591,65 @@ async def _auth(request, allow_stale_password: bool = False,
     if mfa_pending and not allow_mfa_setup:
         raise HTTPException(status_code=403, detail="MFA_SETUP_REQUIRED: supervisors must enroll authenticator MFA before continuing.")
     return payload
+
+
+def _session_cookie_kwargs() -> dict:
+    """Cookie flags for the session cookie (HttpOnly always; Secure in prod)."""
+    kwargs = {"httponly": True, "samesite": "lax", "path": "/"}
+    if is_production():
+        kwargs["secure"] = True
+    return kwargs
+
+
+def _token_expiry_naive(payload: dict) -> Optional[datetime]:
+    """Best-effort expiry of a verified token payload as a naive datetime."""
+    try:
+        exp = payload.get("exp")
+        if exp is None:
+            return _utcnow_naive() + timedelta(hours=_JWT_EXPIRY_HOURS)
+        if isinstance(exp, datetime):
+            dt = exp
+        else:
+            dt = datetime.fromtimestamp(float(exp), tz=timezone.utc)
+        return dt.replace(tzinfo=None) if dt.tzinfo else dt
+    except Exception:
+        return _utcnow_naive() + timedelta(hours=_JWT_EXPIRY_HOURS)
+
+
+async def _revoke_jti(jti: str, officer_id: int, reason: str,
+                      expires_at: Optional[datetime] = None) -> None:
+    """Deny-list a session JWT so logout/rotation actually ends it."""
+    if not jti:
+        return
+    try:
+        async with async_session() as session:
+            existing = await session.execute(
+                select(RevokedToken).where(RevokedToken.jti == jti)
+            )
+            if existing.scalar_one_or_none() is None:
+                session.add(RevokedToken(
+                    jti=jti,
+                    officer_id=officer_id or None,
+                    reason=reason,
+                    revoked_at=_utcnow_naive(),
+                    expires_at=expires_at,
+                ))
+                await session.commit()
+            try:
+                cutoff = _utcnow_naive()
+                old = await session.execute(
+                    select(RevokedToken).where(
+                        RevokedToken.expires_at.is_not(None),
+                        RevokedToken.expires_at < cutoff,
+                    )
+                )
+                for row in old.scalars().all():
+                    await session.delete(row)
+                await session.commit()
+            except Exception:
+                await session.rollback()
+    except Exception as exc:
+        print(f"[auth] revocation store warning ({reason}): {type(exc).__name__}: {exc}")
 
 
 
@@ -748,8 +826,7 @@ async def change_password(req: ChangePasswordRequest, request: Request):
             raise HTTPException(status_code=400, detail=str(e))
         if _verify_password(req.new_password, off.password_hash):
             raise HTTPException(status_code=400, detail="New password must differ from the current one.")
-        from passlib.context import CryptContext
-        off.password_hash = CryptContext(schemes=["bcrypt"], deprecated="auto").hash(req.new_password)
+        off.password_hash = hash_password(req.new_password)
         off.must_change_password = False
         try:
             off.password_changed_at = _utcnow_naive()
