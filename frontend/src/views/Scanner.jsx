@@ -265,11 +265,17 @@ export default function Scanner() {
   
   
   
-  const newIdempotencyKey = () => (
-    typeof crypto !== 'undefined' && crypto.randomUUID
-      ? crypto.randomUUID()
-      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}-${Math.random().toString(36).slice(2, 10)}`
-  );
+  const newIdempotencyKey = () => {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+    if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+      const b = crypto.getRandomValues(new Uint8Array(16));
+      b[6] = (b[6] & 0x0f) | 0x40;
+      b[8] = (b[8] & 0x3f) | 0x80;
+      const h = [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+      return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+    }
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}-${Math.random().toString(36).slice(2, 10)}`;
+  };
   const [idempotencyKey, setIdempotencyKey] = useState(() => newIdempotencyKey());
 
   
@@ -282,6 +288,34 @@ export default function Scanner() {
   const handleScan = async () => {
     if (!docFile) {
       setError("Please capture a document image using the webcam.");
+      return;
+    }
+
+    const MAX_DOC_BYTES = 10_000_000;
+    const MAX_LIVE_BYTES = 5_000_000;
+    const MAX_FRAMES = 10;
+    const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+    if (docFile.size > MAX_DOC_BYTES) {
+      setError("Document image too large (max 10 MB). Retake with a lower resolution.");
+      return;
+    }
+    if (docFile.type && !ALLOWED_TYPES.includes(docFile.type)) {
+      setError("Document image must be JPEG, PNG or WEBP.");
+      return;
+    }
+    const burstCheck = Array.isArray(personCapture?.burst) ? personCapture.burst : [];
+    if (burstCheck.length > MAX_FRAMES) {
+      setError(`Too many live frames (max ${MAX_FRAMES}). Retake the biometric capture.`);
+      return;
+    }
+    for (const b of burstCheck) {
+      if ((b?.size || 0) > MAX_LIVE_BYTES || (b?.type && !ALLOWED_TYPES.includes(b.type))) {
+        setError("A live frame is oversized or not an image. Retake the biometric capture.");
+        return;
+      }
+    }
+    if (typeof window !== 'undefined' && window.isSecureContext === false) {
+      setError("Camera capture requires a secure context (HTTPS or localhost). Serve the app over HTTPS.");
       return;
     }
 

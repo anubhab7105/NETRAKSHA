@@ -58,9 +58,13 @@ function GovTopBar() {
   );
 }
 
-const ProtectedRoute = ({ children }) => {
+const ProtectedRoute = ({ children, roles }) => {
   const token = localStorage.getItem('token');
   if (!token) return <Navigate to="/login" replace />;
+  if (Array.isArray(roles) && roles.length > 0) {
+    const role = (localStorage.getItem('role') || '').toLowerCase();
+    if (!roles.includes(role)) return <Navigate to="/" replace />;
+  }
   return (
     <div className="flex min-h-screen w-full flex-col bg-[#F7F8FA] md:h-screen md:flex-row md:overflow-hidden">
       <div className="flex min-w-0 flex-1 flex-col md:overflow-hidden">
@@ -103,9 +107,9 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/change-password" element={<ProtectedRoute><SecuritySetup /></ProtectedRoute>} />
           <Route path="/" element={<SecurityGate><ProtectedRoute><Dashboard /></ProtectedRoute></SecurityGate>} />
-          <Route path="/scan" element={<SecurityGate><ProtectedRoute><Scanner /></ProtectedRoute></SecurityGate>} />
+          <Route path="/scan" element={<SecurityGate><ProtectedRoute roles={['officer', 'supervisor']}><Scanner /></ProtectedRoute></SecurityGate>} />
           <Route path="/case/:id" element={<SecurityGate><ProtectedRoute><CaseReport /></ProtectedRoute></SecurityGate>} />
-          <Route path="/audit" element={<SecurityGate><ProtectedRoute><AuditTrail /></ProtectedRoute></SecurityGate>} />
+          <Route path="/audit" element={<SecurityGate><ProtectedRoute roles={['auditor', 'supervisor']}><AuditTrail /></ProtectedRoute></SecurityGate>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>

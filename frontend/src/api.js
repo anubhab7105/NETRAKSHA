@@ -42,6 +42,7 @@ function resolveBaseURL() {
 const api = axios.create({
   baseURL: resolveBaseURL(), 
   timeout: 90000, 
+  withCredentials: true,
 });
 
 api.interceptors.request.use((config) => {
@@ -56,7 +57,7 @@ api.interceptors.request.use((config) => {
 
 
 
-const STEP_UP_URLS = ['/auth/mfa/challenge', '/auth/mfa/verify', '/auth/change-password', '/auth/mfa/disable'];
+const STEP_UP_URLS = ['/auth/mfa/challenge', '/auth/mfa/verify', '/auth/mfa/setup', '/auth/change-password', '/auth/mfa/disable'];
 api.interceptors.response.use(
   (res) => res,
   (err) => {

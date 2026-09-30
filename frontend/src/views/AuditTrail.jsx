@@ -161,7 +161,7 @@ export default function AuditTrail() {
         {!loading && count > 0 && (
           <div className="flex flex-col gap-3 border-t border-[#D9DEE7] bg-[#F7F8FA] px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
             <span className="text-xs text-[#667085]">
-              Showing {offset + 1}–{Math.min(offset + limit, offset + count)} entries
+              Showing {offset + 1}–{Math.min(offset + limit, count)} entries
             </span>
             <div className="flex gap-2">
               <button
