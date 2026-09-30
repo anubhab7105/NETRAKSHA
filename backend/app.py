@@ -1595,8 +1595,9 @@ async def _run_screening_pipeline(
     try:
         from pipeline.document_quality import run_document_quality
         _doc_quality_res = run_document_quality(str(doc_path), save_evidence=False)
-        if _doc_quality_res.status == "ok" and _doc_quality_res.raw_output.get("gate") == "failed":
-            print(f"[document_quality] soft gate: { _doc_quality_res.raw_output.get('issues')} metrics={_doc_quality_res.raw_output.get('metrics')}")
+        if _doc_quality_res.status != "ok":
+            print(f"[document_quality] gate inconclusive: "
+                  f"{(_doc_quality_res.raw_output or {}).get('reason')}")
 
     except Exception as e:
         print(f"[document_quality] gate check failed: {e}")
@@ -2473,6 +2474,14 @@ async def _run_screening_pipeline(
         iris_match=iris_match_val,
         iris_quality=iris_quality_val,
         iris_liveness=iris_liveness_val,
+        document_quality_status=(_doc_quality_res.status if _doc_quality_res else None),
+        document_quality_issues=(
+            [(_doc_quality_res.raw_output or {}).get("reason", "low quality")]
+            if _doc_quality_res is not None and _doc_quality_res.status != "ok"
+            else []
+        ),
+        security_zones_status=(security_result.status if security_result else None),
+        security_zones_score=(security_result.score if security_result and security_result.status == "ok" else None),
     )
 
 

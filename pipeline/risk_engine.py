@@ -87,7 +87,14 @@ def assess_risk(
 
     Returns:
         RiskAssessment with verdict, score, flags, and recommendations.
+
+    Unknown keyword arguments are rejected (TypeError) so a misspelled
+    module output can never be silently dropped from scoring.
     """
+    if kwargs:
+        raise TypeError(
+            f"assess_risk() got unexpected keyword(s): {sorted(kwargs)}"
+        )
     flags: List[str] = []
     recommendations: List[str] = []
     risk_components: List[float] = []
