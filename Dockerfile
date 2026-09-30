@@ -64,6 +64,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./backend/
 COPY pipeline/ ./pipeline/
 COPY scripts/ ./scripts/
+# Seed registry photos (samples/faces, ~56K): without these every citizen row
+# resolves to registry_photo_missing_on_server and 3-way face stays partial.
+# samples/evidence stays out via .dockerignore (runtime PII, not seed data).
+COPY samples/faces/ ./samples/faces/
 
 # Built SPA from stage 1 (served same-origin by the SPA fallback, must stay
 # last route in backend/app.py).

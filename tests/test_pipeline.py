@@ -194,9 +194,10 @@ class TestChecksums:
         assert checksums.validate_verhoeff(full) is True
 
     def test_verhoeff_invalid_aadhaar(self):
-        """Invalid Aadhaar should fail Verhoeff."""
-        assert checksums.validate_verhoeff("123456789012") is False or \
-               checksums.validate_verhoeff("000000000000") is True
+        """Invalid Aadhaar should fail Verhoeff (deterministic vectors)."""
+        assert checksums.validate_verhoeff("123456789012") is False
+        assert checksums.validate_verhoeff("234569890124") is False
+        assert checksums.validate_verhoeff("234567890124") is True
 
         digit = checksums.compute_verhoeff_digit("12345678901")
         bad_digit = (digit + 1) % 10

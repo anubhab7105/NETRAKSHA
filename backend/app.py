@@ -125,14 +125,7 @@ def _utcnow_naive() -> datetime:
     """
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
-try:
-    import jwt as pyjwt
-    _HAS_PYJWT = True
-except ImportError:
-    raise RuntimeError(
-        "PyJWT is required for signed session tokens (requirements.txt: PyJWT). "
-        "Refusing to start without it — unsigned fallback tokens are forgeable."
-    )
+import jwt as pyjwt
 
 
 def _create_token(officer_id: int, username: str, role: str, unit: str = "BORDER_UNIT_1",
@@ -5294,45 +5287,27 @@ async def get_iris_template_status(citizen_id: int, request: Request):
 
 def _evidence_token_for(filename: str, officer_id: int, expires_in: int = 300) -> str:
     """Create a short-lived signed token for an evidence file."""
-    if _HAS_PYJWT:
-        payload = {
-            "sub": str(officer_id),
-            "filename": filename,
-            "exp": datetime.now(timezone.utc) + timedelta(seconds=expires_in),
-            "iat": datetime.now(timezone.utc),
-            "type": "evidence",
-        }
-        return pyjwt.encode(payload, _JWT_SECRET, algorithm=_JWT_ALGORITHM)
-    else:
-        import base64
-        payload = json.dumps({
-            "sub": str(officer_id),
-            "filename": filename,
-            "exp": (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).timestamp(),
-        })
-        return base64.b64encode(payload.encode()).decode()
+    payload = {
+        "sub": str(officer_id),
+        "filename": filename,
+        "exp": datetime.now(timezone.utc) + timedelta(seconds=expires_in),
+        "iat": datetime.now(timezone.utc),
+        "type": "evidence",
+    }
+    return pyjwt.encode(payload, active_secret("JWT_SECRET"), algorithm=_JWT_ALGORITHM)
+
 
 def _verify_evidence_token(token: str) -> dict:
     """Verify an evidence token and return its payload."""
-    if _HAS_PYJWT:
-        try:
-            payload = pyjwt.decode(token, _JWT_SECRET, algorithms=[_JWT_ALGORITHM])
-            if payload.get("type") != "evidence":
-                raise HTTPException(status_code=403, detail="Invalid evidence token type")
-            return payload
-        except pyjwt.ExpiredSignatureError:
-            raise HTTPException(status_code=403, detail="Evidence link expired")
-        except pyjwt.InvalidTokenError as e:
-            raise HTTPException(status_code=403, detail=f"Invalid evidence token: {e}")
-    else:
-        import base64
-        try:
-            payload = json.loads(base64.b64decode(token.encode()).decode())
-            if payload.get("exp", 0) < datetime.now(timezone.utc).timestamp():
-                raise HTTPException(status_code=403, detail="Evidence link expired")
-            return payload
-        except Exception as e:
-            raise HTTPException(status_code=403, detail=f"Invalid evidence token: {e}")
+    try:
+        payload = pyjwt.decode(token, active_secret("JWT_SECRET"), algorithms=[_JWT_ALGORITHM])
+        if payload.get("type") != "evidence":
+            raise HTTPException(status_code=403, detail="Invalid evidence token type")
+        return payload
+    except pyjwt.ExpiredSignatureError:
+        raise HTTPException(status_code=403, detail="Evidence link expired")
+    except pyjwt.InvalidTokenError as e:
+        raise HTTPException(status_code=403, detail=f"Invalid evidence token: {e}")
 
 
 async def _check_evidence_access(filename: str, officer: dict) -> None:

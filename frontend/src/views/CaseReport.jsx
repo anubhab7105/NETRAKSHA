@@ -91,14 +91,30 @@ const MockedDataBadge = ({ label = 'MOCKED DATA' }) => (
 );
 
 
-const maskAadhaar = (fieldName, value) => {
-  if (value == null || value === '') return value;
+const maskAadhaar = (fieldName, value, reveal = false) => {
+  if (reveal || value == null || value === '') return value;
   const name = String(fieldName || '').toLowerCase();
   const isAadhaar = name.includes('aadhaar') || name.includes('uid');
   if (!isAadhaar) return value;
   const digits = String(value).replace(/\D/g, '');
   if (digits.length < 4) return value;
   return `XXXX-XXXX-${digits.slice(-4)}`;
+};
+
+
+const maskPII = (value, reveal = false) => {
+  if (reveal || value == null || value === '') return value;
+  const text = String(value);
+  let masked = text.replace(/\b(\d{4})[\s-]?(\d{4})[\s-]?(\d{4})\b/g, 'XXXX-XXXX-$3');
+  masked = masked.replace(/\b([A-Z]{5})([0-9]{4})([A-Z])\b/g, 'XXXXX-$2-X');
+  masked = masked.replace(/\b([A-Z]{3})([0-9]{7})\b/g, 'XXX-$2');
+  return masked;
+};
+
+
+const truncatePayload = (value, maxLen = 96) => {
+  const text = String(value ?? '');
+  return text.length > maxLen ? `${text.slice(0, maxLen)}…` : text;
 };
 
 
@@ -698,7 +714,7 @@ export default function CaseReport() {
                                   : 'no document link asserted'}
                               </span>
                             </div>
-                            <p className="mt-1 break-all font-mono text-[11px] text-[#172033]">{cd.payload}</p>
+                            <p className="mt-1 break-all font-mono text-[11px] text-[#172033]" title="Full payload withheld — masked for PII">{maskPII(truncatePayload(cd.payload))}</p>
                           </div>
                         ))}
                       </div>
@@ -849,7 +865,7 @@ export default function CaseReport() {
           <div className="space-y-2">
             {watchlistModule.raw_output.hits.map((hit, i) => (
               <div key={i} className="rounded-lg border border-[#C62828]/30 bg-[#FBEAEA] p-3">
-                <p className="text-sm font-semibold text-[#172033]">{hit.name} <span className="ml-0 block font-normal text-[#667085] sm:ml-2 sm:inline">ID: {hit.id_number}</span></p>
+                <p className="text-sm font-semibold text-[#172033]">{hit.name} <span className="ml-0 block font-normal text-[#667085] sm:ml-2 sm:inline">ID: {maskPII(hit.id_number)}</span></p>
                 <p className="mt-1 text-sm font-medium text-[#C62828]">{hit.source}</p>
               </div>
             ))}

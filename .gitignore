@@ -28,6 +28,9 @@ build/
 # Local run artifacts
 samples/evidence/
 tests/evidence/
+# Staged enrollment uploads + pending files can contain real PII — never commit.
+samples/faces/uploads/
+**/pending_*
 
 # Vendored binary assets. The liveness .task model is REQUIRED at runtime and
 # is committed (see scripts/setup_vendor.sh for re-download if it is removed).

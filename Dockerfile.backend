@@ -44,6 +44,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ ./backend/
 COPY pipeline/ ./pipeline/
 COPY scripts/ ./scripts/
+# Seed registry photos (see Dockerfile): keeps 3-way face comparison live.
+COPY samples/faces/ ./samples/faces/
 
 # Runtime models: checks committed face_landmarker.task, provisions buffalo_l
 # (~300MB) unless disabled. Never fail the build — the backend prewarms loudly

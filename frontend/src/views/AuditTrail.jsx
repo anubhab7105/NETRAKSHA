@@ -174,7 +174,7 @@ export default function AuditTrail() {
               </button>
               <button
                 onClick={() => setOffset(offset + limit)}
-                disabled={count < limit}
+                disabled={offset + limit >= count}
                 aria-label="Next page"
                 className="gov-icon-btn !h-8 !w-8 disabled:cursor-not-allowed disabled:opacity-40"
               >
