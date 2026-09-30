@@ -84,11 +84,12 @@ def _token_sort_similarity(a: str, b: str) -> float:
     Returns 0.0 to 1.0 (1.0 = exact match).
     """
     if not a and not b:
-        return 1.0
+        return 0.0
     if not a or not b:
         return 0.0
 
-
+    a = a[:500]
+    b = b[:500]
     tokens_a = " ".join(sorted(a.lower().split()))
     tokens_b = " ".join(sorted(b.lower().split()))
 
@@ -132,7 +133,6 @@ def _extract_pin_code(address: Optional[str]) -> Optional[str]:
 
 
 def reconcile_demographics(extracted: dict, db_record: dict) -> dict:
-    """Compare extracted demographics against a database record.
 
     Args:
         extracted: Dict with keys like full_name, date_of_birth,

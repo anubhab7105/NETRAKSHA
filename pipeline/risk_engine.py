@@ -100,6 +100,24 @@ def assess_risk(
     risk_components: List[float] = []
     min_verdict = "Green"
 
+    try:
+        from pipeline.common import load_thresholds as _load_thr
+
+        _thr = _load_thr()
+    except Exception:
+        _thr = {}
+    FACE_LOW_CONF_BAND = (
+        float(_thr.get("face_low_conf_low", 0.45)),
+        float(_thr.get("face_low_conf_high", 0.65)),
+    )
+    _TAMPER_HIGH = float(_thr.get("tamper_high", 0.7))
+    _TAMPER_MOD = float(_thr.get("tamper_moderate", 0.4))
+    _PHYS_HIGH = float(_thr.get("physical_high", 0.7))
+    _PHYS_MOD = float(_thr.get("physical_moderate", 0.4))
+    _DF_HIGH = float(_thr.get("deepfake_high", 0.7))
+    _RISK_RED = float(_thr.get("risk_red", 0.65))
+    _RISK_YELLOW = float(_thr.get("risk_yellow", 0.35))
+
 
     if watchlist_hit:
         flags.append("WATCHLIST_HIT")
@@ -183,7 +201,6 @@ def assess_risk(
 
 
 
-    FACE_LOW_CONF_BAND = (0.45, 0.65)
     is_low_confidence = False
     if face_similarity is not None and FACE_LOW_CONF_BAND[0] <= face_similarity <= FACE_LOW_CONF_BAND[1]:
         is_low_confidence = True
@@ -243,14 +260,14 @@ def assess_risk(
         )
     elif tamper_score is not None:
         risk_components.append(tamper_score)
-        if tamper_score >= 0.7:
+        if tamper_score >= _TAMPER_HIGH:
             flags.append("HIGH_TAMPER_SCORE")
             min_verdict = _escalate(min_verdict, "Red")
             recommendations.append(
                 f"HIGH RISK: Tamper score {tamper_score:.2f} indicates likely document manipulation. "
                 "Inspect ELA heatmap overlay for tampered regions."
             )
-        elif tamper_score >= 0.4:
+        elif tamper_score >= _TAMPER_MOD:
             flags.append("MODERATE_TAMPER_SCORE")
             min_verdict = _escalate(min_verdict, "Yellow")
             recommendations.append(
@@ -267,14 +284,14 @@ def assess_risk(
         )
     elif physical_score is not None:
         risk_components.append(physical_score)
-        if physical_score >= 0.7:
+        if physical_score >= _PHYS_HIGH:
             flags.append("HIGH_PHYSICAL_FORGERY_SCORE")
             min_verdict = _escalate(min_verdict, "Red")
             recommendations.append(
                 f"HIGH RISK: Physical-forgery score {physical_score:.2f} indicates likely "
                 "document counterfeit/alteration. Inspect layout, portrait frame and MRZ print."
             )
-        elif physical_score >= 0.4:
+        elif physical_score >= _PHYS_MOD:
             flags.append("MODERATE_PHYSICAL_FORGERY_SCORE")
             min_verdict = _escalate(min_verdict, "Yellow")
             recommendations.append(
@@ -288,7 +305,7 @@ def assess_risk(
         risk_components.append(0.4)
     elif deepfake_score is not None:
         risk_components.append(deepfake_score)
-        if deepfake_score >= 0.7:
+        if deepfake_score >= _DF_HIGH:
             flags.append("HIGH_DEEPFAKE_SCORE")
             min_verdict = _escalate(min_verdict, "Yellow")
             recommendations.append(
@@ -382,9 +399,9 @@ def assess_risk(
 
 
 
-    if risk_score >= 0.65:
+    if risk_score >= _RISK_RED:
         score_verdict = "Red"
-    elif risk_score >= 0.35:
+    elif risk_score >= _RISK_YELLOW:
         score_verdict = "Yellow"
     else:
         score_verdict = "Green"

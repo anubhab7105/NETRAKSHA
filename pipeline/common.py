@@ -42,6 +42,46 @@ EVIDENCE_DIR = pathlib.Path(
 INSIGHTFACE_MODEL_ROOT = (_VENDOR / "models").resolve()
 
 
+_THRESHOLDS_CACHE: Optional[dict] = None
+
+
+def load_thresholds() -> dict:
+    """Load pipeline/thresholds.json (cached). Missing file/keys fall back to code defaults.
+
+    This is the single source of truth for decision thresholds — modules must
+    read their band through here instead of hardcoding magic numbers.
+    """
+    global _THRESHOLDS_CACHE
+    if _THRESHOLDS_CACHE is not None:
+        return _THRESHOLDS_CACHE
+    defaults = {
+        "face_match": 0.55,
+        "face_low_conf_low": 0.45,
+        "face_low_conf_high": 0.65,
+        "tamper_high": 0.7,
+        "tamper_moderate": 0.4,
+        "physical_high": 0.7,
+        "physical_moderate": 0.4,
+        "deepfake_high": 0.7,
+        "liveness": 0.45,
+        "name_match": 0.85,
+        "address_match": 0.60,
+        "risk_red": 0.65,
+        "risk_yellow": 0.35,
+        "watchlist_fuzzy": 0.8,
+        "document_quality_blur": 35.0,
+        "document_quality_dark": 35.0,
+    }
+    try:
+        with open(_ROOT / "thresholds.json", "r", encoding="utf-8") as fh:
+            file_values = json.load(fh)
+        merged = {**defaults, **{k: v for k, v in file_values.items() if k in defaults}}
+    except Exception:
+        merged = dict(defaults)
+    _THRESHOLDS_CACHE = merged
+    return merged
+
+
 
 
 _TESS_DIR = _VENDOR / "tesseract"

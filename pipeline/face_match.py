@@ -7,9 +7,9 @@ Approach (Techspec.md §3, Implementationplan.md Day 3):
   * ``match: bool`` derived from a per-module threshold, surfaced as evidence
     (not a case verdict). The Risk Engine / officer makes the final call.
 
-ONNX runtime path: Techspec.md §2 says GPU is confirmed available, so we try
-CUDA/ROCM GPU execution providers first, falling back to CPU only when no GPU
-exists on the actual runtime (this box has none — flagged in Tracker.md §0).
+ONNX runtime path: CPU-only by policy (AGENTS.md) — CPUExecutionProvider is
+preferred first; GPU providers are only used as a fallback when CPU is
+unavailable on the runtime.
 
 Evidence: returns a real side-by-side image (doc-photo vs live-capture crops)
 that the Case Result UI (Design.md §5) displays directly.
@@ -44,6 +44,14 @@ from .face_quality import (
 
 MODULE_NAME = "face_match"
 
+
+def _face_match_threshold() -> float:
+    try:
+        from .common import load_thresholds
+
+        return float(load_thresholds().get("face_match", 0.55))
+    except Exception:
+        return 0.55
 
 
 MATCH_THRESHOLD = 0.55
@@ -352,7 +360,8 @@ def run_face_match(document_photo, live_capture, save_evidence: bool = True) -> 
 
     similarity = float(np.dot(doc_norm, live_norm))
     similarity = float(np.clip(similarity, 0.0, 1.0))
-    match = bool(similarity >= MATCH_THRESHOLD)
+    _thr = _face_match_threshold()
+    match = bool(similarity >= _thr)
 
     evidence_uri = None
     if save_evidence:
@@ -369,7 +378,7 @@ def run_face_match(document_photo, live_capture, save_evidence: bool = True) -> 
     raw = {
         "similarity": round(similarity, 4),
         "match": match,
-        "match_threshold": MATCH_THRESHOLD,
+        "match_threshold": _thr,
         "doc_faces_detected": doc_n,
         "live_faces_detected": live_n,
         "doc_embedding_norm": round(float(np.linalg.norm(doc_norm)), 4),
