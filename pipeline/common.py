@@ -235,34 +235,54 @@ def load_image(src: Any) -> np.ndarray:
 
     Accepts a filesystem path (str/Path), a path-like, a URL-ish bytes buffer,
     a PIL Image, or an ndarray. Raises ValueError on unreadable input.
+    Decompression bombs are rejected: source files over 50 MB or images
+    over 100 megapixels raise ValueError (callers degrade to inconclusive).
     """
+    _MAX_FILE_BYTES = 50_000_000
+    _MAX_PIXELS = 100_000_000
     if isinstance(src, np.ndarray):
-        return src.astype(np.uint8)
+        arr = src.astype(np.uint8)
+        if arr.size > _MAX_PIXELS:
+            raise ValueError(f"image too large: {arr.size} pixels")
+        return arr
 
     if hasattr(src, "read"):
         from PIL import Image as PILImage
 
         data = src.read()
+        if len(data) > _MAX_FILE_BYTES:
+            raise ValueError("image buffer too large")
         buf = np.frombuffer(data, dtype=np.uint8)
         import cv2
 
         img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
         if img is None:
             raise ValueError("could not decode image from buffer")
+        if img.size > _MAX_PIXELS:
+            raise ValueError(f"image too large: {img.size} pixels")
         return img
 
     if hasattr(src, "mode") and hasattr(src, "convert"):
         import cv2
 
         rgb = np.asarray(src.convert("RGB"))
+        if rgb.size > _MAX_PIXELS:
+            raise ValueError(f"image too large: {rgb.size} pixels")
         return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
 
     p = pathlib.Path(os.fspath(src))
     if not p.exists():
         raise FileNotFoundError(f"image not found: {p}")
+    try:
+        if p.stat().st_size > _MAX_FILE_BYTES:
+            raise ValueError(f"image file too large: {p.stat().st_size} bytes")
+    except OSError as exc:
+        raise ValueError(f"cannot stat image: {p}") from exc
     import cv2
 
     img = cv2.imread(str(p), cv2.IMREAD_COLOR)
     if img is None:
         raise ValueError(f"could not decode image: {p}")
+    if img.size > _MAX_PIXELS:
+        raise ValueError(f"image too large: {img.size} pixels")
     return img
