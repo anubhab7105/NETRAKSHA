@@ -63,6 +63,10 @@ def assess_risk(
     iris_match: Optional[bool] = None,
     iris_quality: Optional[dict] = None,
     iris_liveness: Optional[dict] = None,
+    document_quality_status: Optional[str] = None,
+    document_quality_issues: Optional[list] = None,
+    security_zones_status: Optional[str] = None,
+    security_zones_score: Optional[float] = None,
     **kwargs
 ) -> RiskAssessment:
     """Evaluate composite risk from all module outputs.
@@ -100,8 +104,8 @@ def assess_risk(
         )
 
 
-    if demographic_result is not None:
-        overall_match = demographic_result.get("overall_match", True)
+    if demographic_result is not None and demographic_result != {}:
+        overall_match = demographic_result.get("overall_match", False)
         critical = demographic_result.get("critical_mismatches", [])
         mismatch_fields = demographic_result.get("mismatch_fields", [])
 
@@ -328,6 +332,40 @@ def assess_risk(
         risk_components.append(0.0)
 
 
+    if document_quality_status == "inconclusive":
+        issues = ",".join(document_quality_issues or []) or "low quality"
+        flags.append(f"DOCUMENT_QUALITY_FAILED:{issues}"[:160])
+        min_verdict = _escalate(min_verdict, "Yellow")
+        risk_components.append(0.6)
+        recommendations.append(
+            "Document image quality too low for reliable forensics "
+            f"({issues}). Recapture in good light and re-screen."
+        )
+
+    if security_zones_status == "inconclusive":
+        flags.append("SECURITY_ZONES_INCONCLUSIVE")
+        min_verdict = _escalate(min_verdict, "Yellow")
+        risk_components.append(0.4)
+        recommendations.append(
+            "Template/security-zone checks were inconclusive. Inspect layout and portrait zone physically."
+        )
+    elif security_zones_score is not None:
+        risk_components.append(security_zones_score)
+        if security_zones_score >= 0.7:
+            flags.append("HIGH_SECURITY_ZONE_ANOMALY")
+            min_verdict = _escalate(min_verdict, "Red")
+            recommendations.append(
+                f"HIGH RISK: Security-zone anomaly score {security_zones_score:.2f} — "
+                "photo/zone layout deviates from the document template."
+            )
+        elif security_zones_score >= 0.4:
+            flags.append("MODERATE_SECURITY_ZONE_ANOMALY")
+            min_verdict = _escalate(min_verdict, "Yellow")
+            recommendations.append(
+                f"MODERATE: Security-zone anomaly score {security_zones_score:.2f} warrants manual inspection."
+            )
+
+
     if risk_components:
         risk_score = sum(risk_components) / len(risk_components)
     else:
@@ -380,6 +418,14 @@ def assess_risk(
         "gemini_ai": {
             "face_match": gemini_face_match,
             "photo_tamper": gemini_photo_tamper,
+        },
+        "document_quality": {
+            "status": document_quality_status,
+            "issues": document_quality_issues or [],
+        },
+        "security_zones": {
+            "score": security_zones_score,
+            "status": security_zones_status,
         },
     }
 

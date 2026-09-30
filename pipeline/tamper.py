@@ -145,7 +145,7 @@ def _copy_move_detect(
                 if (dx * dx + dy * dy) ** 0.5 < min_dist:
                     continue
                 key = (round(dx / stride), round(dy / stride))
-                if abs(dy) >= 2:
+                if abs(dy) // stride >= 2:
                     offsets[key] += 1
                     n_matches += 1
                 else:
@@ -183,13 +183,14 @@ def run_tamper(document_image, save_evidence: bool = True) -> ModuleResult:
         img = load_image(document_image)
         if img.size == 0 or img is None:
             raise ValueError("empty image")
-        rgb = img[:, :, ::-1] if img.ndim == 3 and img.shape[2] == 3 else img
-        if rgb.ndim == 2:
-            rgb = np.stack([rgb] * 3, axis=-1)
-        gray = np.asarray(
-            (0.299 * rgb[:, :, 2] + 0.587 * rgb[:, :, 1] + 0.114 * rgb[:, :, 0]),
-            dtype=np.uint8,
-        )
+        import cv2 as _cv2
+
+        if img.ndim == 2:
+            gray = img.astype(np.uint8)
+            rgb = np.stack([gray] * 3, axis=-1)
+        else:
+            gray = _cv2.cvtColor(img, _cv2.COLOR_BGR2GRAY)
+            rgb = img[:, :, ::-1]
     except Exception as exc:
         return inconclusive_result(MODULE_NAME, exc)
 

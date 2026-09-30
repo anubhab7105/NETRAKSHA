@@ -46,9 +46,11 @@ def run_document_quality(document_image, save_evidence: bool = False) -> ModuleR
     except Exception as e:
         return inconclusive_result(MODULE_NAME, e)
     report = assess_document(bgr)
-    score = 0.0 if report["gate"] == "passed" else 0.85
     if report["gate"] == "passed":
-        return ok_result(MODULE_NAME, score, report, None)
-    else:
-
-        return ok_result(MODULE_NAME, score, report, None)
+        return ok_result(MODULE_NAME, 0.0, report, None)
+    report["action"] = "recapture"
+    return inconclusive_result(
+        MODULE_NAME,
+        f"document_quality_failed: {', '.join(report['issues'])} "
+        f"({'; '.join(report['recapture_reasons'])})",
+    )

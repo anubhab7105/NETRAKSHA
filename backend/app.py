@@ -3669,21 +3669,32 @@ def _storage_object_for_enrollment(doc_type: str, doc_number: str, photo_hash: s
 def _safe_registry_photo_path(photo_uri: str) -> Optional[Path]:
     """Resolve a DB-stored photo_uri to a local file, contained to safe roots.
 
-    Absolute URIs, `..` escapes, and symlinks are rejected (returns None):
-    only files under <root>/samples/faces, <root>/samples/evidence, or the
-    temp registry-photo cache may be read. Callers treat None as
-    `registry_photo_missing_on_server`.
+    Relative or absolute paths are accepted only when they resolve inside the
+    approved local roots (<root>/samples/faces, <root>/samples/evidence, or the
+    temp registry-photo cache). `..` escapes and symlinks are rejected.
+    Callers treat None as `registry_photo_missing_on_server`.
     """
     try:
         uri = (photo_uri or "").strip()
         if not uri or "\\" in uri:
             return None
         p = Path(uri)
-        if p.is_absolute():
-            return None
         if ".." in p.parts:
             return None
-        candidate = (_PROJECT_ROOT / p).resolve()
+
+        raw = p if p.is_absolute() else (_PROJECT_ROOT / p)
+        try:
+            current = raw
+            while True:
+                if current.exists() and current.is_symlink():
+                    return None
+                if current == current.parent:
+                    break
+                current = current.parent
+        except Exception:
+            return None
+
+        candidate = raw.resolve()
         allowed_roots = []
         for rel in ("samples/faces", "samples/evidence"):
             try:
@@ -3700,8 +3711,6 @@ def _safe_registry_photo_path(photo_uri: str) -> Optional[Path]:
                 allowed_roots.append(cache_dir)
         except Exception:
             pass
-        if candidate.is_symlink():
-            return None
         if not any(r == candidate or r in candidate.parents for r in allowed_roots):
             return None
         if candidate.is_file():
