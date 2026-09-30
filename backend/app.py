@@ -3891,11 +3891,12 @@ def _registry_trust_for(citizen) -> dict:
     Levels:
       * authority_verified — signed authority import (HMAC second factor).
       * dual_approved     — requested by one supervisor, approved by another.
-      * legacy            — pre-fix row (NULL trust columns / legacy_seed):
+      * legacy            — pre-fix row explicitly marked legacy_seed:
                             grandfathered for demo continuity, flagged for
                             authority re-verification, Green still possible.
-      * unverified        — anything else (self-approved, missing source,
-                            single-writer). Screening floors these at Yellow.
+      * unverified        — anything else (self-approved, missing/empty
+                            source, single-writer). Screening floors these
+                            at Yellow.
     """
     try:
         source = (getattr(citizen, "source", None) or "").strip()
@@ -3909,7 +3910,7 @@ def _registry_trust_for(citizen) -> dict:
     if enrolled and approved and enrolled != approved:
         return {"level": "dual_approved", "verified": True,
                 "reasons": [f"requested by {enrolled}, approved by {approved}"]}
-    if not source or source == "legacy_seed":
+    if source == "legacy_seed":
         return {"level": "legacy", "verified": False,
                 "reasons": ["enrolled before dual-approval control — authority re-verification owed"]}
     reasons = []
@@ -3938,12 +3939,43 @@ def _verify_import_signature(raw_body: bytes, signature: str) -> None:
 
 
 def _secure_delete_file(path: Optional[Path]) -> bool:
-    """Overwrite-with-zeros + unlink. Returns True if the file is gone."""
+    """Overwrite-with-zeros + unlink. Returns True if the file is gone.
+
+    Only acts inside the safe photo roots (samples/faces, samples/evidence,
+    temp cache) and never follows symlinks — a crafted photo_uri can
+    otherwise zero bytes outside the evidence store.
+    """
     try:
-        if path is None or not path.is_file():
+        if path is None:
             return True
-        size = path.stat().st_size
-        with open(path, "r+b") as f:
+        p = Path(path)
+        if p.is_symlink():
+            try:
+                p.unlink()
+            except Exception:
+                pass
+            return not p.exists()
+        try:
+            resolved = p.resolve()
+        except Exception:
+            return True
+        allowed = []
+        for rel in ("samples/faces", "samples/evidence"):
+            try:
+                allowed.append((_PROJECT_ROOT / rel).resolve())
+            except Exception:
+                pass
+        try:
+            allowed.append(Path(tempfile.gettempdir()).resolve())
+        except Exception:
+            pass
+        if not any(r == resolved or r in resolved.parents for r in allowed):
+            print(f"[retention] refusing to delete outside safe roots: {resolved}")
+            return False
+        if not resolved.is_file():
+            return True
+        size = resolved.stat().st_size
+        with open(resolved, "r+b") as f:
             f.write(b"\x00" * size)
             f.flush()
             try:
@@ -3951,8 +3983,8 @@ def _secure_delete_file(path: Optional[Path]) -> bool:
                 _os.fsync(f.fileno())
             except Exception:
                 pass
-        path.unlink()
-        return not path.is_file()
+        resolved.unlink()
+        return not resolved.is_file()
     except FileNotFoundError:
         return True
     except Exception as e:
@@ -4415,7 +4447,7 @@ async def reject_enrollment(enrollment_id: int, req_body: _ReviewNote, request: 
         if not req:
             raise HTTPException(status_code=404, detail="Enrollment request not found")
         approver_id, approver = _require_different_supervisor(officer, req)
-        staged = (_PROJECT_ROOT / req.photo_uri) if (req.action == "create" and req.photo_uri) else None
+        staged = _safe_registry_photo_path(req.photo_uri) if (req.action == "create" and req.photo_uri) else None
         req.status = "rejected"
         req.approved_by_id = approver_id
         req.approved_by = approver
@@ -4506,8 +4538,8 @@ async def import_authority_citizens(request: Request):
 
                 photo_hash = (rec.photo_hash or "").strip() or None
                 if rec.photo_uri:
-                    cand = (_PROJECT_ROOT / rec.photo_uri)
-                    if not cand.is_file():
+                    cand = _safe_registry_photo_path(rec.photo_uri)
+                    if cand is None or not cand.is_file():
                         raise ValueError(f"photo_uri not found on server: {rec.photo_uri}")
                     try:
                         actual = hashlib.sha256(cand.read_bytes()).hexdigest()
@@ -4575,8 +4607,8 @@ def _reconcile_citizen_row(citizen, authority_by_key: Optional[dict] = None) -> 
         issues.append("photo_missing")
     else:
         try:
-            p = (_PROJECT_ROOT / citizen.photo_uri)
-            if not p.is_file():
+            p = _safe_registry_photo_path(citizen.photo_uri)
+            if p is None or not p.is_file():
                 issues.append("photo_file_missing")
             elif citizen.photo_hash:
                 try:
@@ -5003,28 +5035,47 @@ async def reload_watchlist(request: Request):
 
 
 
+def _iris_key() -> bytes:
+    """Key for iris-template authentication (dedicated env or JWT secret)."""
+    key = os.environ.get("IRIS_ENCRYPTION_KEY", "").strip() or active_secret("JWT_SECRET")
+    return key.encode()
+
+
 def _encrypt_template(data: bytes) -> str:
-    """Encrypt template for at-rest storage (HMAC + base64, not just plaintext)."""
+    """Authenticate a template for at-rest storage (HMAC-SHA256 + base64).
+
+    This is authenticated *encoding*, not encryption: it detects tampering
+    but anyone with DB read access can still decode the template. Production
+    deployments handling real biometrics must replace this with AES-GCM /
+    Fernet via a KMS-backed IRIS_ENCRYPTION_KEY (see audit C4).
+    """
+    import base64, hmac, hashlib
+
+    raw = bytes(data or b"")
+    sig = hmac.new(_iris_key(), raw, hashlib.sha256).hexdigest()
+    b64 = base64.b64encode(raw).decode()
+    return f"{sig}:{b64}"
+
+
+def _decrypt_template(enc: str) -> bytes:
+    """Decode a stored template, verifying its HMAC first (fail-closed)."""
     import base64, hmac, hashlib
 
     try:
-        b64 = base64.b64encode(data).decode()
-        sig = hmac.new(_JWT_SECRET.encode(), data, hashlib.sha256).hexdigest()[:16]
-        return f"{sig}:{b64}"
+        text = enc if isinstance(enc, str) else enc.decode()
     except Exception:
-        import base64 as _b64
-        return _b64.b64encode(data).decode()
-
-def _decrypt_template(enc: str) -> bytes:
-    """Decrypt template."""
-    import base64
+        raise HTTPException(status_code=500, detail="Stored iris template is corrupt.")
+    if ":" not in text:
+        raise HTTPException(status_code=500, detail="Stored iris template is corrupt.")
+    sig, _, b64 = text.partition(":")
     try:
-        if ":" in enc:
-            _, b64 = enc.split(":", 1)
-            return base64.b64decode(b64.encode())
-        return base64.b64decode(enc.encode())
+        raw = base64.b64decode(b64.encode())
     except Exception:
-        return base64.b64decode(enc.encode())
+        raise HTTPException(status_code=500, detail="Stored iris template is corrupt.")
+    expected = hmac.new(_iris_key(), raw, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, sig):
+        raise HTTPException(status_code=500, detail="Stored iris template failed integrity check.")
+    return raw
 
 
 @app.post("/api/biometric/iris/enroll", include_in_schema=False)
