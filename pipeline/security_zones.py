@@ -59,20 +59,24 @@ def _photo_zone_check(bgr: np.ndarray, doc_type: str) -> Dict[str, Any]:
                 num_faces=3,
             )
         )
-        rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-        res = landmarker.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb))
-        landmarker.close()
+        try:
+            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+            res = landmarker.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb))
+        finally:
+            try:
+                landmarker.close()
+            except Exception:
+                pass
         if not res.face_landmarks:
             return {"photo_zone": "no_face", "photo_in_zone": False}
 
         zones = TEMPLATE_ZONES.get(doc_type, TEMPLATE_ZONES["unknown"])
         photo_roi = zones.get("photo", (0.02, 0.15, 0.35, 0.75))
-        h, w = bgr.shape[:2]
 
         lm = res.face_landmarks[0]
         xs = [p.x for p in lm]
         ys = [p.y for p in lm]
-        fx, fy = min(xs), min(ys)
+        fx, fy = sum(xs) / len(xs), sum(ys) / len(ys)
 
         in_zone = (photo_roi[0] <= fx <= photo_roi[2]) and (photo_roi[1] <= fy <= photo_roi[3])
         return {"photo_zone": "found", "photo_in_zone": bool(in_zone), "face_x": round(fx,3), "face_y": round(fy,3)}

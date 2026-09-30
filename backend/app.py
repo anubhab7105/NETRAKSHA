@@ -2649,6 +2649,17 @@ async def _run_screening_pipeline(
                 "checksum", 1.0 if checksum_result.get("valid") else 0.0,
                 "ok", checksum_result, None, False,
             ))
+        if _doc_quality_res is not None:
+            modules.append((
+                "document_quality", _doc_quality_res.score, _doc_quality_res.status,
+                _doc_quality_res.raw_output, _doc_quality_res.evidence_uri, False,
+            ))
+        _security_res = security_result if "security_result" in locals() else None
+        if _security_res is not None:
+            modules.append((
+                "security_zones", _security_res.score, _security_res.status,
+                _security_res.raw_output, _security_res.evidence_uri, False,
+            ))
 
 
 
@@ -2738,6 +2749,8 @@ async def _run_screening_pipeline(
         "physical_forgery": physical_result.to_json(),
         "deepfake": deepfake_result.to_json(),
         "liveness": liveness_result.to_json(),
+        "document_quality": _doc_quality_res.to_json() if _doc_quality_res else None,
+        "security_zones": (_security_res.to_json() if "security_result" in locals() and _security_res else None),
         "watchlist": watchlist_result.to_dict(),
         "risk_assessment": risk.to_dict(),
         "is_demo": is_demo_case,

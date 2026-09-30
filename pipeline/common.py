@@ -88,16 +88,23 @@ else:
     TESS_TESSDATA = _TESS_DIR / "tessdata"
 
 
+def get_evidence_dir() -> pathlib.Path:
+    """Resolve the evidence dir fresh (honours late env changes in tests)."""
+    env = os.environ.get("SCREEN_EVIDENCE_DIR", "").strip()
+    return pathlib.Path(env) if env else EVIDENCE_DIR
+
+
 def ensure_evidence_dir() -> pathlib.Path:
-    EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
-    return EVIDENCE_DIR
+    path = get_evidence_dir()
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def new_evidence_path(module: str, ext: str = "png") -> pathlib.Path:
     """Return a fresh, unique evidence file path under the evidence dir."""
-    ensure_evidence_dir()
+    base = ensure_evidence_dir()
     name = f"{module}_{uuid.uuid4().hex[:10]}.{ext.lstrip('.')}"
-    return EVIDENCE_DIR / name
+    return base / name
 
 
 
@@ -147,9 +154,15 @@ def ok_result(
     raw_output: Optional[dict] = None,
     evidence_uri: Optional[str] = None,
 ) -> ModuleResult:
+    try:
+        value = float(score)
+    except (TypeError, ValueError):
+        return inconclusive_result(module_name, f"non-numeric score: {score!r}"[:200])
+    if value != value or value in (float("inf"), float("-inf")):
+        return inconclusive_result(module_name, f"non-finite score: {score!r}"[:200])
     return ModuleResult(
         module_name=module_name,
-        score=float(np.clip(score, 0.0, 1.0)),
+        score=float(np.clip(value, 0.0, 1.0)),
         status="ok",
         raw_output=dict(raw_output or {}),
         evidence_uri=_rel_uri(evidence_uri),
@@ -173,8 +186,11 @@ def inconclusive_result(module_name: str, reason: str) -> ModuleResult:
 def _summarise_reason(reason: Any) -> str:
     """Short, generic reason string. Kept PII-free and truncated for logs."""
     if isinstance(reason, Exception):
-        return f"{type(reason).__name__}: {str(reason)[:200]}"
-    return str(reason)[:200]
+        text = f"{type(reason).__name__}: {str(reason)}"
+    else:
+        text = str(reason)
+    text = text.replace(str(_ROOT.parent), "<root>").replace(str(_ROOT), "<pipeline>")
+    return text[:200]
 
 
 def _rel_uri(path: Optional[str]) -> Optional[str]:
