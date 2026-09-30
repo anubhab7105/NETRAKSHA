@@ -73,6 +73,15 @@ SCREEN_SPOOF = 0.60
 
 LIVE_THRESHOLD = 0.45
 
+
+def _liveness_threshold() -> float:
+    try:
+        from .common import load_thresholds
+
+        return float(load_thresholds().get("liveness", 0.45))
+    except Exception:
+        return 0.45
+
 BLINK_DEPTH = 0.01
 
 
@@ -457,7 +466,7 @@ def run_liveness(frame_burst, challenge_type: str = "blink") -> ModuleResult:
       * a list of frame images (paths, BGR ndarrays, or PIL Images),
       * a video file path (decoded into frames), or
       * a single still (tolerated but low-confidence).
-    ``challenge_type`` is one of "blink" (default), "head_turn", "mouth_open", "smile".
+    ``challenge_type`` is one of "blink" (default), "head_turn", "mouth_open".
 
     Returns "ok" or "inconclusive". ``raw_output['live']`` is a bool whenever
     status == "ok". Never raises.
@@ -529,10 +538,6 @@ def run_liveness(frame_burst, challenge_type: str = "blink") -> ModuleResult:
     elif challenge == "mouth_open" and not mouth_open:
         challenge_ok = False
         challenge_reason = "mouth-open challenge not observed — mouth did not open sufficiently"
-    elif challenge == "smile" and not mouth_open:
-
-        challenge_ok = False
-        challenge_reason = "smile challenge not observed"
 
     observed = []
     if blinks > 0:
@@ -566,7 +571,7 @@ def run_liveness(frame_burst, challenge_type: str = "blink") -> ModuleResult:
         else:
             score = 0.55 * max(blink_signal, motion_signal, challenge_signal) \
                 + 0.25 * (1.0 - screen) + 0.20 * coverage
-        live = bool(score >= LIVE_THRESHOLD)
+        live = bool(score >= _liveness_threshold())
         if live and not challenge_ok:
 
 

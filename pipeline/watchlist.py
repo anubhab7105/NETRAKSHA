@@ -110,12 +110,23 @@ class DBWatchlistProvider(WatchlistProvider):
         return re.sub(r"[\s\-]", "", s.strip().lower())
 
     def _fuzzy_name_match(self, query: str, target: str) -> float:
+        import difflib
+
         q_tokens = set(query.lower().split())
         t_tokens = set(target.lower().split())
         if not q_tokens or not t_tokens:
             return 0.0
-        overlap = len(q_tokens & t_tokens)
-        return overlap / max(len(q_tokens), len(t_tokens))
+        overlap = len(q_tokens & t_tokens) / max(len(q_tokens), len(t_tokens))
+        seq = difflib.SequenceMatcher(None, query.lower(), target.lower()).ratio()
+        return round(max(overlap, seq), 4)
+
+    def _fuzzy_threshold(self) -> float:
+        try:
+            from pipeline.common import load_thresholds
+
+            return float(load_thresholds().get("watchlist_fuzzy", 0.8))
+        except Exception:
+            return 0.8
 
     def check(
         self,
@@ -134,7 +145,7 @@ class DBWatchlistProvider(WatchlistProvider):
                 confidence = 1.0
             if not matched and norm_name:
                 name_score = self._fuzzy_name_match(norm_name, entry.get("name", ""))
-                if name_score >= 0.5:
+                if name_score >= self._fuzzy_threshold():
                     matched = True
                     confidence = max(confidence, name_score)
             if matched:
@@ -250,15 +261,18 @@ async def load_db_watchlist_provider(is_mocked: bool = False) -> DBWatchlistProv
         async with _async_session() as session:
             res = await session.execute(_select(_WatchlistEntry))
             rows = res.scalars().all()
-            entries = [
-                {
-                    "name": r.name,
-                    "id_number": r.id_number,
-                    "flag_reason": r.flag_reason,
-                    "source": getattr(r, "flag_reason", "") or "Watchlist",
-                }
-                for r in rows
-            ]
+            entries = []
+            for r in rows:
+                reason = r.flag_reason or ""
+                derived = reason.split("—")[0].split("-")[0].strip()
+                entries.append(
+                    {
+                        "name": r.name,
+                        "id_number": r.id_number,
+                        "flag_reason": reason,
+                        "source": getattr(r, "source", "") or derived or "Watchlist",
+                    }
+                )
             return DBWatchlistProvider(entries, is_mocked=is_mocked)
     except Exception as e:
 

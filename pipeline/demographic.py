@@ -133,6 +133,11 @@ def _extract_pin_code(address: Optional[str]) -> Optional[str]:
 
 
 def reconcile_demographics(extracted: dict, db_record: dict) -> dict:
+    """Compare extracted demographics against a database record.
+
+    None inputs are treated as empty records (all fields unverified) —
+    never AttributeError. Two missing names score 0.0 (unverified),
+    never a 1.0 match.
 
     Args:
         extracted: Dict with keys like full_name, date_of_birth,
@@ -160,16 +165,26 @@ def reconcile_demographics(extracted: dict, db_record: dict) -> dict:
     """
     comparisons = []
 
+    extracted = extracted or {}
+    db_record = db_record or {}
+
+    try:
+        from pipeline.common import load_thresholds as _load_thr
+
+        _thr = _load_thr()
+    except Exception:
+        _thr = {}
+    NAME_THRESHOLD = float(_thr.get("name_match", 0.85))
+    ADDR_THRESHOLD = float(_thr.get("address_match", 0.60))
 
     ext_name = extracted.get("full_name") or ""
     db_name = db_record.get("full_name") or ""
     name_sim = _token_sort_similarity(ext_name, db_name)
-    NAME_THRESHOLD = 0.85
     comparisons.append({
         "field": "Full Name",
         "extracted": ext_name or None,
         "database": db_name or None,
-        "status": "match" if name_sim >= NAME_THRESHOLD else (
+        "status": "match" if (name_sim >= NAME_THRESHOLD and ext_name and db_name) else (
             "mismatch" if ext_name and db_name else "unverified"
         ),
         "confidence": name_sim,
@@ -231,10 +246,12 @@ def reconcile_demographics(extracted: dict, db_record: dict) -> dict:
     db_pin = _extract_pin_code(db_addr)
     pin_match = ext_pin == db_pin if (ext_pin and db_pin) else None
 
-    ADDR_THRESHOLD = 0.60
+    ADDR_THRESHOLD = float(_thr.get("address_match", 0.60))
     addr_status = "unverified"
     if addr_sim is not None:
-        if addr_sim >= ADDR_THRESHOLD or pin_match is True:
+        if (addr_sim >= ADDR_THRESHOLD and pin_match is not False) or (
+            pin_match is True and addr_sim >= 0.40
+        ):
             addr_status = "match"
         else:
             addr_status = "mismatch"

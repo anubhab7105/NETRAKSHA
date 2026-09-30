@@ -733,7 +733,16 @@ def run_physical_forgery(
         img = load_image(document_image)
         if img is None or img.size == 0:
             raise ValueError("empty image")
-        bgr = img if (img.ndim == 3 and img.shape[2] == 3) else np.stack([img] * 3, axis=-1)
+        import cv2 as _cv2
+
+        if img.ndim == 2:
+            bgr = _cv2.cvtColor(img, _cv2.COLOR_GRAY2BGR)
+        elif img.shape[2] == 4:
+            bgr = _cv2.cvtColor(img, _cv2.COLOR_BGRA2BGR)
+        elif img.shape[2] == 3:
+            bgr = img
+        else:
+            raise ValueError(f"unsupported channel count: {img.shape[2]}")
         gray = _gray(bgr)
         if min(gray.shape) < 200:
             return inconclusive_result(MODULE_NAME, "image too small for physical checks")

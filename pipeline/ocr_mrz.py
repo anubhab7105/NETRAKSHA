@@ -91,14 +91,30 @@ def _tesseract_env() -> dict:
     return env
 
 
+_TESSERACT_CONFIGURED = False
+_TESSERACT_LOCK = None
+
+
 def _configure_tesseract() -> None:
     """Point pytesseract (and anything that shells out to it, incl. PassportEye)
-    at the vendored binary + libs + tessdata. Safe to call repeatedly."""
-    import pytesseract
+    at the vendored binary + libs + tessdata. Configured once (thread-safe);
+    repeated calls are no-ops so concurrent screenings cannot race on globals."""
+    global _TESSERACT_CONFIGURED, _TESSERACT_LOCK
+    if _TESSERACT_CONFIGURED:
+        return
+    if _TESSERACT_LOCK is None:
+        import threading as _threading
 
-    pytesseract.pytesseract.tesseract_cmd = str(TESSERACT_BIN)
-    os.environ["LD_LIBRARY_PATH"] = str(TESS_LIB_DIR)
-    os.environ["TESSDATA_PREFIX"] = str(TESS_TESSDATA)
+        _TESSERACT_LOCK = _threading.Lock()
+    with _TESSERACT_LOCK:
+        if _TESSERACT_CONFIGURED:
+            return
+        import pytesseract
+
+        pytesseract.pytesseract.tesseract_cmd = str(TESSERACT_BIN)
+        os.environ["LD_LIBRARY_PATH"] = str(TESS_LIB_DIR)
+        os.environ["TESSDATA_PREFIX"] = str(TESS_TESSDATA)
+        _TESSERACT_CONFIGURED = True
 
 
 def _ocr_frame_rgb(pil_rgb) -> str:
@@ -266,6 +282,8 @@ def _detect_indian_document_number(text: str):
         fallback = None
         for cand in candidates:
             digits = re.sub(r"\s+", "", cand)
+            if digits[0] not in "23456789":
+                continue
             if validate_verhoeff is None:
                 return digits, "aadhaar"
             try:
@@ -390,7 +408,7 @@ def _parse_mrz_via_passporteye(img_bgr):
 
 
     fields = _extract_mrz_fields_from_attrs(mrz)
-    checks = _validate_icao_blocks(fields, mrz)
+    checks = _validate_icao_blocks(fields, mrz, lines)
     return fields, checks, lines
 
 
@@ -429,7 +447,7 @@ def _as_str(v):
     return str(v)
 
 
-def _validate_icao_blocks(fields: dict, mrz) -> dict:
+def _validate_icao_blocks(fields: dict, mrz, lines=None) -> dict:
     """Validate the ICAO 9303 check-digit blocks using PassportEye's parsed
     field values (for the block body -> our `check_digit`) and its per-block
     `check_*` attributes (for the given seam digit).
@@ -485,18 +503,24 @@ def _validate_icao_blocks(fields: dict, mrz) -> dict:
     comp_raw = str(comp_raw) if comp_raw is not None else ""
     if re.fullmatch(r"[0-9]", comp_raw):
         comp_given = _char_value(comp_raw)
-        surname = fields.get("surname")
-        given = fields.get("given_names")
-        country = fields.get("country")
-        doc_type = fields.get("document_type")
-        if surname and given and country and doc_type:
-            line1 = (doc_type + "<" + country + surname + "<<" + given).ljust(44, "<")
-            line1_first = line1[:10]
-            result["composite"] = {
-                "ok": comp_given == check_digit(line1_first),
-                "given": comp_given,
-                "computed": check_digit(line1_first),
-            }
+        raw_lines = [str(line) for line in (lines or []) if str(line).strip()]
+        if len(raw_lines) >= 2 and all(len(line.strip()) >= 40 for line in raw_lines[:2]):
+            try:
+                from pipeline.checksums import validate_icao_9303 as _validate_9303
+
+                canonical = _validate_9303([line.strip() for line in raw_lines[:2]])
+                comp_block = canonical.get("composite")
+                if comp_block:
+                    result["composite"] = comp_block
+                    return result
+            except Exception:
+                pass
+        result["composite"] = {
+            "ok": False,
+            "given": comp_given,
+            "computed": None,
+            "note": "composite unverifiable without full MRZ lines",
+        }
 
     return result
 
@@ -534,10 +558,9 @@ def _run_ocr_mrz_impl(img):
     tesseract_ok = False
     if _tesseract_available():
         try:
-            from PIL import Image
+            import cv2 as _cv2
 
-            pil_bgr = Image.fromarray(img)
-            rgb = pil_bgr.convert("RGB")
+            rgb = _cv2.cvtColor(img, _cv2.COLOR_BGR2RGB)
             ocr_text = _ocr_frame_rgb(rgb)
             tesseract_ok = bool(ocr_text.strip())
         except Exception as exc:

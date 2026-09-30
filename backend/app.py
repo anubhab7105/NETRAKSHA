@@ -5156,8 +5156,10 @@ async def enroll_iris(
     try:
         from backend.biometric.iris.provider import get_provider
         prov = get_provider(provider)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
-        import tempfile
+    try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
             tmp.write(eye_bytes)
             tmp_path = tmp.name
@@ -5245,6 +5247,9 @@ async def verify_iris(
     try:
         from backend.biometric.iris.provider import get_provider
         prov = get_provider(provider)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    try:
         result = prov.verify(tmp_path, ref_template, ref_mask)
     finally:
         Path(tmp_path).unlink(missing_ok=True)

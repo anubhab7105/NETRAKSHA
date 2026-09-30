@@ -80,7 +80,7 @@ def _fft_metrics(face_bgr: np.ndarray) -> dict:
         return {"error": "image too small"}
 
 
-    low = power[ : max(1, int(Nyquist * 0.2))]
+    low = power[1 : max(2, int(Nyquist * 0.2))]
     mid = power[int(Nyquist * 0.2) : int(Nyquist * 0.6)]
     high = power[int(Nyquist * 0.6) : int(Nyquist * 0.95)]
     hf_energy = np.sum(high) if len(high) else 0.0

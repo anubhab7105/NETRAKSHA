@@ -49,7 +49,7 @@ load_dotenv()
 
 
 
-DEFAULT_GEMINI_MODELS = ["gemini-flash-lite-latest", "gemini-3.5-flash", "gemini-3-flash-preview"]
+DEFAULT_GEMINI_MODELS = ["gemini-3.6-flash", "gemini-flash-lite-latest", "gemini-3.5-flash"]
 
 DEFAULT_GEMINI_MODEL = DEFAULT_GEMINI_MODELS[0]
 

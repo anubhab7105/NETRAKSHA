@@ -138,8 +138,11 @@ class NIRProvider(BiometricProvider):
 
 
 def get_provider(name: str = "rgb") -> BiometricProvider:
-    """Factory — 'rgb' (default) or 'nir'."""
-    name = (name or "rgb").strip().lower()
-    if name in ("nir", "ir"):
+    """Factory — 'rgb' (default) or 'nir'. Unknown names raise ValueError
+    (fail-closed: never silently substitute a different biometric modality)."""
+    key = (name or "rgb").strip().lower()
+    if key in ("nir", "ir"):
         return NIRProvider()
-    return RGBProvider()
+    if key in ("rgb", "visible", "auto"):
+        return RGBProvider()
+    raise ValueError(f"Unknown iris provider: {name!r} (expected 'rgb' or 'nir')")

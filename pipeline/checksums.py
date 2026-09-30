@@ -78,6 +78,10 @@ def validate_verhoeff(number: str) -> bool:
 def compute_verhoeff_digit(number: str) -> int:
     """Compute the Verhoeff check digit for the first 11 digits of an Aadhaar.
 
+    Pure helper (not a ModuleResult module): raises ValueError on malformed
+    input by design — callers must validate length first. Route-facing code
+    catches this and degrades to inconclusive.
+
     Args:
         number: The first 11 digits of the Aadhaar number.
 
@@ -141,9 +145,15 @@ def validate_icao_9303(mrz_lines: list[str]) -> dict:
         result["status"] = "insufficient_mrz_lines"
         return result
 
+    raw1 = (mrz_lines[0] or "").strip()
+    raw2 = (mrz_lines[1] or "").strip()
+    if len(raw1) < 40 or len(raw2) < 40:
+        result["status"] = "insufficient_mrz_lines"
+        result["detail"] = "MRZ lines too short to validate (need >= 40 chars)"
+        return result
 
-    line1 = mrz_lines[0].ljust(44, "<")[:44]
-    line2 = mrz_lines[1].ljust(44, "<")[:44]
+    line1 = raw1.ljust(44, "<")[:44]
+    line2 = raw2.ljust(44, "<")[:44]
 
 
     doc_num_block = line2[0:9]
