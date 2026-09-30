@@ -89,3 +89,24 @@ def test_remote_non_image_is_rejected(file_server):
     path, reason = _resolve_db_photo(url, citizen_id=9005)
     assert path is None
     assert reason == "registry_photo_download_failed"
+
+
+def test_registry_photo_rejects_path_traversal_and_symlinks(tmp_path):
+    from backend.app import _resolve_db_photo, _safe_registry_photo_path
+
+    dangerous = tmp_path / "escape" / "nested"
+    dangerous.mkdir(parents=True)
+    payload = dangerous / "secret.txt"
+    payload.write_text("top-secret", encoding="utf-8")
+
+    assert _safe_registry_photo_path("../requirements.txt") is None
+    assert _safe_registry_photo_path("/etc/passwd") is None
+    assert _resolve_db_photo("../requirements.txt", citizen_id=9006) == (None, "registry_photo_missing_on_server")
+
+    link = tmp_path / "link_to_secret"
+    try:
+        link.symlink_to(payload)
+    except (NotImplementedError, OSError):
+        link = None
+    if link is not None:
+        assert _safe_registry_photo_path(str(link)) is None

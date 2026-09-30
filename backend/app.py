@@ -3783,11 +3783,9 @@ def _resolve_db_photo(photo_uri, citizen_id=None):
         return None, "registry_photo_download_failed"
 
 
-    p = Path(uri)
-    if not p.is_absolute():
-        p = _PROJECT_ROOT / p
-    if p.is_file():
-        return str(p), None
+    safe = _safe_registry_photo_path(uri)
+    if safe is not None:
+        return str(safe), None
     return None, "registry_photo_missing_on_server"
 
 
@@ -4295,8 +4293,8 @@ async def approve_enrollment(enrollment_id: int, request: Request):
 
             if not req.photo_uri:
                 raise HTTPException(status_code=400, detail="Staged photo missing — request a fresh enrollment")
-            staged = (_PROJECT_ROOT / req.photo_uri)
-            if not staged.is_file():
+            staged = _safe_registry_photo_path(req.photo_uri)
+            if staged is None or not staged.is_file():
                 raise HTTPException(status_code=400, detail="Staged photo file is gone — request a fresh enrollment")
             try:
                 actual_hash = hashlib.sha256(staged.read_bytes()).hexdigest()
@@ -4374,12 +4372,11 @@ async def approve_enrollment(enrollment_id: int, request: Request):
             photo_path = None
             if photo_uri:
                 try:
-                    candidate = (_PROJECT_ROOT / photo_uri).resolve()
-                    uploads_dir = (_PROJECT_ROOT / "samples" / "faces" / "uploads").resolve()
-                    if uploads_dir in candidate.parents or candidate.parent.resolve() == uploads_dir:
-                        photo_path = candidate
-                    elif "uploads" in photo_uri:
-                        photo_path = candidate
+                    candidate = _safe_registry_photo_path(photo_uri)
+                    if candidate is not None:
+                        uploads_dir = (_PROJECT_ROOT / "samples" / "faces" / "uploads").resolve()
+                        if uploads_dir in candidate.parents or candidate.parent == uploads_dir:
+                            photo_path = candidate
                 except Exception:
                     photo_path = None
             await session.delete(target)
