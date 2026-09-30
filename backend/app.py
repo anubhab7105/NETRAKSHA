@@ -735,14 +735,17 @@ async def login(req: LoginRequest, request: Request):
         ))
         await session.commit()
 
-    return LoginResponse(
+    body = LoginResponse(
         token=token,
         officer_id=officer.id,
         username=officer.username,
         role=officer.role,
         must_change_password=must_change,
         mfa_setup_required=mfa_setup_required,
-    )
+    ).model_dump()
+    resp = JSONResponse(body)
+    resp.set_cookie("nc_session", token, **_session_cookie_kwargs())
+    return resp
 
 
 def _drift_hint(secret, code) -> str:
@@ -798,14 +801,17 @@ async def mfa_challenge(req: MfaChallengeRequest, request: Request):
             entity=f"officer:{officer.id}",
         ))
         await session.commit()
-    return LoginResponse(
+    body = LoginResponse(
         token=token,
         officer_id=officer.id,
         username=officer.username,
         role=officer.role,
         must_change_password=bool(getattr(officer, "must_change_password", False)),
         mfa_setup_required=False,
-    )
+    ).model_dump()
+    resp = JSONResponse(body)
+    resp.set_cookie("nc_session", token, **_session_cookie_kwargs())
+    return resp
 
 
 @app.post("/api/auth/change-password")
@@ -839,7 +845,11 @@ async def change_password(req: ChangePasswordRequest, request: Request):
             officer_id=off.id,
         ))
         await session.commit()
-    return {"status": "ok", "message": "Password changed."}
+    await _revoke_jti(officer.get("jti") or "", officer_id, "password_changed",
+                      _token_expiry_naive(officer))
+    resp = JSONResponse({"status": "ok", "message": "Password changed. Sign in again."})
+    resp.delete_cookie("nc_session", path="/")
+    return resp
 
 
 @app.post("/api/auth/mfa/setup")
@@ -944,7 +954,11 @@ async def mfa_disable(req: MfaDisableRequest, request: Request):
             officer_id=off.id,
         ))
         await session.commit()
-    return {"status": "ok", "message": "MFA disabled. Re-enroll before continuing operational work."}
+    await _revoke_jti(officer.get("jti") or "", officer_id, "mfa_disabled",
+                      _token_expiry_naive(officer))
+    resp = JSONResponse({"status": "ok", "message": "MFA disabled. Sign in and re-enroll before continuing operational work."})
+    resp.delete_cookie("nc_session", path="/")
+    return resp
 
 
 
@@ -954,7 +968,7 @@ async def mfa_disable(req: MfaDisableRequest, request: Request):
 @app.post("/auth/logout", include_in_schema=False)
 @app.post("/api/auth/logout")
 async def logout(request: Request):
-    """Terminate session (audit log only — JWT is stateless)."""
+    """Terminate the caller's session: deny-list the JWT + clear the cookie."""
     try:
         officer = await _auth(request, allow_stale_password=True, allow_mfa_setup=True)
     except HTTPException:
@@ -968,7 +982,15 @@ async def logout(request: Request):
         ))
         await session.commit()
 
-    return {"status": "ok", "message": "Logged out"}
+    try:
+        await _revoke_jti(officer.get("jti") or "", int(officer.get("sub", 0) or 0),
+                          "logout", _token_expiry_naive(officer))
+    except Exception:
+        pass
+
+    resp = JSONResponse({"status": "ok", "message": "Logged out"})
+    resp.delete_cookie("nc_session", path="/")
+    return resp
 
 
 
