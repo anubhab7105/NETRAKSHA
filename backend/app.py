@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import sys
+import tempfile
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -1121,8 +1122,6 @@ async def screen_document(
     x_real_ip = request.headers.get("X-Real-IP", "")
     client_host = request.client.host if request.client else ""
     device_info = f"UA:{user_agent} | IP:{client_host} | XFF:{xff} | XRealIP:{x_real_ip} | unit:{officer.get('unit','')}"
-
-    import tempfile
 
     _DOC_MAX_BYTES = 10_000_000
     _LIVE_MAX_BYTES = 5_000_000
@@ -3665,6 +3664,51 @@ def _storage_object_for_enrollment(doc_type: str, doc_number: str, photo_hash: s
     if ext not in (".jpg", ".jpeg", ".png", ".webp"):
         ext = ".jpg"
     return f"{safe_type}_{safe_num}_{short}{ext}"
+
+
+def _safe_registry_photo_path(photo_uri: str) -> Optional[Path]:
+    """Resolve a DB-stored photo_uri to a local file, contained to safe roots.
+
+    Absolute URIs, `..` escapes, and symlinks are rejected (returns None):
+    only files under <root>/samples/faces, <root>/samples/evidence, or the
+    temp registry-photo cache may be read. Callers treat None as
+    `registry_photo_missing_on_server`.
+    """
+    try:
+        uri = (photo_uri or "").strip()
+        if not uri or "\\" in uri:
+            return None
+        p = Path(uri)
+        if p.is_absolute():
+            return None
+        if ".." in p.parts:
+            return None
+        candidate = (_PROJECT_ROOT / p).resolve()
+        allowed_roots = []
+        for rel in ("samples/faces", "samples/evidence"):
+            try:
+                allowed_roots.append((_PROJECT_ROOT / rel).resolve())
+            except Exception:
+                pass
+        try:
+            allowed_roots.append(Path(tempfile.gettempdir()).resolve())
+        except Exception:
+            pass
+        try:
+            cache_dir = _registry_photo_cache_dir().resolve()
+            if cache_dir not in allowed_roots:
+                allowed_roots.append(cache_dir)
+        except Exception:
+            pass
+        if candidate.is_symlink():
+            return None
+        if not any(r == candidate or r in candidate.parents for r in allowed_roots):
+            return None
+        if candidate.is_file():
+            return candidate
+        return None
+    except Exception:
+        return None
 
 
 def _resolve_db_photo(photo_uri, citizen_id=None):
