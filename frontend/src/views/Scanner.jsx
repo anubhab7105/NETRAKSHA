@@ -9,6 +9,7 @@ import { PageHeader, WorkflowSteps, GovNotice } from '../components/ui';
 function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear, onAllowBurst, stepNo }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
+  const retakeTimerRef = useRef(null);
   const [previewing, setPreviewing] = useState(false);
   const [starting, setStarting] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
@@ -35,7 +36,7 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
       videoRef.current.srcObject = streamRef.current;
       videoRef.current.play().catch(() => {});
     }
-  }, [previewing]);
+  }, [previewing, file]);
 
   const stopStream = () => {
     if (streamRef.current) {
@@ -50,7 +51,10 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
   };
 
   useEffect(() => {
-    return () => stopStream();
+    return () => {
+      if (retakeTimerRef.current) clearTimeout(retakeTimerRef.current);
+      stopStream();
+    };
   }, []);
 
   const startCamera = async () => {
@@ -72,6 +76,18 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
     } finally {
       setStarting(false);
     }
+  };
+
+  const handleRetake = () => {
+    if (retakeTimerRef.current) clearTimeout(retakeTimerRef.current);
+    stopStream();
+    setBursting(false);
+    setError(null);
+    onClear();
+    retakeTimerRef.current = setTimeout(() => {
+      retakeTimerRef.current = null;
+      startCamera();
+    }, 300);
   };
 
   const capturePhoto = async () => {
@@ -168,7 +184,7 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
               </button>
               <button
                 type="button"
-                onClick={() => { stopStream(); onClear(); setTimeout(() => startCamera(), 0); }}
+                onClick={handleRetake}
                 className="gov-btn gov-btn-secondary !min-h-[36px] !px-3 !py-2 !text-[13px]"
               >
                 <RefreshCw size={14} aria-hidden="true" />

@@ -71,6 +71,7 @@ const FACE_GUIDE_STEPS = [
 export default function PersonBiometricCapture({ file, onCapture, onClear, facing = 'user' }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
+  const retakeTimerRef = useRef(null);
   const [previewing, setPreviewing] = useState(false);
   const [starting, setStarting] = useState(false);
   const [videoReady, setVideoReady] = useState(false);
@@ -81,7 +82,10 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
   const previewUrl = React.useMemo(() => (file?.primaryPreviewUrl ? file.primaryPreviewUrl : null), [file]);
 
   useEffect(() => {
-    return () => stopStream();
+    return () => {
+      if (retakeTimerRef.current) clearTimeout(retakeTimerRef.current);
+      stopStream();
+    };
     
   }, []);
 
@@ -97,7 +101,7 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
       videoRef.current.srcObject = streamRef.current;
       videoRef.current.play().catch(() => {});
     }
-  }, [previewing]);
+  }, [previewing, file]);
 
   const stopStream = () => {
     if (streamRef.current) {
@@ -173,6 +177,8 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
         primaryPreviewUrl: URL.createObjectURL(primaryFrame),
         metadata: { frames: valid.length, capturedAt: new Date().toISOString(), facing },
       };
+      setBursting(false);
+      setBurstStep(0);
       setStatus('complete');
       onCapture(captured);
       stopStream();
@@ -182,6 +188,20 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
       setStatus('ready');
       setError('Capture interrupted. Please try again.');
     }
+  };
+
+  const handleRetake = () => {
+    if (retakeTimerRef.current) clearTimeout(retakeTimerRef.current);
+    stopStream();
+    setBursting(false);
+    setBurstStep(0);
+    setError(null);
+    setStatus('idle');
+    onClear();
+    retakeTimerRef.current = setTimeout(() => {
+      retakeTimerRef.current = null;
+      startCamera();
+    }, 300);
   };
 
   if (file) {
@@ -210,7 +230,7 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
               <button type="button" onClick={() => { stopStream(); onClear(); }} className="gov-btn gov-btn-secondary !min-h-[36px] !px-3 !py-2 !text-[13px]">
                 <X size={14} aria-hidden="true" /> Clear
               </button>
-              <button type="button" onClick={() => { stopStream(); onClear(); setTimeout(() => startCamera(), 0); }} className="gov-btn gov-btn-secondary !min-h-[36px] !px-3 !py-2 !text-[13px]">
+              <button type="button" onClick={handleRetake} className="gov-btn gov-btn-secondary !min-h-[36px] !px-3 !py-2 !text-[13px]">
                 <RefreshCw size={14} aria-hidden="true" /> Retake
               </button>
             </div>

@@ -32,6 +32,7 @@ from fastapi import (
     HTTPException,
     Query,
     Request,
+    Response,
     UploadFile,
     status,
 )
@@ -2768,6 +2769,93 @@ async def get_case(case_id: int, request: Request):
         "demo_label": "DEMO ONLY — simulated AI excluded from scoring" if is_demo else None,
         "iris_verification": iris_verification_payload,
     }
+
+
+@app.get("/cases/{case_id}/pdf", include_in_schema=False)
+@app.get("/api/cases/{case_id}/pdf")
+async def get_case_pdf(case_id: int, request: Request):
+    """Generate and return an official forensic PDF summary report for a case."""
+    auth = request.headers.get("Authorization", "")
+    token = None
+    if auth.startswith("Bearer "):
+        token = auth[7:]
+    elif request.query_params.get("token"):
+        token = request.query_params.get("token")
+
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing Bearer token or token query param")
+
+    payload = _decode_token(token)
+    if payload.get("purpose", "session") != "session":
+        raise HTTPException(status_code=401, detail="Invalid token purpose for PDF download")
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(ScreeningCase).where(ScreeningCase.id == case_id)
+        )
+        case = result.scalar_one_or_none()
+        if not case:
+            raise HTTPException(status_code=404, detail="Case not found")
+
+        role = payload.get("role", "officer")
+        officer_id = int(payload.get("sub", 0))
+        officer_unit = payload.get("unit") or "BORDER_UNIT_1"
+        if role == "officer" and case.officer_id != officer_id:
+            raise HTTPException(status_code=403, detail="Access denied: case belongs to another officer")
+        elif role == "supervisor" and case.unit and case.unit != officer_unit:
+            raise HTTPException(status_code=403, detail="Access denied: case outside your unit")
+
+        fields_result = await session.execute(
+            select(ExtractedField).where(ExtractedField.case_id == case_id)
+        )
+        fields = fields_result.scalars().all()
+
+        modules_result = await session.execute(
+            select(ModuleResultDB).where(ModuleResultDB.case_id == case_id)
+        )
+        modules = modules_result.scalars().all()
+
+        actions_result = await session.execute(
+            select(OfficerAction).where(OfficerAction.case_id == case_id)
+        )
+        actions = actions_result.scalars().all()
+
+        citizen_data = None
+        if case.citizen_id:
+            citizen_result = await session.execute(
+                select(CitizenRegistry).where(CitizenRegistry.id == case.citizen_id)
+            )
+            citizen = citizen_result.scalar_one_or_none()
+            if citizen:
+                citizen_data = citizen.to_dict()
+
+    from backend.pdf_report import generate_case_pdf
+    prov_obj = None
+    if case.provenance:
+        try:
+            prov_obj = json.loads(case.provenance) if isinstance(case.provenance, str) else case.provenance
+        except Exception:
+            prov_obj = None
+
+    pdf_bytes = generate_case_pdf(
+        case_data=case.to_dict(),
+        extracted_fields=[f.to_dict() for f in fields],
+        module_results=[m.to_dict() for m in modules],
+        citizen_data=citizen_data,
+        officer_actions=[a.to_dict() for a in actions],
+        provenance_data=prov_obj,
+    )
+
+    filename = f"Screening_Report_Case_{case_id:04d}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-cache",
+        }
+    )
+
 
 
 @app.get("/api/cases/{case_id}/provenance", include_in_schema=False)
