@@ -1435,8 +1435,9 @@ async def screen_document(
         _iris_source = "unified_burst_derived" if (iris_derived if 'iris_derived' in locals() else False) else ("separate_upload" if _iris_path else "none")
         try:
             result = await _run_screening_pipeline(doc_tmp, live_tmp, officer_id, officer_unit, burst, audit_context, iris_path=_iris_path, iris_eye=_iris_eye, iris_source=_iris_source)
-        except TypeError:
-
+        except TypeError as _te:
+            if "iris_path" not in str(_te) and "iris_eye" not in str(_te) and "iris_source" not in str(_te):
+                raise
             result = await _run_screening_pipeline(doc_tmp, live_tmp, officer_id, officer_unit, burst, audit_context)
     except Exception:
 
@@ -3220,8 +3221,8 @@ async def verify_audit_chain(request: Request):
             first_broken = log.id
             break
         try:
-            import hmac, hashlib, os
-            secret = os.environ.get("JWT_SECRET", "sih-hackathon-dev-secret-change-in-prod")
+            import hmac, hashlib
+            secret = active_secret("JWT_SECRET")
             payload = f"{log.prev_hash}{log.actor}{log.action}{log.entity}".encode()
             expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
             if log.entry_hash and log.entry_hash != expected:

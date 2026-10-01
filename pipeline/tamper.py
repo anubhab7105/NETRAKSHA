@@ -119,9 +119,14 @@ def _copy_move_detect(
     separates a pasted duplicate from a page's natural repeated structure.
 
     Runs on the native-resolution gray image; sub-0.3s on the specimen pages.
+    A deterministic pair budget (200k) bounds the O(k^2) pairing step on
+    pathological inputs — exhaustion is reported as `truncated: True` and the
+    accumulated offsets are still scored (fail-operational, never hangs).
     """
     import hashlib
     from collections import defaultdict
+
+    _MAX_PAIRS = 200_000
 
     H, W = gray.shape
     locs: defaultdict = defaultdict(list)
@@ -137,9 +142,17 @@ def _copy_move_detect(
     horizontal: defaultdict = defaultdict(int)
     n_matches = 0
     horiz_pairs = 0
+    pairs_seen = 0
+    truncated = False
     for positions in locs.values():
+        if truncated:
+            break
         for i in range(len(positions)):
             for j in range(i + 1, len(positions)):
+                if pairs_seen >= _MAX_PAIRS:
+                    truncated = True
+                    break
+                pairs_seen += 1
                 dx = positions[j][0] - positions[i][0]
                 dy = positions[j][1] - positions[i][1]
                 if (dx * dx + dy * dy) ** 0.5 < min_dist:
@@ -163,6 +176,8 @@ def _copy_move_detect(
         "horizontal_lattice_pairs": horiz_pairs,
         "offset_groups": [{"offset": list(k), "matches": v} for k, v in top[:6]],
         "analysis_resolution": f"{W}x{H}",
+        "pairs_examined": pairs_seen,
+        "truncated": truncated,
     }
 
 

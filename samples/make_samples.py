@@ -6,7 +6,7 @@ Produces, under ``samples/``:
   * faces/                 : sample face photos (openly-licensed academic data)
   * genuine_doc.png        : synthetic passport page w/ ICAO-valid MRZ + a face
   * tampered_doc.png       : the same doc, with a copied region (duplicate) and
-                             re-encoded, to exercise ELA + ORB copy-move
+                             re-encoded, to exercise ELA + SHA1 exact-duplicate copy-move
   * live_faces/            : frames used for face-match / liveness test assets
 
 Only sample/specimen data is used — never a real person's government ID.
@@ -105,17 +105,18 @@ def _build_mrz(surname="SPECIMEN", given="JASMINE", doc_no="L898902C3",
         + pers
     )
 
-    comp = str(check_digit(line1[:10]))
+    composite_block = line2[0:10] + line2[13:20] + line2[21:43]
+    comp = str(check_digit(composite_block))
     line2 = line2[:43] + comp
     line2 = line2.ljust(44, "<")
     return line1, line2, doc_block, dob_block, exp_block
 
 
 def _paper_texture(size):
-    """Return a non-repeating, ORB-detectable paper texture (BGR array).
+    """Return a non-repeating paper texture (BGR array).
 
     A random fine grain plus a soft diagonal gradient breaks up the otherwise
-    flat page so ORB copy-move has real keypoints and the background does NOT
+    flat page so exact-duplicate copy-move has real texture and the background does NOT
     self-similar-match (the failure mode of a flat, structurally-repeated
     synthetic page). Deterministic given the same rng so specimens are stable.
     """
@@ -143,7 +144,7 @@ def _guilloche_band(size, y0, y1):
 
 def render_genuine_doc(face_bgr, size=(1000, 700)) -> np.ndarray:
     """Render a photo-realistic passport page on a textured (non-repeating)
-    paper background. Texture-rich background gives ORB copy-move a real
+    paper background. Texture-rich background gives exact-duplicate copy-move a real
     signal base and avoids the periodic-structure false positives seen on a
     flat synthetic page."""
     w, h = size
@@ -206,7 +207,7 @@ def render_genuine_doc(face_bgr, size=(1000, 700)) -> np.ndarray:
 def render_tampered_doc(genuine: np.ndarray) -> np.ndarray:
     """Create a tampered specimen with two hard-to-spoof signatures:
       1) a copy-move: a distinctive textured region is duplicated exactly at a
-         second location (ORB copy-move gives a dominant large-offset cluster);
+         second location (SHA1 copy-move gives a dominant large-offset cluster);
       2) a locally spliced region stored at lower quality (localized ELA bump).
     Both operate on the photo-realistic textured background so the signals are
     clearly separable from the genuine specimen. Returns a BGR array.

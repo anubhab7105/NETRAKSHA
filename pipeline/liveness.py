@@ -144,7 +144,20 @@ def _face_mesh():
 
 
 def _collect_frames(burst_input) -> List[np.ndarray]:
-    """Normalise a frame burst into a list of BGR ndarrays."""
+    """Normalise a frame burst into a list of BGR ndarrays.
+
+    Bursts are capped at 24 frames (evenly sampled, deterministic) so a
+    malicious/huge upload cannot OOM the landmarker loop — the backend
+    already caps at 10, this is defense-in-depth for direct callers.
+    """
+    _MAX_BURST = 24
+
+    def _cap(frames: List[np.ndarray]) -> List[np.ndarray]:
+        if len(frames) <= _MAX_BURST:
+            return frames
+        step = len(frames) / _MAX_BURST
+        return [frames[int(i * step)] for i in range(_MAX_BURST)]
+
     if isinstance(burst_input, (str, pathlib.Path, os.PathLike)):
         p = pathlib.Path(burst_input)
         if p.suffix.lower() in {".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"}:
@@ -155,12 +168,12 @@ def _collect_frames(burst_input) -> List[np.ndarray]:
     if isinstance(burst_input, (list, tuple)) and len(burst_input) > 0:
 
         if isinstance(burst_input[0], (str, pathlib.Path, os.PathLike)):
-            return [load_image(x) for x in burst_input]
+            return _cap([load_image(x) for x in burst_input])
 
         if isinstance(burst_input[0], np.ndarray):
-            return [x.astype(np.uint8) for x in burst_input]
+            return _cap([x.astype(np.uint8) for x in burst_input])
 
-        return [load_image(x) for x in burst_input]
+        return _cap([load_image(x) for x in burst_input])
 
 
     return [load_image(burst_input)]

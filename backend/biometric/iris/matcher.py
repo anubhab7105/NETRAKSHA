@@ -5,15 +5,19 @@ import numpy as np
 from typing import Dict, Any
 
 def hamming_distance(template_a: bytes, mask_a: bytes, template_b: bytes, mask_b: bytes) -> float:
-    """Compute normalized Hamming distance between two binary templates."""
+    """Compute normalized Hamming distance between two binary templates.
+
+    Length mismatches return 1.0 (no match) instead of truncating to the
+    shorter code — silent truncation false-accepts across providers.
+    """
     try:
         a = np.frombuffer(template_a, dtype=np.uint8)
         b = np.frombuffer(template_b, dtype=np.uint8)
         ma = np.frombuffer(mask_a, dtype=np.uint8) if mask_a else np.ones_like(a) * 255
         mb = np.frombuffer(mask_b, dtype=np.uint8) if mask_b else np.ones_like(b) * 255
 
-        n = min(len(a), len(b), len(ma), len(mb))
-        a, b, ma, mb = a[:n], b[:n], ma[:n], mb[:n]
+        if not (len(a) == len(b) == len(ma) == len(mb)) or len(a) == 0:
+            return 1.0
 
         valid = (ma == 255) & (mb == 255)
         if valid.sum() == 0:

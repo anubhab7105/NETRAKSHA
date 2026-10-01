@@ -20,13 +20,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     # Railway injects $PORT (8080). /tmp is the only writable dir on some
     # hosts, so evidence defaults there (ephemeral without a volume).
     PORT=8080 \
+    TMPDIR=/tmp \
     SCREEN_EVIDENCE_DIR=/tmp/evidence
 
 # System deps: tesseract-ocr (OCR/MRZ — without it OCR degrades to inconclusive
-# + Yellow floor), libgl/libglib/libgomp for opencv/mediapipe/onnxruntime.
+# + Yellow floor), libgl/libglib/libgomp for opencv/mediapipe/onnxruntime,
+# fonts-dejavu-core for PIL default fonts.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     tesseract-ocr-eng \
+    fonts-dejavu-core \
     libgl1 \
     libglib2.0-0 \
     libgomp1 \
@@ -59,9 +62,17 @@ RUN if [ "${DISABLE_LOCAL_FACE_ENGINE}" = "true" ]; then \
     fi
 
 # Writable dirs (some hosts are read-only except /tmp).
-RUN mkdir -p /tmp/evidence samples/faces/uploads 2>/dev/null || mkdir -p /tmp/evidence samples/faces/uploads
+RUN mkdir -p /tmp/evidence samples/faces/uploads /tmp/netraksha_registry_photos 2>/dev/null || mkdir -p /tmp/evidence samples/faces/uploads
+
+# Drop privileges: the app only needs /app (code+seeds, read) and /tmp (write).
+RUN useradd -m -u 10001 appuser && chown -R appuser:appuser /app /tmp/evidence /tmp/netraksha_registry_photos
+USER appuser
 
 EXPOSE 8080
+
+# Railway health check: HTTP GET /api/health
+HEALTHCHECK --interval=60s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:${PORT:-8080}/api/health || exit 1
 
 # Railway health check: HTTP GET /api/health
 # Use Python launcher so $PORT is read via os.environ — works even when

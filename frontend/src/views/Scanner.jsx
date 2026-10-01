@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Camera, Loader2, ScanLine, RefreshCw, X, Video, Image as ImageIcon, AlertTriangle, CheckCircle2 } from 'lucide-react';
-import api from '../api';
+import api, { apiErrorMessage } from '../api';
 import SEO from '../components/SEO';
 import Breadcrumbs from '../components/Breadcrumbs';
 import { PageHeader, WorkflowSteps, GovNotice } from '../components/ui';
@@ -261,6 +261,11 @@ export default function Scanner() {
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState(null);
   const navigate = useNavigate();
+  const scanAbortRef = useRef(null);
+
+  useEffect(() => () => {
+    if (scanAbortRef.current) scanAbortRef.current.abort();
+  }, []);
 
   
   
@@ -348,17 +353,25 @@ export default function Scanner() {
     }
 
     try {
+      if (scanAbortRef.current) scanAbortRef.current.abort();
+      const controller = new AbortController();
+      scanAbortRef.current = controller;
       const res = await api.post('/screen', formData, {
         headers: {
           
           'Idempotency-Key': idempotencyKey,
-        }
+        },
+        signal: controller.signal,
       });
       
       
       setIdempotencyKey(newIdempotencyKey());
       navigate(`/case/${res.data.case_id}`);
     } catch (err) {
+      if (err?.code === 'ERR_CANCELED') {
+        setScanning(false);
+        return;
+      }
       if (import.meta.env.DEV) console.error(err);
       const status = err.response?.status;
       const rawDetail = err.response?.data?.detail;
@@ -396,10 +409,10 @@ export default function Scanner() {
       }
       setError(
         detail
-          ? `Screening failed (HTTP ${err.response.status}): ${detail}`
+          ? `Screening failed (HTTP ${err.response.status}): ${typeof detail === 'string' ? detail.slice(0, 500) : apiErrorMessage(err)}`
           : err.request && !err.response
             ? `Screening failed: could not reach the backend at ${api.defaults.baseURL || '/api'}. Check VITE_API_BASE_URL and backend CORS, then retry.`
-            : 'Screening failed. Please ensure the backend is running and try again.'
+            : apiErrorMessage(err, 'Screening failed. Please ensure the backend is running and try again.')
       );
       setScanning(false);
     }

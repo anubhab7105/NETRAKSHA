@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Loader2, Search, ChevronLeft, ChevronRight, ShieldCheck, AlertTriangle } from 'lucide-react';
 import api from '../api';
 import SEO from '../components/SEO';
@@ -13,26 +13,43 @@ export default function AuditTrail() {
   const [offset, setOffset] = useState(0);
   const [count, setCount] = useState(0);
   const [verifyResult, setVerifyResult] = useState(null);
+  const abortRef = useRef(null);
+  const debounceRef = useRef(null);
   const limit = 50;
 
   const fetchLogs = useCallback(async () => {
+    if (abortRef.current) abortRef.current.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
     setLoading(true);
     try {
       const params = { limit, offset };
       if (actorFilter.trim()) params.actor = actorFilter.trim();
       if (entityFilter.trim()) params.entity = entityFilter.trim();
-      const res = await api.get('/audit', { params });
+      const res = await api.get('/audit', { params, signal: controller.signal });
       setLogs(res.data.audit_logs || []);
       setCount(res.data.count || 0);
     } catch (err) {
+      if (err?.code === 'ERR_CANCELED') return;
       if (import.meta.env.DEV) console.error('Failed to fetch audit logs:', err);
     } finally {
-      setLoading(false);
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+        setLoading(false);
+      }
     }
   }, [offset, actorFilter, entityFilter]);
 
   useEffect(() => {
-    fetchLogs();
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      debounceRef.current = null;
+      fetchLogs();
+    }, 300);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      if (abortRef.current) abortRef.current.abort();
+    };
   }, [fetchLogs]);
 
   const handleSearch = (e) => {

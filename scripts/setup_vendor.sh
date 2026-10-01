@@ -18,6 +18,7 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODEL_DIR="$PROJECT_ROOT/pipeline/vendor/models"
 TASK="$MODEL_DIR/face_landmarker.task"
 TASK_URL="https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
+TASK_SHA256="af23fc7c1ff21d034deaa2b7fc1d56bb670ce69a4cbdc9579b6f1afd680835f4"
 
 echo "==> Screening runtime asset check"
 
@@ -35,6 +36,14 @@ else
     exit 1
   fi
   echo "[ok] face_landmarker.task downloaded ($SIZE bytes)"
+fi
+if command -v sha256sum >/dev/null 2>&1; then
+  ACTUAL_SHA=$(sha256sum "$TASK" | awk '{print $1}')
+  if [[ "$ACTUAL_SHA" != "$TASK_SHA256" ]]; then
+    echo "[!!] face_landmarker.task SHA-256 mismatch (got $ACTUAL_SHA, want $TASK_SHA256) — remove $TASK and re-run" >&2
+    exit 1
+  fi
+  echo "[ok] face_landmarker.task SHA-256 verified"
 fi
 
 # --- 2. tesseract OCR -----------------------------------------------------

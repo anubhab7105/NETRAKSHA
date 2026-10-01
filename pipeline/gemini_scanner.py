@@ -319,6 +319,27 @@ def scan_document(
     return _normalize_no_live_face_match(result, has_live)
 
 
+_GEMINI_EXECUTOR = None
+_GEMINI_EXECUTOR_LOCK = None
+
+
+def _gemini_executor():
+    """Process-wide single worker for Gemini timeouts (no per-call threads)."""
+    global _GEMINI_EXECUTOR, _GEMINI_EXECUTOR_LOCK
+    if _GEMINI_EXECUTOR is None:
+        import concurrent.futures as _futures
+        import threading as _threading
+
+        if _GEMINI_EXECUTOR_LOCK is None:
+            _GEMINI_EXECUTOR_LOCK = _threading.Lock()
+        with _GEMINI_EXECUTOR_LOCK:
+            if _GEMINI_EXECUTOR is None:
+                _GEMINI_EXECUTOR = _futures.ThreadPoolExecutor(
+                    max_workers=2, thread_name_prefix="gemini-timeout"
+                )
+    return _GEMINI_EXECUTOR
+
+
 def _generate_with_timeout(client, model: str, parts, timeout: float):
     """Run the blocking Gemini call with a hard timeout.
 
@@ -326,7 +347,9 @@ def _generate_with_timeout(client, model: str, parts, timeout: float):
     stalled network/model hangs screening forever (frontend 90s axios timeout
     then reports "could not reach the backend"). Each model in the cascade
     gets at most `timeout` seconds before we raise TimeoutError and try the
-    next model / offline simulation.
+    next model / offline simulation. A shared executor is reused — a timed-out
+    worker thread is abandoned (it ends with the SDK call) instead of
+    leaking an executor per screening.
     """
     import concurrent.futures
 
@@ -348,27 +371,13 @@ def _generate_with_timeout(client, model: str, parts, timeout: float):
             ),
         )
 
-    ex = concurrent.futures.ThreadPoolExecutor(
-        max_workers=1, thread_name_prefix="gemini-timeout"
-    )
+    fut = _gemini_executor().submit(_do_call)
     try:
-        fut = ex.submit(_do_call)
-        try:
-            return fut.result(timeout=timeout)
-        except concurrent.futures.TimeoutError as exc:
-
-
-
-            ex.shutdown(wait=False, cancel_futures=True)
-            raise TimeoutError(
-                f"Gemini call timed out after {timeout:.0f}s (model={model})"
-            ) from exc
-    finally:
-
-        try:
-            ex.shutdown(wait=False, cancel_futures=True)
-        except Exception:
-            pass
+        return fut.result(timeout=timeout)
+    except concurrent.futures.TimeoutError as exc:
+        raise TimeoutError(
+            f"Gemini call timed out after {timeout:.0f}s (model={model})"
+        ) from exc
 
 
 def _call_gemini(
