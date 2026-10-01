@@ -147,6 +147,10 @@ def run_deepfake(face_image) -> ModuleResult:
         "deepfake_score": deepfake_score,
         "method": "fft_frequency_artifact_heuristic",
         "classifier_integrated": False,
+        # TODO(classifier): integrate a trained forgery classifier
+        # (e.g. EfficientNet-b0 on FaceForensics++) when GPU inference is
+        # available; the FFT heuristic above is the intentional MVP
+        # fallback per Techspec §3 and stays as a feature input.
         "metrics": metrics,
     }
     return ok_result(MODULE_NAME, deepfake_score, raw, evidence_uri=None)

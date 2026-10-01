@@ -484,9 +484,9 @@ class AuditLog(Base):
             prev_hash = "0" * 64
 
         try:
-            from backend.auth_security import active_secret as _active_secret
+            from backend.auth_security import audit_secret as _audit_secret
 
-            secret = _active_secret("JWT_SECRET")
+            secret = _audit_secret()
             payload = f"{prev_hash}{kwargs.get('actor','')}{kwargs.get('action','')}{kwargs.get('entity','')}".encode()
             entry_hash = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
         except RuntimeError:

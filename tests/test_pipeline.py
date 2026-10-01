@@ -380,7 +380,7 @@ class TestWatchlist:
 
     def test_mock_provider_hit_by_name(self):
         """Watchlisted person should be detected by name (plan scenario 5)."""
-        result = watchlist.check_watchlist(name="Vikram Singh Chauhan")
+        result = watchlist.check_watchlist(name="Arjun Veer Rathore")
         assert result.is_hit is True
         assert result.is_mocked is True
         assert len(result.hits) >= 1
@@ -394,7 +394,7 @@ class TestWatchlist:
 
     def test_watchlist_result_serialization(self):
         """WatchlistResult should serialize to dict correctly."""
-        result = watchlist.check_watchlist(name="Vikram Singh Chauhan")
+        result = watchlist.check_watchlist(name="Arjun Veer Rathore")
         d = result.to_dict()
         assert "is_hit" in d
         assert "hits" in d

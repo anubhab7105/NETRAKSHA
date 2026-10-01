@@ -172,7 +172,9 @@ class DBWatchlistProvider(WatchlistProvider):
 class MockWatchlistProvider(DBWatchlistProvider):
     """Mock watchlist with seeded high-risk test subjects.
 
-    Seeded entries represent fictional individuals for demo/testing.
+    All entries are SYNTHETIC and fictional (invented names, demo IDs) for
+    demo/testing — never real persons. Real-person names must never be
+    added here; production uses DBWatchlistProvider on authority data.
     All entries are clearly marked as mocked data. Subclasses
     ``DBWatchlistProvider`` with ``is_mocked=True``.
     """
@@ -180,31 +182,31 @@ class MockWatchlistProvider(DBWatchlistProvider):
     def __init__(self) -> None:
         super().__init__([
             {
-                "name": "Vikram Singh Chauhan",
+                "name": "Arjun Veer Rathore",
                 "id_number": "9876 5432 1098",
                 "flag_reason": "Lookout Circular — Suspected fraudulent document ring",
                 "source": "Lookout Circular",
             },
             {
-                "name": "Abdul Karim Telgi",
+                "name": "Kabir Anand Malhotra",
                 "id_number": "BFKPT4567R",
                 "flag_reason": "Interpol Red Notice — Counterfeit stamp paper network",
                 "source": "Interpol Red Notice",
             },
             {
-                "name": "Priya Nair",
+                "name": "Meera Krishnan Iyer",
                 "id_number": "KER4567890",
                 "flag_reason": "Lookout Circular — Identity fraud, multiple aliases",
                 "source": "Lookout Circular",
             },
             {
-                "name": "Mohammad Reza Khan",
+                "name": "Farhan Iqbal Sheikh",
                 "id_number": "L9876543",
                 "flag_reason": "Interpol Blue Notice — Information gathering, travel document fraud",
                 "source": "Interpol Blue Notice",
             },
             {
-                "name": "Suresh Kalmadi",
+                "name": "Rohan Vikram Deshmukh",
                 "id_number": "ALCPK3456Q",
                 "flag_reason": "Lookout Circular — Financial irregularities, passport impoundment",
                 "source": "Lookout Circular",

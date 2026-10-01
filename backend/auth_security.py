@@ -49,6 +49,20 @@ def active_secret(name: str = "JWT_SECRET") -> str:
     return secret or DEV_JWT_DEFAULT
 
 
+def audit_secret() -> str:
+    """Domain-separated HMAC key for the audit hash chain (no key reuse).
+
+    Derived as HKDF-SHA256(JWT_SECRET, info="netraksha-audit-log-v1") so a
+    JWT-signing key compromise does not silently extend to audit forgery
+    and vice versa. Fails closed in production like active_secret().
+    """
+    master = active_secret("JWT_SECRET").encode()
+    info = b"netraksha-audit-log-v1"
+    prk = hmac.new(b"\x00" * 32, master, hashlib.sha256).digest()
+    okm = hmac.new(prk, info + b"\x01", hashlib.sha256).hexdigest()
+    return okm
+
+
 def app_env() -> str:
     """Deployment environment: development | staging | production."""
     return os.environ.get("APP_ENV", os.environ.get("ENVIRONMENT", "development")).strip().lower()
@@ -112,6 +126,23 @@ def validate_new_password(password: str) -> None:
 
 
 DUMMY_HASH = "$2b$12$0cqFtMWkcZzA/0B/BAPssOaLTODk0OfimIdj/ergCYVzt4QuXCYwC"
+_DUMMY_HASH_RUNTIME = None
+
+
+def dummy_hash() -> str:
+    """Per-process unknown-user hash (timing-oracle + precomputation defense).
+
+    Generated lazily once per process at full bcrypt cost so unknown-user
+    logins cost the same as real verifications. Falls back to the static
+    constant if hashing is unavailable.
+    """
+    global _DUMMY_HASH_RUNTIME
+    if _DUMMY_HASH_RUNTIME is None:
+        try:
+            _DUMMY_HASH_RUNTIME = password_context().hash("netraksha-unknown-user-dummy-secret")
+        except Exception:
+            _DUMMY_HASH_RUNTIME = DUMMY_HASH
+    return _DUMMY_HASH_RUNTIME
 
 
 def _password_context():

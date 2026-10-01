@@ -314,7 +314,7 @@ Specimen `samples/genuine_doc.png` / `samples/tampered_doc.png` (ICAO MRZ `L8989
 | 2 | **Demographic forgery** | Altered DOB/Name vs `citizens_registry` | **Red / Yellow** — field discrepancy table highlights altered field; Green forbidden |
 | 3 | **Physical tampering** | `tampered_doc.png` (copy-move/splice) | **Red / Yellow** — ELA overlay + physical-forgery zones fire |
 | 4 | **Identity imposter** | Live face ≠ doc/DB (local InsightFace, sim excluded) | **Red** — `FACE_MISMATCH` or `DOC_DB_FACE_MISMATCH`/`LIVE_DB_FACE_MISMATCH` |
-| 5 | **Watchlist hit** | Name/ID matching `watchlist_entries` (e.g. `Vikram Singh Chauhan`) | **Red (HIGH RISK)** — `WATCHLIST_HIT`, `is_mocked=True` (violet badge) |
+| 5 | **Watchlist hit** | Name/ID matching `watchlist_entries` (e.g. `Arjun Veer Rathore`) | **Red (HIGH RISK)** — `WATCHLIST_HIT`, `is_mocked=True` (violet badge) |
 | 6 | **Liveness spoof** | Static burst (`static_burst_*.png`) or screen replay | **≥ Yellow** — `LIVENESS_FAILURE` / `screen_replay` |
 | 7 | **Iris mismatch** | Wrong eye / poor quality | **Red / Yellow** — `IRIS_MISMATCH` / `IRIS_QUALITY_POOR` |
 

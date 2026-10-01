@@ -58,10 +58,10 @@ except Exception:
 
 from backend.database import async_session, get_session, init_db
 from backend.auth_security import (
-    DUMMY_HASH,
     active_secret,
     app_env,
     client_ip,
+    dummy_hash,
     generate_totp_secret,
     hash_password,
     is_production,
@@ -295,6 +295,49 @@ app.add_middleware(
     ],
     expose_headers=["Content-Type", "X-Request-ID"],
 )
+
+
+_BARE_ALIAS_PATHS = frozenset({
+    "/auth/login", "/auth/logout", "/screen", "/cases", "/audit",
+})
+_BARE_ALIAS_PREFIXES = ("/cases/",)
+
+
+@app.middleware("http")
+async def _security_headers_middleware(request: Request, call_next):
+    """Harden responses: CSP/HSTS/frame/XSS headers + alias deprecation.
+
+    CSP is same-origin strict (scripts/styles from self; images also allow
+    data:/blob: for webcam previews; connect allows the Railway API origin
+    for Vercel deployments). HSTS is production-only so http://localhost
+    dev is unaffected. Bare (non-/api/) alias routes get Deprecation/Sunset
+    headers — canonical clients must use /api/* (removal target: v1.0).
+    """
+    response = await call_next(request)
+    path = request.url.path
+    csp = (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "media-src 'self' blob:; "
+        "connect-src 'self' https://web-production-ab06a.up.railway.app; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'"
+    )
+    response.headers.setdefault("Content-Security-Policy", csp)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(self)")
+    if is_production():
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
+    if path in _BARE_ALIAS_PATHS or path.startswith(_BARE_ALIAS_PREFIXES):
+        response.headers.setdefault("Deprecation", "true")
+        response.headers.setdefault("Sunset", "Thu, 01 Apr 2027 00:00:00 GMT")
+    return response
 
 
 @app.exception_handler(HTTPException)
@@ -677,7 +720,7 @@ async def login(req: LoginRequest, request: Request, response: Response = None):
 
 
     password_ok = _verify_password(
-        req.password, officer.password_hash if officer else DUMMY_HASH)
+        req.password, officer.password_hash if officer else dummy_hash())
     if not officer or not password_ok:
         _LOGIN_LIMITER.register_failure(f"ip:{ip}")
         _LOGIN_LIMITER.register_failure(f"user:{username.lower()}")
@@ -3215,6 +3258,7 @@ async def verify_audit_chain(request: Request):
     prev_hash = "0" * 64
     valid = True
     first_broken = None
+    first_legacy = None
     for log in logs:
         if log.prev_hash != prev_hash:
             valid = False
@@ -3222,13 +3266,24 @@ async def verify_audit_chain(request: Request):
             break
         try:
             import hmac, hashlib
-            secret = active_secret("JWT_SECRET")
+            from backend.auth_security import audit_secret as _audit_secret
+
+            derived = _audit_secret()
             payload = f"{log.prev_hash}{log.actor}{log.action}{log.entity}".encode()
-            expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+            expected = hmac.new(derived.encode(), payload, hashlib.sha256).hexdigest()
+            legacy = False
             if log.entry_hash and log.entry_hash != expected:
-                valid = False
-                first_broken = log.id
-                break
+                legacy_secret = active_secret("JWT_SECRET")
+                legacy_expected = hmac.new(
+                    legacy_secret.encode(), payload, hashlib.sha256).hexdigest()
+                if log.entry_hash == legacy_expected:
+                    legacy = True
+                else:
+                    valid = False
+                    first_broken = log.id
+                    break
+            if legacy:
+                first_legacy = first_legacy if first_legacy is not None else log.id
         except Exception:
             pass
         prev_hash = log.entry_hash or prev_hash
@@ -3236,6 +3291,8 @@ async def verify_audit_chain(request: Request):
         "valid": valid,
         "total_entries": len(logs),
         "first_broken_id": first_broken,
+        "legacy_key_entries": first_legacy is not None,
+        "first_legacy_key_id": first_legacy,
         "last_hash": prev_hash,
         "verified_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
     }
@@ -5375,8 +5432,22 @@ async def view_evidence_by_token(token: str = Query(...)):
 
 
 @app.get("/api/evidence/token/{filename}")
-async def get_evidence_token(filename: str, request: Request, expires_in: int = Query(300, ge=30, le=3600)):
-    """Generate a short-lived signed URL token for an evidence file."""
+async def get_evidence_token(filename: str, request: Request, expires_in: int = Query(300, ge=30)):
+    """Generate a short-lived signed URL token for an evidence file.
+
+    Upper bound comes from EVIDENCE_TOKEN_MAX_TTL (default 3600s, max 86400s)
+    so long audit reviews can opt into longer-lived links via env config.
+    """
+    try:
+        _max_ttl = int(os.environ.get("EVIDENCE_TOKEN_MAX_TTL", "3600"))
+    except (TypeError, ValueError):
+        _max_ttl = 3600
+    _max_ttl = max(30, min(_max_ttl, 86400))
+    if expires_in > _max_ttl:
+        raise HTTPException(
+            status_code=422,
+            detail=f"expires_in too large (max {_max_ttl}s via EVIDENCE_TOKEN_MAX_TTL).",
+        )
     officer = await _auth(request)
     await _check_evidence_access(filename, officer)
     token = _evidence_token_for(Path(filename).name, int(officer["sub"]), expires_in)
@@ -5418,6 +5489,18 @@ async def get_evidence_file(filename: str, request: Request):
 async def health():
     """System health check."""
     from backend.database import get_engine_info
+    import time as _time
+
+    try:
+        _db_start = _time.perf_counter()
+        async with async_session() as _hsession:
+            await _hsession.execute(select(Officer.id).limit(1))
+        _db_latency_ms = round((_time.perf_counter() - _db_start) * 1000, 1)
+        database_reachable = True
+    except Exception as exc:
+        database_reachable = False
+        _db_latency_ms = None
+        print(f"[health] database unreachable: {type(exc).__name__}: {exc}")
     try:
         from pipeline.face_match import local_engine_status
         face_engine = local_engine_status()
@@ -5436,9 +5519,10 @@ async def health():
     except Exception as e:
         watchlist = {"provider": "unknown", "error": f"{type(e).__name__}: {e}"}
     return {
-        "status": "healthy",
+        "status": "healthy" if database_reachable else "degraded",
         "version": "0.1.0",
-        "database": get_engine_info(),
+        "database": {**get_engine_info(), "reachable": database_reachable,
+                     "latency_ms": _db_latency_ms},
         "face_engine": face_engine,
         "registry_photos": registry_photos,
         "watchlist": watchlist,
