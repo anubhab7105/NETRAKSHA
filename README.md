@@ -346,4 +346,3 @@ MIT — see `LICENSE` (add one if missing). This project was built for SIH 2026 
   <sub>Sashastra Seema Bal · Ministry of Home Affairs · Government of India</sub><br/>
   <sub>Built for SIH 2026 · SIXTH SENSE01</sub>
 </p>
-
