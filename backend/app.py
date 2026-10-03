@@ -285,6 +285,7 @@ _CORS_DEFAULTS = [
     "https://www.netraksha.xyz",
     "https://api.netraksha.xyz",
     "https://web-production-ab06a.up.railway.app",
+    "https://web-production-6b7f1.up.railway.app",
 ]
 _CORS_EXTRA = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
 app.add_middleware(
@@ -328,10 +329,11 @@ async def _security_headers_middleware(request: Request, call_next):
     csp = (
         "default-src 'self'; "
         "script-src 'self'; "
-        "style-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com data:; "
         "img-src 'self' data: blob:; "
         "media-src 'self' blob:; "
-        "connect-src 'self' https://web-production-ab06a.up.railway.app; "
+        "connect-src 'self' https://web-production-6b7f1.up.railway.app https://web-production-ab06a.up.railway.app; "
         "frame-ancestors 'none'; "
         "base-uri 'self'; "
         "form-action 'self'"
@@ -383,6 +385,11 @@ async def _unhandled_exception_handler(request: Request, exc: Exception):
                             content={"detail": exc.detail})
     print(f"[unhandled] {request.method} {request.url.path}: "
           f"{type(exc).__name__}: {exc}")
+    try:
+        import traceback
+        traceback.print_exc()
+    except Exception:
+        pass
     return JSONResponse(status_code=500, content={
         "detail": "Internal server error. The incident has been logged — "
                   "retry once, then contact support with the time.",

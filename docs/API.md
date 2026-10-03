@@ -103,6 +103,6 @@ Document quality gate: both document and crop are checked (Laplacian blur / brig
 | `GET` | `/health/face_engine` | `local_engine_status()` — `initialised`, `models_present`, `provider`, `last_error` (never downloads) |
 | `GET` | `/{full_path}` | SPA fallback — must stay **last** (`/api/*` → 404 JSON, not HTML) |
 
-**CORS** allowlist (`backend/app.py:275`): `localhost:5173`, `127.0.0.1:5173`, `localhost:8000`, `127.0.0.1:8000`, `sih-weld-psi.vercel.app`, `netraksha.xyz` (+ `www`/`api`), `web-production-ab06a.up.railway.app` + `CORS_ORIGINS` extra. Unhandled 500s preserve CORS headers; `HTTPException` handler ensures 401/403 carry CORS.
+**CORS** allowlist (`backend/app.py:275`): `localhost:5173`, `127.0.0.1:5173`, `localhost:8000`, `127.0.0.1:8000`, `sih-weld-psi.vercel.app`, `netraksha.xyz` (+ `www`/`api`), `web-production-6b7f1.up.railway.app` + `CORS_ORIGINS` extra. Unhandled 500s preserve CORS headers; `HTTPException` handler ensures 401/403 carry CORS.
 
 ---

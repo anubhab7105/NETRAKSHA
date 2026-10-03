@@ -59,7 +59,7 @@ The default `GEMINI_API_KEY=""` in `.env.example` is intentional — tests asser
 
 | Layer | Host | Config |
 |---|---|---|
-| **Frontend (SPA)** | **Vercel** | `vercel.json:7` — `installCommand`/`buildCommand`/`outputDirectory: frontend/dist`; `rewrites: /api/(.*) → https://web-production-ab06a.up.railway.app/api/$1` + SPA fallback `/(?!assets|api) → /index.html`; cache headers for `assets/*` (1 y immutable) + `robots/sitemap/llms` (1 d) + security headers (`nosniff`, `DENY`, `camera=(self)`) |
+| **Frontend (SPA)** | **Vercel** | `vercel.json:7` — `installCommand`/`buildCommand`/`outputDirectory: frontend/dist`; `rewrites: /api/(.*) → https://web-production-6b7f1.up.railway.app/api/$1` + SPA fallback `/(?!assets|api) → /index.html`; cache headers for `assets/*` (1 y immutable) + `robots/sitemap/llms` (1 d) + security headers (`nosniff`, `DENY`, `camera=(self)`) |
 | **Backend (FastAPI)** | **Railway** | `railway.toml` / `Dockerfile` / `Procfile` — `python -m uvicorn backend.app:app --host 0.0.0.0 --port $PORT`; `SCREEN_EVIDENCE_DIR` on persistent volume; `DATABASE_URL` (pooler `:6543`) + `SUPABASE_*` + `JWT_SECRET` + `BOOTSTRAP_ADMIN_*` from Railway secrets |
 | **Database + Storage** | **Supabase** | Postgres (pooler) + Storage bucket `img` (private). Connection string from Dashboard → Project Settings → Database → Connection string |
 
