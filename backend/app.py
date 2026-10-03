@@ -725,12 +725,12 @@ async def login(req: LoginRequest, request: Request, response: Response = None):
         _LOGIN_LIMITER.register_failure(f"ip:{ip}")
         _LOGIN_LIMITER.register_failure(f"user:{username.lower()}")
         async with async_session() as session:
-            session.add(AuditLog(
+            await AuditLog.create_with_chain(session,
                 actor=username or "unknown",
                 action="login_failed",
                 entity=f"officer:{username or '?'}",
                 device_info=f"IP:{ip}",
-            ))
+            )
             await session.commit()
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
@@ -745,11 +745,11 @@ async def login(req: LoginRequest, request: Request, response: Response = None):
         mfa_token = _create_token(officer.id, officer.username, officer.role, unit,
                                   purpose="mfa", expiry_minutes=_MFA_TOKEN_MINUTES)
         async with async_session() as session:
-            session.add(AuditLog(
+            await AuditLog.create_with_chain(session,
                 actor=officer.username,
                 action="login_mfa_challenged",
                 entity=f"officer:{officer.id}",
-            ))
+            )
             await session.commit()
         return LoginResponse(
             mfa_required=True,
@@ -765,11 +765,11 @@ async def login(req: LoginRequest, request: Request, response: Response = None):
 
 
     async with async_session() as session:
-        session.add(AuditLog(
+        await AuditLog.create_with_chain(session,
             actor=officer.username,
             action="login",
             entity=f"officer:{officer.id}",
-        ))
+        )
         await session.commit()
 
     body = LoginResponse(
@@ -832,11 +832,11 @@ async def mfa_challenge(req: MfaChallengeRequest, request: Request, response: Re
     unit = getattr(officer, "unit", "BORDER_UNIT_1") or "BORDER_UNIT_1"
     token = _create_token(officer.id, officer.username, officer.role, unit)
     async with async_session() as session:
-        session.add(AuditLog(
+        await AuditLog.create_with_chain(session,
             actor=officer.username,
             action="login",
             entity=f"officer:{officer.id}",
-        ))
+        )
         await session.commit()
     body = LoginResponse(
         token=token,
@@ -875,12 +875,12 @@ async def change_password(req: ChangePasswordRequest, request: Request, response
             off.password_changed_at = _utcnow_naive()
         except Exception:
             pass
-        session.add(AuditLog(
+        await AuditLog.create_with_chain(session,
             actor=off.username,
             action="password_changed",
             entity=f"officer:{off.id}",
             officer_id=off.id,
-        ))
+        )
         await session.commit()
     await _revoke_jti(officer.get("jti") or "", officer_id, "password_changed",
                       _token_expiry_naive(officer))
@@ -909,12 +909,12 @@ async def mfa_setup(request: Request):
         secret = generate_totp_secret()
         off.totp_secret = secret
         off.totp_enabled = False
-        session.add(AuditLog(
+        await AuditLog.create_with_chain(session,
             actor=off.username,
             action="mfa_enrollment_started",
             entity=f"officer:{off.id}",
             officer_id=off.id,
-        ))
+        )
         await session.commit()
     uri = otpauth_uri(secret, off.username)
     qr_data_uri = ""
@@ -956,12 +956,12 @@ async def mfa_verify(req: MfaVerifyRequest, request: Request):
             raise HTTPException(status_code=401, detail=_drift_hint(off.totp_secret, req.code))
         _MFA_LIMITER.register_success(f"mfa:{officer_id}")
         off.totp_enabled = True
-        session.add(AuditLog(
+        await AuditLog.create_with_chain(session,
             actor=off.username,
             action="mfa_enabled",
             entity=f"officer:{off.id}",
             officer_id=off.id,
-        ))
+        )
         await session.commit()
     return {"status": "ok", "message": "MFA enabled for your supervisor account."}
 
@@ -984,12 +984,12 @@ async def mfa_disable(req: MfaDisableRequest, request: Request, response: Respon
             raise HTTPException(status_code=401, detail="Invalid authenticator code.")
         off.totp_secret = None
         off.totp_enabled = False
-        session.add(AuditLog(
+        await AuditLog.create_with_chain(session,
             actor=off.username,
             action="mfa_disabled",
             entity=f"officer:{off.id}",
             officer_id=off.id,
-        ))
+        )
         await session.commit()
     await _revoke_jti(officer.get("jti") or "", officer_id, "mfa_disabled",
                       _token_expiry_naive(officer))
@@ -1012,11 +1012,11 @@ async def logout(request: Request, response: Response = None):
         return {"status": "ok", "message": "Logged out"}
 
     async with async_session() as session:
-        session.add(AuditLog(
+        await AuditLog.create_with_chain(session,
             actor=officer.get("username", "unknown"),
             action="logout",
             entity=f"officer:{officer.get('sub', '?')}",
-        ))
+        )
         await session.commit()
 
     try:
@@ -2116,14 +2116,14 @@ async def _run_screening_pipeline(
 
         try:
             async with async_session() as _audit_sess:
-                _audit_sess.add(AuditLog(
+                await AuditLog.create_with_chain(_audit_sess,
                     actor=f"officer:{officer_id}",
                     action=f"registry_access:screening type:{norm_type} number:{doc_number[:4]}***",
                     entity=f"citizen_lookup:{norm_type}:{_normalize_doc_number(doc_number)}",
                     officer_id=officer_id,
                     request_id=audit_context.get("request_id") if 'audit_context' in locals() and audit_context else "",
                     device_info=f"screening case pending",
-                ))
+                )
                 await _audit_sess.commit()
         except Exception:
             pass
@@ -2756,7 +2756,7 @@ async def _run_screening_pipeline(
                 _iris_audit = f" iris:{_iv.get('decision') or _iv.get('match')} eye:{_iv.get('eye')} q:{_iv.get('quality')} prov:{_iv.get('provider')}"
         except Exception:
             _iris_audit = ""
-        session.add(AuditLog(
+        await AuditLog.create_with_chain(session,
             actor=actor,
             action=f"screening_completed:verdict={risk.verdict} unit:{officer_unit}{_iris_audit}{file_hashes_str}",
             entity=f"case:{case_id}",
@@ -2765,7 +2765,7 @@ async def _run_screening_pipeline(
             request_id=audit_ctx.get("request_id") or "",
             device_info=audit_ctx.get("device_info") or "",
             file_hashes=json.dumps(audit_ctx.get("file_hashes") or {}),
-        ))
+        )
 
         await session.commit()
 
@@ -3192,11 +3192,11 @@ async def override_case(case_id: int, req: OverrideRequest, request: Request):
             case.version = 1
 
 
-        session.add(AuditLog(
+        await AuditLog.create_with_chain(session,
             actor=username,
             action=f"officer_override:{req.action}",
             entity=f"case:{case_id}",
-        ))
+        )
 
         await session.commit()
 
@@ -4108,14 +4108,14 @@ async def list_citizens(
 
         try:
             async with async_session() as _sess:
-                _sess.add(AuditLog(
+                await AuditLog.create_with_chain(_sess,
                     actor=officer.get("username", "unknown"),
                     action=f"registry_search:sensitive:{sensitivity_reason}",
                     entity=f"citizens:q={q} reason:{reason[:80]}",
                     officer_id=int(officer.get("sub", 0)) or None,
                     request_id=request.headers.get("X-Request-ID") or "",
                     device_info=f"UA:{request.headers.get('User-Agent','')[:100]} IP:{request.client.host if request.client else ''}",
-                ))
+                )
                 await _sess.commit()
         except Exception:
             pass
@@ -4317,12 +4317,12 @@ async def create_citizen(
         await session.flush()
         enrollment_id = req.id
 
-        session.add(AuditLog(
+        await AuditLog.create_with_chain(session,
             actor=username,
             action="enrollment_requested:create",
             entity=f"enrollment:{enrollment_id}:{doc_type}:{doc_number}",
             officer_id=officer_id,
-        ))
+        )
         await session.commit()
 
     msg = f"Enrollment request #{enrollment_id} for {name} ({doc_type.upper()}) is PENDING — a different supervisor must approve it."
@@ -4463,12 +4463,12 @@ async def approve_enrollment(enrollment_id: int, request: Request):
             req.approved_by = approver
             req.resulting_citizen_id = citizen.id
             req.decided_at = _utcnow_naive()
-            session.add(AuditLog(actor=approver, action="enrollment_approved:create",
+            await AuditLog.create_with_chain(session, actor=approver, action="enrollment_approved:create",
                                  entity=f"enrollment:{req.id}:citizen:{citizen.id}",
-                                 officer_id=approver_id))
-            session.add(AuditLog(actor=approver, action="citizen_registered",
+                                 officer_id=approver_id)
+            await AuditLog.create_with_chain(session, actor=approver, action="citizen_registered",
                                  entity=f"citizen:{citizen.id}:{citizen.document_type}:{citizen.document_number}",
-                                 officer_id=approver_id))
+                                 officer_id=approver_id)
             await session.commit()
             return {"status": "ok", "citizen": citizen.to_dict(),
                     "message": f"Approved: {citizen.full_name} ({citizen.document_type.upper()}) enrolled by {approver} (requested by {req.requested_by})"}
@@ -4498,16 +4498,16 @@ async def approve_enrollment(enrollment_id: int, request: Request):
             req.approved_by_id = approver_id
             req.approved_by = approver
             req.decided_at = _utcnow_naive()
-            session.add(AuditLog(actor=approver, action="enrollment_approved:delete",
+            await AuditLog.create_with_chain(session, actor=approver, action="enrollment_approved:delete",
                                  entity=f"enrollment:{req.id}:citizen:{req.target_citizen_id}:{detail}",
-                                 officer_id=approver_id))
-            session.add(AuditLog(actor=approver, action="citizen_removed",
+                                 officer_id=approver_id)
+            await AuditLog.create_with_chain(session, actor=approver, action="citizen_removed",
                                  entity=f"citizen:{req.target_citizen_id}:{detail}",
-                                 officer_id=approver_id))
+                                 officer_id=approver_id)
             if photo_uri:
-                session.add(AuditLog(actor=approver, action="biometric_retention:deleted",
+                await AuditLog.create_with_chain(session, actor=approver, action="biometric_retention:deleted",
                                      entity=f"citizen:{req.target_citizen_id}:photo:{photo_uri}",
-                                     officer_id=approver_id))
+                                     officer_id=approver_id)
             await session.commit()
             _secure_delete_file(photo_path)
             return {"status": "ok", "deleted_id": req.target_citizen_id,
@@ -4535,8 +4535,8 @@ async def reject_enrollment(enrollment_id: int, req_body: _ReviewNote, request: 
         req.approved_by = approver
         req.review_note = note
         req.decided_at = _utcnow_naive()
-        session.add(AuditLog(actor=approver, action=f"enrollment_rejected:{req.action}",
-                             entity=f"enrollment:{req.id}", officer_id=approver_id))
+        await AuditLog.create_with_chain(session, actor=approver, action=f"enrollment_rejected:{req.action}",
+                             entity=f"enrollment:{req.id}", officer_id=approver_id)
         await session.commit()
     if staged is not None:
         _secure_delete_file(staged)
@@ -4648,23 +4648,23 @@ async def import_authority_citizens(request: Request):
                 )
                 session.add(citizen)
                 await session.flush()
-                session.add(AuditLog(
+                await AuditLog.create_with_chain(session,
                     actor=username,
                     action="citizen_imported:authority_signed",
                     entity=f"citizen:{citizen.id}:{doc_type}:{doc_number}:batch:{batch_ref}",
                     officer_id=officer_id,
-                ))
+                )
                 created += 1
             except HTTPException as e:
                 errors.append({"index": i, "error": e.detail})
             except Exception as e:
                 errors.append({"index": i, "error": str(e)})
-        session.add(AuditLog(
+        await AuditLog.create_with_chain(session,
             actor=username,
             action="authority_import_batch",
             entity=f"batch:{batch_ref}:created:{created}:skipped:{skipped}:errors:{len(errors)}",
             officer_id=officer_id,
-        ))
+        )
         await session.commit()
     return {"status": "ok", "batch_ref": batch_ref, "created": created,
             "skipped_duplicates": skipped, "errors": errors}
@@ -4823,13 +4823,13 @@ async def reconciliation_run(request: Request):
                 n_ok += 1
             else:
                 n_review += 1
-        session.add(AuditLog(
+        await AuditLog.create_with_chain(session,
             actor=username,
             action="registry_reconciled",
             entity=f"registry:total:{len(citizens)}:ok:{n_ok}:needs_review:{n_review}"
                    + (":with_authority_snapshot" if authority_by_key is not None else ":integrity_only"),
             officer_id=officer_id,
-        ))
+        )
         await session.commit()
     report = await _build_reconciliation_report(snapshot)
     return {"status": "ok", "reconciled": len(citizens), "ok": n_ok,
@@ -4900,12 +4900,12 @@ async def delete_citizen(
         )
         session.add(req)
         await session.flush()
-        session.add(AuditLog(
+        await AuditLog.create_with_chain(session,
             actor=username,
             action="enrollment_requested:delete",
             entity=f"enrollment:{req.id}:citizen:{citizen_id}:{detail}",
             officer_id=officer_id,
-        ))
+        )
         await session.commit()
         enrollment_id = req.id
 
@@ -5008,11 +5008,11 @@ async def cleanup_orphan_files(request: Request):
             failed.append(f"{fname}: {e}")
 
     async with async_session() as session:
-        session.add(AuditLog(
+        await AuditLog.create_with_chain(session,
             actor=officer.get("username", "unknown"),
             action="biometric_retention:orphan_cleanup",
             entity=f"orphans_deleted:{len(deleted)} failed:{len(failed)}",
-        ))
+        )
         await session.commit()
     return {"deleted": deleted, "deleted_count": len(deleted), "failed": failed}
 
@@ -5065,7 +5065,7 @@ async def create_watchlist_entry(req: WatchlistCreateRequest, request: Request):
                 raise HTTPException(status_code=409, detail="Watchlist entry with this id_number already exists")
         entry = WatchlistEntry(name=name, id_number=(req.id_number or "").strip() or None, flag_reason=req.flag_reason.strip())
         session.add(entry)
-        session.add(AuditLog(actor=officer.get("username","unknown"), action="watchlist_created", entity=f"watchlist:{name}", officer_id=int(officer["sub"])))
+        await AuditLog.create_with_chain(session, actor=officer.get("username","unknown"), action="watchlist_created", entity=f"watchlist:{name}", officer_id=int(officer["sub"]))
         await session.commit()
         await session.refresh(entry)
         created = entry.to_dict()
@@ -5093,7 +5093,7 @@ async def delete_watchlist_entry(entry_id: int, request: Request):
         if not entry:
             raise HTTPException(status_code=404, detail="Watchlist entry not found")
         await session.delete(entry)
-        session.add(AuditLog(actor=officer.get("username","unknown"), action="watchlist_deleted", entity=f"watchlist:{entry_id}", officer_id=int(officer["sub"])))
+        await AuditLog.create_with_chain(session, actor=officer.get("username","unknown"), action="watchlist_deleted", entity=f"watchlist:{entry_id}", officer_id=int(officer["sub"]))
         await session.commit()
     try:
         from pipeline.watchlist import load_db_watchlist_provider, set_watchlist_provider
@@ -5235,14 +5235,14 @@ async def enroll_iris(
         session.add(tmpl)
         await session.flush()
         tid = tmpl.id
-        session.add(AuditLog(
+        await AuditLog.create_with_chain(session,
             actor=officer.get("username", "unknown"),
             action=f"iris_enroll:{eye}",
             entity=f"citizen:{citizen_id}:template:{tid}",
             officer_id=int(officer["sub"]),
             request_id=request.headers.get("X-Request-ID") or "",
             device_info=f"provider:{prov.name} version:{prov.version}",
-        ))
+        )
         await session.commit()
 
     return {
@@ -5306,12 +5306,12 @@ async def verify_iris(
         Path(tmp_path).unlink(missing_ok=True)
 
     async with async_session() as session:
-        session.add(AuditLog(
+        await AuditLog.create_with_chain(session,
             actor=officer.get("username", "unknown"),
             action=f"iris_verify:{'match' if result.get('match') else 'no_match' if result.get('match') is False else 'inconclusive'}",
             entity=f"citizen:{citizen_id}",
             officer_id=int(officer.get("sub")),
-        ))
+        )
         await session.commit()
     return {
         "match": result.get("match"),

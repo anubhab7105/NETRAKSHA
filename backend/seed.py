@@ -262,11 +262,12 @@ async def seed_all() -> dict:
                 summary["watchlist_existed"] += 1
 
 
-        session.add(AuditLog(
+        await AuditLog.create_with_chain(
+            session,
             actor="system",
             action="database_seeded",
             entity="seed",
-        ))
+        )
 
         await session.commit()
 

@@ -31,6 +31,17 @@ from collections import deque
 DEV_JWT_DEFAULT = "sih-hackathon-dev-secret-change-in-prod"
 MIN_SECRET_CHARS = 32
 
+PLACEHOLDER_MARKERS = (
+    "change-me", "changeme", "your-", "your_", "test", "example",
+    "placeholder", "secret-here", "password", "123456", "abcdef",
+)
+
+
+def looks_placeholder(secret: str) -> bool:
+    """True when a secret is an obvious template/placeholder value."""
+    lowered = (secret or "").strip().lower()
+    return any(marker in lowered for marker in PLACEHOLDER_MARKERS)
+
 
 def active_secret(name: str = "JWT_SECRET") -> str:
     """Return the configured secret, failing closed in production.
@@ -86,6 +97,11 @@ def secret_error(secret: str, *, name: str = "JWT_SECRET") -> str | None:
             return (f"{name} must be set to a strong random value in production "
                     f"(>= {MIN_SECRET_CHARS} chars). Refusing to start.")
         return (f"Using default {name}. Set a strong value in .env for production.")
+    if looks_placeholder(secret):
+        if is_production():
+            return (f"{name} looks like a placeholder/template value. "
+                    f"Generate a real secret and refusing to start until replaced.")
+        return (f"Using placeholder-like {name}. Replace it before any production use.")
     if is_production() and len(secret) < MIN_SECRET_CHARS:
         return (f"{name} is too short for production ({len(secret)} chars, "
                 f"need >= {MIN_SECRET_CHARS}). Refusing to start.")

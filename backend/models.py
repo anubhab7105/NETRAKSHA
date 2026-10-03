@@ -435,7 +435,7 @@ class AuditLog(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     actor = Column(String(100), nullable=False)
     action = Column(Text, nullable=False)
-    entity = Column(String(100), nullable=True)
+    entity = Column(Text, nullable=True)
     timestamp = Column(DateTime, server_default=func.now())
     immutable = Column(Boolean, default=True)
 
@@ -469,15 +469,39 @@ class AuditLog(Base):
 
     @staticmethod
     async def create_with_chain(session, **kwargs):
-        """Create an audit log entry with hash chaining."""
-        import hashlib, hmac, os
+        """Create an audit log entry with hash chaining.
+
+        All route writes must go through here (never bare ``AuditLog(...)``)
+        so every row carries prev_hash/entry_hash. The tail-row read takes
+        ``FOR UPDATE`` on PostgreSQL to serialize concurrent writers;
+        SQLite has no row locks, so it falls back to a plain read (the
+        single-process dev server never races). String fields are truncated
+        to their column widths so overlong entities cannot 500 the request.
+        """
+        import hashlib, hmac
+
+        def _clip(value, limit):
+            if value is None:
+                return None
+            text = value if isinstance(value, str) else str(value)
+            return text[:limit]
+
+        kwargs["actor"] = _clip(kwargs.get("actor", "unknown") or "unknown", 100)
+        kwargs["entity"] = _clip(kwargs.get("entity"), 100)
+        kwargs["session_id"] = _clip(kwargs.get("session_id"), 100)
+        kwargs["request_id"] = _clip(kwargs.get("request_id"), 100)
 
         try:
-            from sqlalchemy import select as _select, desc as _desc
+            from sqlalchemy import select as _select
 
-            result = await session.execute(
-                _select(AuditLog).order_by(AuditLog.id.desc()).limit(1)
-            )
+            query = _select(AuditLog).order_by(AuditLog.id.desc()).limit(1)
+            try:
+                dialect = getattr(session.get_bind(), "dialect", None)
+                if getattr(dialect, "name", "") == "postgresql":
+                    query = query.with_for_update()
+            except Exception:
+                pass
+            result = await session.execute(query)
             last = result.scalar_one_or_none()
             prev_hash = last.entry_hash if last and last.entry_hash else "0" * 64
         except Exception:

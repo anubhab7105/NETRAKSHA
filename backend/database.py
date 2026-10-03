@@ -132,10 +132,13 @@ async def init_db() -> None:
         await ensure_auth_columns()
     except Exception as e:
         print(f"[init_db] auth-column migration warning: {e}")
+    try:
+        await ensure_audit_text_columns()
+    except Exception as e:
+        print(f"[init_db] audit text-column migration warning: {e}")
 
 
 async def _sqlite_table_columns(conn, table_name: str) -> set:
-    """Return existing column names for a SQLite table via PRAGMA."""
     from sqlalchemy import text as _text
 
     try:
