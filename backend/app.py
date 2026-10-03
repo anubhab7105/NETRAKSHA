@@ -1658,6 +1658,145 @@ def _needs_late_gemini_face(is_simulated, live_str, db_photo_path, face_match_da
         return False
 
 
+_FACE_MATCH_THRESHOLD_LABEL = 0.55  # mirrors pipeline/thresholds.json face_match
+
+_DB_REASON_HINTS = {
+    "no_registry_match": "no registry record matched this document number",
+    "no_registry_photo": "no reference photo enrolled on the matched record",
+    "registry_photo_missing_on_server": "reference photo file missing on the server",
+    "registry_photo_download_failed": "reference photo could not be fetched from storage",
+    "local_face_engine_unavailable": "local face engine unavailable on the server",
+}
+
+
+def _build_final_face_reasoning(
+    face_match_data,
+    pair_sources,
+    *,
+    live_str,
+    live_burst_count,
+    db_photo_path,
+    db_photo_late,
+    citizen_id,
+    db_unavailable_reason,
+    is_simulated,
+    engine_error,
+    recapture_requested,
+    recapture_target,
+) -> str:
+    """Rebuild the 3-way `visual_reasoning` LAST from settled verdicts (pure).
+
+    The early cloud text may predate the registry photo ("No database
+    reference image (Image 3) was provided") or predate a late re-run, so it
+    is cleaned first and never allowed to contradict the settled pairs. The
+    rebuilt text then states precisely, per pair, verdict + similarity +
+    source + threshold, which inputs were used, why any leg is missing, and a
+    final verdict line. Idempotent: feeding its own output back in returns the
+    same string (previously generated tails are stripped before rebuild).
+    """
+    import re as _re
+
+    fm = face_match_data or {}
+    sources = pair_sources or {}
+
+    base = fm.get("visual_reasoning") or ""
+    # Strip tails this builder (or its predecessor) previously appended.
+    base = _re.sub(r"\s*\|\s*Doc vs DB (local biometric|late cloud scan|cloud scan|unavailable)[\d.\s,]*"
+                   r"(, Live vs DB (local biometric|late cloud scan|cloud scan|unavailable)[\d.\s]*)?", "", base)
+    base = _re.sub(r"\s*\|\s*(Pairs|Images|Issue|Final 3-way)\s*[—:\-][^|]*", "", base)
+    base = _re.sub(r"\s*Final 3-way\s*[—:\-].*$", "", base)
+    has_db_verdict = fm.get("doc_vs_db_match") is not None or fm.get("live_vs_db_match") is not None
+    if has_db_verdict and base:
+        base = _re.sub(
+            r"No database reference image\s*\(Image 3\)\s*was provided\.?\s*\|?\s*",
+            "", base, flags=_re.IGNORECASE)
+        base = _re.sub(r"No database reference image[^.]*\.\s*", "", base, flags=_re.IGNORECASE)
+    base = base.strip(" |")
+
+    def _src_label(key):
+        src = sources.get(key) or ""
+        if src.startswith("local"):
+            return "local biometric"
+        if src == "gemini_late":
+            return "late cloud scan"
+        if src.startswith("gemini"):
+            return "cloud scan"
+        return "unavailable"
+
+    def _pair_txt(label, match, sim, key, missing_hint):
+        if match is True:
+            detail = f"{float(sim):.3f}" if isinstance(sim, (int, float)) else "n/a"
+            return f"{label}: match ({detail}, {_src_label(key)}, thr {_FACE_MATCH_THRESHOLD_LABEL:.2f})"
+        if match is False:
+            detail = f"{float(sim):.3f}" if isinstance(sim, (int, float)) else "n/a"
+            return f"{label}: mismatch ({detail}, {_src_label(key)}, thr {_FACE_MATCH_THRESHOLD_LABEL:.2f})"
+        return f"{label}: not measured ({missing_hint})"
+
+    if live_str is None:
+        live_hint = "no live capture provided"
+    else:
+        live_hint = "no verdict produced"
+    if citizen_id is None:
+        db_hint = _DB_REASON_HINTS["no_registry_match"]
+    elif not db_photo_path:
+        db_hint = _DB_REASON_HINTS.get(db_unavailable_reason or "", "registry photo unavailable")
+    elif engine_error and fm.get("doc_vs_db_match") is None:
+        db_hint = _DB_REASON_HINTS["local_face_engine_unavailable"] + "; cloud fallback produced no verdict"
+    else:
+        db_hint = "no verdict produced"
+
+    pairs_seg = "Pairs — " + "; ".join([
+        _pair_txt("live-vs-doc", fm.get("live_vs_doc_match"),
+                  fm.get("similarity_score"), "live_vs_doc", live_hint),
+        _pair_txt("doc-vs-DB", fm.get("doc_vs_db_match"),
+                  fm.get("doc_vs_db_similarity"), "doc_vs_db", db_hint),
+        _pair_txt("live-vs-DB", fm.get("live_vs_db_match"),
+                  fm.get("live_vs_db_similarity"), "live_vs_db",
+                  live_hint if live_str is None else db_hint),
+    ])
+
+    inputs = ["doc image used"]
+    if live_str is None:
+        inputs.append("live image missing")
+    elif (live_burst_count or 0) > 1:
+        inputs.append(f"live image used (burst of {live_burst_count}, sharpest frame selected)")
+    else:
+        inputs.append("live image used")
+    if db_photo_path:
+        inputs.append("registry photo used (late hit after AI scan)" if db_photo_late else "registry photo used")
+    else:
+        inputs.append("registry photo missing"
+                      + (f" ({db_hint})" if citizen_id is not None else " (no registry record)"))
+    images_seg = "Images — " + "; ".join(inputs)
+
+    issues = []
+    if recapture_requested:
+        issues.append(f"recapture needed: {recapture_target or 'face image'} — retake a sharper still")
+    if is_simulated:
+        issues.append("cloud AI offline — verdicts are local-only, manual review required")
+    if engine_error and (fm.get("doc_vs_db_match") is None or fm.get("live_vs_db_match") is None):
+        issues.append("local face engine unavailable — registry legs rely on cloud fallback")
+    completeness = fm.get("comparison_completeness")
+    if completeness == "partial":
+        issues.append("partial comparison — manual officer review required")
+    elif completeness == "unavailable":
+        issues.append("face comparison unavailable — manual officer comparison required")
+    issue_seg = "Issue — " + "; ".join(issues) if issues else ""
+
+    def _fmt(match, sim):
+        if match is True:
+            return f"match ({float(sim):.3f})" if isinstance(sim, (int, float)) else "match"
+        if match is False:
+            return f"mismatch ({float(sim):.3f})" if isinstance(sim, (int, float)) else "mismatch"
+        return "not measured"
+    final_seg = ("Final 3-way: live-vs-doc " + _fmt(fm.get("live_vs_doc_match"), fm.get("similarity_score"))
+                 + ", doc-vs-DB " + _fmt(fm.get("doc_vs_db_match"), fm.get("doc_vs_db_similarity"))
+                 + ", live-vs-DB " + _fmt(fm.get("live_vs_db_match"), fm.get("live_vs_db_similarity")) + ".")
+
+    parts = [p for p in [base, pairs_seg, images_seg, issue_seg, final_seg] if p]
+    return " | ".join(parts).strip()
+
+
 async def _run_screening_pipeline(
     doc_path: Path,
     live_path: Optional[Path],
@@ -2227,39 +2366,109 @@ async def _run_screening_pipeline(
 
 
 
-    # Late local re-run: the parallel local 3-way ran with db_photo_path=None
-    # when the registry record was only found via the (slower) Gemini
-    # demographics. If the photo arrived late, re-run the local engine now
-    # with all 3 images so doc-vs-DB / live-vs-DB get evidence-backed local
-    # verdicts instead of cloud-only ones. Never raises; a dead engine simply
-    # leaves the legs for the late-Gemini fallback below.
-    if db_photo_late and db_photo_path:
+    # Late local remediation — use EVERY available image before falling back:
+    # (a) the parallel local 3-way ran with db_photo_path=None when the record
+    # was only found via the (slower) Gemini demographics — re-run with all 3
+    # images when the photo arrived late; (b) the parallel run used a single
+    # live frame (mid-burst) — if live-vs-doc still has no verdict from either
+    # engine, retry the remaining burst frames sharpest-first. Never raises; a
+    # dead engine simply leaves the legs for the late-Gemini fallback below.
+    _late_db_needed = bool(
+        db_photo_late and db_photo_path
+        and (face_match_data.get("doc_vs_db_match") is None
+             or face_match_data.get("live_vs_db_match") is None))
+    _late_live_candidates: list = []
+    if (live_str is not None
+            and face_match_data.get("live_vs_doc_match") is None
+            and face_match_data.get("similarity_score") is None
+            and not tw_engine_error
+            and isinstance(live_burst, list) and len(live_burst) > 1):
         try:
-            _late_local = await loop.run_in_executor(
-                None, lambda: _run_local_three_way(str(doc_path), live_str, db_photo_path, save_evidence=False))
-            if isinstance(_late_local, dict):
-                _late_pairs = _late_local.get("pairs") or {}
-                for _key, _mkey, _skey in (
-                    ("doc_vs_db", "doc_vs_db_match", "doc_vs_db_similarity"),
-                    ("live_vs_db", "live_vs_db_match", "live_vs_db_similarity"),
-                ):
-                    _lp = _late_pairs.get(_key) or {}
-                    if _lp.get("status") == "ok":
-                        if face_match_data.get(_mkey) is None:
-                            face_match_data[_mkey] = bool(_lp["match"]) if _lp.get("match") is not None else None
-                            if _lp.get("similarity") is not None:
-                                face_match_data[_skey] = float(_lp["similarity"])
-                            pair_sources[_key] = "local_late"
-                        if _key == "doc_vs_db":
-                            tw_docdb = _lp
-                        else:
-                            tw_livedb = _lp
+            import cv2 as _cv2
+            _scored = []
+            for _f in live_burst:
+                if _f == live_str:
+                    continue
+                try:
+                    _img = _cv2.imread(str(_f), _cv2.IMREAD_GRAYSCALE)
+                    if _img is None:
+                        continue
+                    _scored.append((float(_cv2.Laplacian(_img, _cv2.CV_64F).var()), str(_f)))
+                except Exception:
+                    continue
+            _scored.sort(key=lambda t: t[0], reverse=True)
+            _late_live_candidates = [f for _, f in _scored[:2]]
+        except Exception:
+            _late_live_candidates = []
+    if _late_db_needed or _late_live_candidates:
+        try:
+            if _late_db_needed:
+                _late_local = await loop.run_in_executor(
+                    None, lambda: _run_local_three_way(str(doc_path), live_str, db_photo_path, save_evidence=False))
+                if isinstance(_late_local, dict):
+                    _late_pairs = _late_local.get("pairs") or {}
+                    for _key, _mkey, _skey in (
+                        ("doc_vs_db", "doc_vs_db_match", "doc_vs_db_similarity"),
+                        ("live_vs_db", "live_vs_db_match", "live_vs_db_similarity"),
+                    ):
+                        _lp = _late_pairs.get(_key) or {}
+                        if _lp.get("status") == "ok":
+                            if face_match_data.get(_mkey) is None:
+                                face_match_data[_mkey] = bool(_lp["match"]) if _lp.get("match") is not None else None
+                                if _lp.get("similarity") is not None:
+                                    face_match_data[_skey] = float(_lp["similarity"])
+                                pair_sources[_key] = "local_late"
+                            if _key == "doc_vs_db":
+                                tw_docdb = _lp
+                            else:
+                                tw_livedb = _lp
+                    if (_late_pairs.get("live_vs_doc") or {}).get("status") == "ok":
+                        tw_live = _late_pairs["live_vs_doc"]
+                    gemini_result["three_way_face_match"] = face_match_data
+                    print("[three-way] late local re-run merged "
+                          f"(doc_vs_db={face_match_data.get('doc_vs_db_match')!r} "
+                          f"live_vs_db={face_match_data.get('live_vs_db_match')!r})")
+            for _alt_live in _late_live_candidates:
+                if (face_match_data.get("live_vs_doc_match") is not None
+                        or face_match_data.get("similarity_score") is not None):
+                    break
+                try:
+                    from pipeline.face_match import run_face_match as _run_local_pair
+                    _retry = await loop.run_in_executor(
+                        None, lambda _a=_alt_live: _run_local_pair(str(doc_path), _a, save_evidence=False))
+                    if getattr(_retry, "status", None) == "ok" and _retry.score is not None:
+                        _m = bool(_retry.score >= 0.55)
+                        face_match_data["similarity_score"] = float(_retry.score)
+                        face_match_data["live_vs_doc_similarity"] = float(_retry.score)
+                        if face_match_data.get("live_vs_doc_match") is None:
+                            face_match_data["live_vs_doc_match"] = _m
+                        pair_sources["live_vs_doc"] = "local_retry"
+                        live_str = _alt_live
+                        gemini_result["face_is_real_via_local"] = True
+                        gemini_result["three_way_face_match"] = face_match_data
+                        print(f"[three-way] live-frame retry succeeded ({_alt_live} sim={float(_retry.score):.3f})")
+                        break
+                except Exception as exc:
+                    print(f"[three-way] live-frame retry failed ({type(exc).__name__}) — trying next frame")
+                    continue
+            # Refresh the quality snapshot so gates reflect late measurements.
+            try:
+                _warnings2: list = []
+                for _p in (tw_live, tw_docdb, tw_livedb):
+                    _warnings2.extend((_p or {}).get("warnings") or [])
+                _gate2 = "passed" if (tw_live or {}).get("status") == "ok" else "partial"
+                face_match_data["face_quality"] = {
+                    "engine": "insightface_local",
+                    "gate": _gate2,
+                    "pair_status": {k: ((tw_live if k == "live_vs_doc" else tw_docdb if k == "doc_vs_db" else tw_livedb) or {}).get("status")
+                                    for k in ("live_vs_doc", "doc_vs_db", "live_vs_db")},
+                    "warnings": _warnings2,
+                }
                 gemini_result["three_way_face_match"] = face_match_data
-                print("[three-way] late local re-run merged "
-                      f"(doc_vs_db={face_match_data.get('doc_vs_db_match')!r} "
-                      f"live_vs_db={face_match_data.get('live_vs_db_match')!r})")
+            except Exception:
+                pass
         except Exception as exc:
-            print(f"[three-way] late local re-run failed ({type(exc).__name__}) — falling back to late Gemini")
+            print(f"[three-way] late local remediation failed ({type(exc).__name__}) — falling back to late Gemini")
 
     if _needs_late_gemini_face(is_simulated, live_str, db_photo_path, face_match_data):
         print("[three-way] attempting late Gemini 3-image fallback for registry legs")
@@ -2344,56 +2553,21 @@ async def _run_screening_pipeline(
             face_match_data["db_photo_late"] = True
 
         try:
-            # Reasoning is written LAST: the early Gemini text may claim
-            # "No database reference image (Image 3) was provided" because
-            # the photo arrived late. Strip that stale claim whenever the
-            # registry legs are now measured, label scores by their true
-            # source, and append a final deterministic summary.
-            import re as _re
-            _reason = face_match_data.get("visual_reasoning") or ""
-            _has_db_verdict = (
-                face_match_data.get("doc_vs_db_match") is not None
-                or face_match_data.get("live_vs_db_match") is not None
+            # Reasoning is written LAST from the settled verdicts — never
+            # before the late local / late cloud remediation above.
+            face_match_data["visual_reasoning"] = _build_final_face_reasoning(
+                face_match_data, pair_sources,
+                live_str=live_str,
+                live_burst_count=len(live_burst) if isinstance(live_burst, list) else 0,
+                db_photo_path=db_photo_path,
+                db_photo_late=db_photo_late,
+                citizen_id=citizen_id,
+                db_unavailable_reason=_db_photo_unavailable_reason,
+                is_simulated=is_simulated,
+                engine_error=tw_engine_error,
+                recapture_requested=recapture_requested,
+                recapture_target=recapture_target,
             )
-            if _has_db_verdict and _reason:
-                _reason = _re.sub(
-                    r"\s*\|\s*Doc vs DB local [\d.]+(, Live vs DB local [\d.]+)?",
-                    "", _reason)
-                _reason = _re.sub(
-                    r"No database reference image\s*\(Image 3\)\s*was provided\.?\s*\|?\s*",
-                    "", _reason, flags=_re.IGNORECASE)
-                _reason = _re.sub(
-                    r"No database reference image[^.]*\.\s*",
-                    "", _reason, flags=_re.IGNORECASE)
-                _reason = _reason.strip(" |")
-                face_match_data["visual_reasoning"] = _reason
-            _extra = []
-            for _key, _label in (("doc_vs_db", "Doc vs DB"), ("live_vs_db", "Live vs DB")):
-                _sim = face_match_data.get(f"{_key}_similarity")
-                if isinstance(_sim, (int, float)):
-                    _src = (pair_sources.get(_key) or "")
-                    _src_label = "local biometric" if _src.startswith("local") else "late cloud scan" if _src == "gemini_late" else "cloud scan" if _src.startswith("gemini") else _src or "unavailable"
-                    _extra.append(f"{_label} {_src_label} {float(_sim):.3f}")
-            if _extra:
-                face_match_data["visual_reasoning"] = ((face_match_data.get("visual_reasoning") or "").rstrip() + " | " + ", ".join(_extra)).strip(" |")
-            # Final summary line — always reflects the settled verdicts.
-            try:
-                def _fmt(_m, _s):
-                    if _m is True:
-                        return f"match ({float(_s):.3f})" if isinstance(_s, (int, float)) else "match"
-                    if _m is False:
-                        return f"mismatch ({float(_s):.3f})" if isinstance(_s, (int, float)) else "mismatch"
-                    return "not measured"
-                _live_txt = _fmt(face_match_data.get("live_vs_doc_match"), face_match_data.get("similarity_score"))
-                _docdb_txt = _fmt(face_match_data.get("doc_vs_db_match"), face_match_data.get("doc_vs_db_similarity"))
-                _livedb_txt = _fmt(face_match_data.get("live_vs_db_match"), face_match_data.get("live_vs_db_similarity"))
-                _late_note = " Registry record identified after the AI scan; registry legs measured late." if db_photo_late else ""
-                _final = (f"Final 3-way: live-vs-doc {_live_txt}, doc-vs-DB {_docdb_txt}, live-vs-DB {_livedb_txt}.{_late_note}").strip()
-                _cur = face_match_data.get("visual_reasoning") or ""
-                if "Final 3-way:" not in _cur:
-                    face_match_data["visual_reasoning"] = (_cur + " " + _final).strip()
-            except Exception:
-                pass
         except Exception:
             pass
         gemini_result["three_way_face_match"] = face_match_data
