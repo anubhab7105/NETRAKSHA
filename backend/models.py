@@ -53,6 +53,8 @@ class Officer(Base):
 
 
     must_change_password = Column(Boolean, nullable=False, default=False)
+    # Audit C6: Fernet-encrypted ("enc:v1:…") via encrypt_totp_secret();
+    # legacy plaintext rows are still accepted on read and upgraded on verify.
     totp_secret = Column(Text, nullable=True)
     totp_enabled = Column(Boolean, nullable=False, default=False)
     password_changed_at = Column(DateTime, nullable=True)
@@ -433,15 +435,19 @@ class AuditLog(Base):
     __tablename__ = "audit_log"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    actor = Column(String(100), nullable=False)
+    # Audit C11: free-text audit columns are Text (never String(100)) so
+    # overlong entity/session/request values cannot 500 the request.
+    # create_with_chain() still clips writer-controlled values for
+    # backward compatibility with legacy VARCHAR(100) databases.
+    actor = Column(Text, nullable=False)
     action = Column(Text, nullable=False)
     entity = Column(Text, nullable=True)
     timestamp = Column(DateTime, server_default=func.now())
     immutable = Column(Boolean, default=True)
 
     officer_id = Column(Integer, nullable=True)
-    session_id = Column(String(100), nullable=True)
-    request_id = Column(String(100), nullable=True)
+    session_id = Column(Text, nullable=True)
+    request_id = Column(Text, nullable=True)
     device_info = Column(Text, nullable=True)
     file_hashes = Column(Text, nullable=True)
     prev_hash = Column(String(64), nullable=True)
