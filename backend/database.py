@@ -4,8 +4,10 @@ local SQLite fallback for VS Code / dev runs.
 Production (``APP_ENV=production``) is still Supabase-PostgreSQL-only and
 fails fast without a usable ``DATABASE_URL``. In non-production, a missing
 or ``sqlite`` ``DATABASE_URL`` falls back to a local file
-(``LOCAL_DB_PATH`` or ``./local_dev.db``) so ``uvicorn`` works out of the
-box without Supabase credentials.
+(``LOCAL_DB_PATH`` or ``local_dev.db`` anchored at the project root) so
+``uvicorn`` works out of the box without Supabase credentials.
+Relative SQLite paths are always resolved against the project root (audit
+C10), never the caller's cwd.
 
 URL forms accepted:
   * ``postgresql+asyncpg://...`` (preferred, all envs)
@@ -17,6 +19,7 @@ URL forms accepted:
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -30,6 +33,8 @@ from sqlalchemy.ext.asyncio import (
 
 _APP_ENV = os.environ.get("APP_ENV", os.environ.get("ENVIRONMENT", "development")).lower()
 _IS_PROD = _APP_ENV == "production"
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 _RAW_URL = os.environ.get("DATABASE_URL", "").strip()
 
@@ -47,9 +52,22 @@ if not _RAW_URL or _RAW_URL.startswith("sqlite"):
     if _RAW_URL.startswith("sqlite://") and not _RAW_URL.startswith("sqlite+aiosqlite://"):
         _RAW_URL = _RAW_URL.replace("sqlite://", "sqlite+aiosqlite://", 1)
     if _RAW_URL.startswith("sqlite+aiosqlite://"):
-        DATABASE_URL = _RAW_URL
+        # Audit C10: an explicit sqlite URL may still be CWD-relative
+        # ("sqlite+aiosqlite:///./local_dev.db"). Resolve relative paths
+        # against the project root so runs from any cwd share one dev DB.
+        _prefix, _, _sq_path = _RAW_URL.partition("sqlite+aiosqlite:///")
+        if _sq_path and _sq_path != ":memory:" and not Path(_sq_path).is_absolute():
+            _abs = (_PROJECT_ROOT / _sq_path).resolve()
+            DATABASE_URL = f"sqlite+aiosqlite:///{_abs}"
+        else:
+            DATABASE_URL = _RAW_URL
     else:
-        _local_path = os.environ.get("LOCAL_DB_PATH", "./local_dev.db")
+        # Audit C10: never resolve the dev DB against the caller's cwd —
+        # LOCAL_DB_PATH (or the default) is anchored at the project root.
+        _local_raw = os.environ.get("LOCAL_DB_PATH", "local_dev.db").strip() or "local_dev.db"
+        _local_path = Path(_local_raw)
+        if not _local_path.is_absolute():
+            _local_path = (_PROJECT_ROOT / _local_path).resolve()
         DATABASE_URL = f"sqlite+aiosqlite:///{_local_path}"
         if not _RAW_URL:
             print(f"[database] DATABASE_URL not set — using local dev DB {DATABASE_URL} (set DATABASE_URL for Supabase).")
