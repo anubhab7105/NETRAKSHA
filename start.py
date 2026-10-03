@@ -7,4 +7,15 @@ import uvicorn
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8000"))
-    uvicorn.run("backend.app:app", host="0.0.0.0", port=port)
+    # Audit C12: only trust X-Forwarded-For when behind a sanitising reverse
+    # proxy (Railway/Render/Cloud Run set TRUST_PROXY=1). Otherwise the login
+    # throttle and audit IP must use the direct socket peer so clients cannot
+    # spoof IPs (see backend/auth_security.client_ip).
+    trust_proxy = os.environ.get("TRUST_PROXY", "").lower() in ("1", "true", "yes")
+    uvicorn.run(
+        "backend.app:app",
+        host="0.0.0.0",
+        port=port,
+        proxy_headers=trust_proxy,
+        forwarded_allow_ips="*" if trust_proxy else "127.0.0.1",
+    )
