@@ -61,7 +61,11 @@ from backend.auth_security import (
     active_secret,
     app_env,
     client_ip,
+    decrypt_bytes_from_storage,
+    decrypt_totp_secret,
     dummy_hash,
+    encrypt_bytes_for_storage,
+    encrypt_totp_secret,
     generate_totp_secret,
     hash_password,
     is_production,
@@ -125,7 +129,13 @@ def _utcnow_naive() -> datetime:
     """
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
-import jwt as pyjwt
+try:
+    import jwt as pyjwt
+except ImportError as _e:  # audit C1: fail closed — never fall back to unsigned tokens
+    raise RuntimeError(
+        "PyJWT is required for authentication (pip install PyJWT>=2.8.0). "
+        "Unsigned/base64 fallback tokens are forbidden."
+    ) from _e
 
 
 def _create_token(officer_id: int, username: str, role: str, unit: str = "BORDER_UNIT_1",
@@ -412,12 +422,24 @@ async def startup():
 
 
     _reg_problem = secret_error(_REGISTRY_IMPORT_SECRET, name="REGISTRY_IMPORT_SECRET")
+    # Audit C4: the registry-import key must be distinct from the session-JWT
+    # key in production — silent fallback is key reuse across trust domains.
+    if _REGISTRY_IMPORT_SECRET_FALLBACK and is_production():
+        raise RuntimeError(
+            "[startup] REGISTRY_IMPORT_SECRET must be set to a dedicated long "
+            "random value in production (distinct from JWT_SECRET). Generate one "
+            "(python -c \"import secrets; print(secrets.token_hex(32))\") and share it "
+            "with the issuing authority over a secure channel."
+        )
     if _reg_problem and is_production():
         raise RuntimeError(f"[startup] {_reg_problem} Generate one (python -c "
                            f"\"import secrets; print(secrets.token_hex(32))\") and share it "
                            f"with the issuing authority over a secure channel.")
-    elif _REGISTRY_IMPORT_SECRET_FALLBACK:
-        print("[startup] WARNING: REGISTRY_IMPORT_SECRET not set — authority imports are signed with JWT_SECRET. Set a dedicated REGISTRY_IMPORT_SECRET in .env for production.")
+    elif _reg_problem or _REGISTRY_IMPORT_SECRET_FALLBACK:
+        if _reg_problem:
+            print(f"[startup] WARNING: {_reg_problem}")
+        if _REGISTRY_IMPORT_SECRET_FALLBACK:
+            print("[startup] WARNING: REGISTRY_IMPORT_SECRET not set — authority imports are signed with JWT_SECRET. Set a dedicated REGISTRY_IMPORT_SECRET in .env for production.")
 
     try:
         from backend.seed import seed_all
@@ -785,6 +807,21 @@ async def login(req: LoginRequest, request: Request, response: Response = None):
     return body
 
 
+def _decrypt_stored_totp(stored) -> str:
+    """Decrypt Officer.totp_secret for verification (audit C6).
+
+    Returns plaintext for both new Fernet rows ("enc:v1:…") and legacy
+    plaintext rows. Corrupt Fernet payloads return "" so verification fails
+    closed instead of raising 500 on login.
+    """
+    if not stored:
+        return ""
+    try:
+        return decrypt_totp_secret(stored)
+    except Exception:
+        return ""
+
+
 def _drift_hint(secret, code) -> str:
     """Explain an MFA rejection without weakening it.
 
@@ -823,7 +860,8 @@ async def mfa_challenge(req: MfaChallengeRequest, request: Request, response: Re
     async with async_session() as session:
         result = await session.execute(select(Officer).where(Officer.id == officer_id))
         officer = result.scalar_one_or_none()
-    secret = getattr(officer, "totp_secret", None) if officer else None
+    _stored = getattr(officer, "totp_secret", None) if officer else None
+    secret = _decrypt_stored_totp(_stored)
     enabled = bool(getattr(officer, "totp_enabled", False)) if officer else False
     if not officer or not enabled or not secret or not verify_totp(secret, req.code):
         _MFA_LIMITER.register_failure(f"mfa:{officer_id}")
@@ -907,7 +945,9 @@ async def mfa_setup(request: Request):
         if bool(getattr(off, "totp_enabled", False)):
             raise HTTPException(status_code=400, detail="MFA is already enabled. Disable it first to re-enroll.")
         secret = generate_totp_secret()
-        off.totp_secret = secret
+        # Audit C6: encrypt at rest (Fernet); only the plaintext `secret` below
+        # is ever returned to the enrolling supervisor for QR provisioning.
+        off.totp_secret = encrypt_totp_secret(secret)
         off.totp_enabled = False
         await AuditLog.create_with_chain(session,
             actor=off.username,
@@ -951,10 +991,17 @@ async def mfa_verify(req: MfaVerifyRequest, request: Request):
         off = result.scalar_one_or_none()
         if not off or not getattr(off, "totp_secret", None):
             raise HTTPException(status_code=400, detail="No MFA enrollment in progress. Call POST /api/auth/mfa/setup first.")
-        if not verify_totp(off.totp_secret, req.code):
+        _plain = _decrypt_stored_totp(getattr(off, "totp_secret", None))
+        if not _plain or not verify_totp(_plain, req.code):
             _MFA_LIMITER.register_failure(f"mfa:{officer_id}")
-            raise HTTPException(status_code=401, detail=_drift_hint(off.totp_secret, req.code))
+            raise HTTPException(status_code=401, detail=_drift_hint(_plain, req.code))
         _MFA_LIMITER.register_success(f"mfa:{officer_id}")
+        # Opportunistically upgrade legacy plaintext rows to Fernet on success.
+        try:
+            if not str(getattr(off, "totp_secret", "") or "").startswith("enc:v1:"):
+                off.totp_secret = encrypt_totp_secret(_plain)
+        except Exception:
+            pass
         off.totp_enabled = True
         await AuditLog.create_with_chain(session,
             actor=off.username,
@@ -980,7 +1027,7 @@ async def mfa_disable(req: MfaDisableRequest, request: Request, response: Respon
         if not _verify_password(req.password, off.password_hash):
             raise HTTPException(status_code=401, detail="Password is incorrect.")
         if bool(getattr(off, "totp_enabled", False)) and not verify_totp(
-                getattr(off, "totp_secret", "") or "", req.code):
+                _decrypt_stored_totp(getattr(off, "totp_secret", "") or ""), req.code):
             raise HTTPException(status_code=401, detail="Invalid authenticator code.")
         off.totp_secret = None
         off.totp_enabled = False
@@ -5129,52 +5176,71 @@ async def reload_watchlist(request: Request):
 
 
 def _iris_key() -> bytes:
-    """Key for iris-template authentication (dedicated env or JWT secret)."""
+    """Legacy key for pre-encryption iris rows (raw shared secret, deprecated).
+
+    New writes use Fernet via encrypt_bytes_for_storage(purpose="iris"); this
+    helper exists only to verify legacy "sig:b64" rows during the migration
+    window. Do not use for new writes (raw key reuse across trust domains).
+    """
     key = os.environ.get("IRIS_ENCRYPTION_KEY", "").strip() or active_secret("JWT_SECRET")
     return key.encode()
 
 
 def _encrypt_template(data: bytes) -> str:
-    """Authenticate a template for at-rest storage (HMAC-SHA256 + base64).
+    """Encrypt a template for at-rest storage (Fernet AES + HMAC, audit C5).
 
-    This is authenticated *encoding*, not encryption: it detects tampering
-    but anyone with DB read access can still decode the template. Production
-    deployments handling real biometrics must replace this with AES-GCM /
-    Fernet via a KMS-backed IRIS_ENCRYPTION_KEY (see audit C4).
+    Returns "enc:v1:…" via a domain-separated derivation of IRIS_ENCRYPTION_KEY
+    (or JWT_SECRET when the dedicated key is unset). DB read access alone no
+    longer reveals the biometric — decryption needs the server-side key.
     """
-    import base64, hmac, hashlib
+    return encrypt_bytes_for_storage(bytes(data or b""), purpose="iris", env_var="IRIS_ENCRYPTION_KEY")
 
-    raw = bytes(data or b"")
-    sig = hmac.new(_iris_key(), raw, hashlib.sha256).hexdigest()
-    b64 = base64.b64encode(raw).decode()
-    return f"{sig}:{b64}"
+
+def _verify_legacy_iris_envelope(text: str) -> bytes | None:
+    """Verify a legacy "sig:b64" HMAC envelope; return raw or None."""
+    import base64 as _b64
+    import hashlib as _hl
+    import hmac as _hmac
+
+    if ":" not in text or text.startswith("enc:v1:"):
+        return None
+    sig, _, b64 = text.partition(":")
+    try:
+        raw = _b64.b64decode(b64.encode())
+    except Exception:
+        return None
+    expected = _hmac.new(_iris_key(), raw, _hl.sha256).hexdigest()
+    if _hmac.compare_digest(expected, sig):
+        return raw
+    if len(sig) == 16 and _hmac.compare_digest(expected[:16], sig):
+        return raw
+    return None
 
 
 def _decrypt_template(enc: str) -> bytes:
-    """Decode a stored template, verifying its HMAC first (fail-closed).
+    """Decrypt a stored template, verifying integrity first (fail-closed).
 
-    Accepts the current full-SHA256 format and, transitionally, the legacy
-    truncated (16-hex) format — the legacy prefix is still HMAC-verified,
-    and callers should re-enroll to the full format on next write.
+    Accepts new Fernet "enc:v1:…" rows and, transitionally, legacy HMAC
+    "sig:b64" rows (full-SHA256 and truncated 16-hex). Legacy rows verify
+    with the old raw key and should be re-enrolled to Fernet on next write.
     """
-    import base64, hmac, hashlib
 
     try:
         text = enc if isinstance(enc, str) else enc.decode()
     except Exception:
         raise HTTPException(status_code=500, detail="Stored iris template is corrupt.")
+    if text.startswith("enc:v1:"):
+        try:
+            return decrypt_bytes_from_storage(text, purpose="iris", env_var="IRIS_ENCRYPTION_KEY")
+        except ValueError:
+            raise HTTPException(status_code=500, detail="Stored iris template failed integrity check.")
+        except Exception:
+            raise HTTPException(status_code=500, detail="Stored iris template is corrupt.")
+    legacy = _verify_legacy_iris_envelope(text)
+    if legacy is not None:
+        return legacy
     if ":" not in text:
         raise HTTPException(status_code=500, detail="Stored iris template is corrupt.")
-    sig, _, b64 = text.partition(":")
-    try:
-        raw = base64.b64decode(b64.encode())
-    except Exception:
-        raise HTTPException(status_code=500, detail="Stored iris template is corrupt.")
-    expected = hmac.new(_iris_key(), raw, hashlib.sha256).hexdigest()
-    if hmac.compare_digest(expected, sig):
-        return raw
-    if len(sig) == 16 and hmac.compare_digest(expected[:16], sig):
-        return raw
     raise HTTPException(status_code=500, detail="Stored iris template failed integrity check.")
 
 

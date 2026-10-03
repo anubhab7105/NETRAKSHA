@@ -331,3 +331,118 @@ def client_ip(request) -> str:
     except Exception:
         pass
     return "unknown"
+
+
+# ---------------------------------------------------------------------------
+# At-rest encryption for secrets (audit C5/C6): TOTP + iris templates.
+# Fernet (AES-128-CBC + HMAC-SHA256) via the `cryptography` package.
+# Keys are never reused directly: the configured master secret is
+# domain-separated per purpose with SHA-256 before urlsafe-base64 encoding
+# into a 32-byte Fernet key, so JWT-signing compromise does not silently
+# extend to TOTP/iris decryption and vice versa.
+# Wire format is "enc:v1:<fernet-token>". Legacy plaintext (TOTP) and
+# legacy "sig:b64" (iris HMAC encoding) values are still *read* so existing
+# dev databases keep working, but all new writes use Fernet.
+# ---------------------------------------------------------------------------
+
+_FERNET_CACHE: dict[tuple[str, str], object] = {}
+
+
+def _derive_fernet_key(master: str, purpose: str) -> str:
+    """Derive a Fernet-compatible key from a master secret (domain-separated)."""
+    import base64 as _b64
+    import hashlib as _hl
+
+    digest = _hl.sha256(f"{purpose}:{master}".encode()).digest()
+    return _b64.urlsafe_b64encode(digest).decode()
+
+
+def fernet_for(purpose: str, env_var: str):
+    """Return a Fernet instance for (purpose, env_var), derived from env or JWT secret.
+
+    Example: fernet_for("totp", "TOTP_ENC_KEY") prefers TOTP_ENC_KEY and falls
+    back to a domain-separated derivation of JWT_SECRET (with no raw key reuse).
+    Raises RuntimeError when `cryptography` is unavailable.
+    """
+    cache_key = (purpose, env_var)
+    if cache_key in _FERNET_CACHE:
+        return _FERNET_CACHE[cache_key]
+    try:
+        from cryptography.fernet import Fernet as _Fernet
+    except Exception as exc:
+        raise RuntimeError(
+            "cryptography package required for at-rest encryption "
+            "(pip install cryptography). Refusing to store secrets in plaintext."
+        ) from exc
+    master = (os.environ.get(env_var, "") or "").strip() or active_secret("JWT_SECRET")
+    key = _derive_fernet_key(master, f"netraksha-{purpose}-v1")
+    fern = _Fernet(key.encode())
+    _FERNET_CACHE[cache_key] = fern
+    return fern
+
+
+def _is_encrypted_value(stored: str) -> bool:
+    return isinstance(stored, str) and stored.startswith("enc:v1:")
+
+
+def encrypt_str_for_storage(plain: str, *, purpose: str, env_var: str) -> str:
+    """Encrypt a short string (e.g. TOTP base32 secret) for DB storage."""
+    text = plain or ""
+    if _is_encrypted_value(text):
+        return text
+    token = fernet_for(purpose, env_var).encrypt(text.encode()).decode()
+    return f"enc:v1:{token}"
+
+
+def decrypt_str_from_storage(stored: str | None, *, purpose: str, env_var: str) -> str:
+    """Decrypt a value written by encrypt_str_for_storage.
+
+    Legacy plaintext (no "enc:v1:" prefix) is returned as-is so pre-encryption
+    rows keep verifying; corrupted Fernet payloads raise ValueError so callers
+    fail closed instead of accepting tampered secrets.
+    """
+    if not stored:
+        return ""
+    if not _is_encrypted_value(stored):
+        return stored
+    try:
+        return fernet_for(purpose, env_var).decrypt(stored[len("enc:v1:"):].encode()).decode()
+    except Exception as exc:
+        raise ValueError("Stored secret failed integrity check.") from exc
+
+
+def encrypt_bytes_for_storage(data: bytes, *, purpose: str, env_var: str) -> str:
+    """Encrypt raw bytes (e.g. iris template) for a Text column."""
+    import base64 as _b64
+
+    raw = bytes(data or b"")
+    token = fernet_for(purpose, env_var).encrypt(_b64.b64encode(raw)).decode()
+    return f"enc:v1:{token}"
+
+
+def decrypt_bytes_from_storage(stored: str | bytes | None, *, purpose: str, env_var: str) -> bytes:
+    """Decrypt a value written by encrypt_bytes_for_storage (legacy raises)."""
+    import base64 as _b64
+
+    if stored is None:
+        raise ValueError("Stored template is missing.")
+    text = stored if isinstance(stored, str) else stored.decode()
+    if not _is_encrypted_value(text):
+        raise ValueError("Legacy non-encrypted template envelope.")
+    try:
+        inner = fernet_for(purpose, env_var).decrypt(text[len("enc:v1:"):].encode())
+        return _b64.b64decode(inner)
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError("Stored template failed integrity check.") from exc
+
+
+def encrypt_totp_secret(plain: str) -> str:
+    """Encrypt a TOTP secret for Officer.totp_secret (audit C6)."""
+    return encrypt_str_for_storage(plain, purpose="totp", env_var="TOTP_ENC_KEY")
+
+
+def decrypt_totp_secret(stored: str | None) -> str:
+    """Decrypt Officer.totp_secret, accepting legacy plaintext rows."""
+    return decrypt_str_from_storage(stored, purpose="totp", env_var="TOTP_ENC_KEY")
