@@ -3811,10 +3811,13 @@ def _safe_registry_photo_path(photo_uri: str) -> Optional[Path]:
     """
     try:
         uri = (photo_uri or "").strip()
-        if not uri or "\\" in uri:
+        if not uri:
             return None
         p = Path(uri)
-        if ".." in p.parts:
+        # Check both native and slash-normalized parts so Windows-style
+        # `..\` escapes are caught on any platform. Containment is still
+        # enforced below via resolve() + allowed-roots check.
+        if ".." in p.parts or ".." in Path(uri.replace("\\", "/")).parts:
             return None
 
         raw = p if p.is_absolute() else (_PROJECT_ROOT / p)
