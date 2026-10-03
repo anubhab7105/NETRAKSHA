@@ -309,6 +309,8 @@ class IrisTemplate(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     citizen_id = Column(Integer, ForeignKey("citizens_registry.id"), nullable=False)
+    # Audit C5: Fernet-encrypted ("enc:v1:…") via _encrypt_template();
+    # legacy "sig:b64" HMAC rows are still verified on read.
     template = Column(Text, nullable=False)
     mask = Column(Text, nullable=True)
     quality = Column(Float, nullable=True)

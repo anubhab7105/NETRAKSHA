@@ -6,6 +6,7 @@ pydantic-settings>=2.0.0
 python-multipart>=0.0.6
 python-dotenv>=1.0.0
 PyJWT>=2.8.0
+cryptography>=41.0.0
 qrcode>=7.4
 # passlib 1.7.4 breaks with bcrypt>=4.1 (bcrypt.__about__ removal), so bcrypt
 # stays pinned <4.1. Do not float bcrypt without also replacing passlib
@@ -25,7 +26,9 @@ google-genai>=0.2.0
 pytest>=7.4.0
 pytest-asyncio>=0.21.0
 # Test-only: isolated :memory: fixtures in tests/test_auth_security.py.
-# The runtime is Supabase-PostgreSQL-only (no SQLite fallback in backend/).
+# Production (APP_ENV=production) is Supabase-PostgreSQL-only and fails fast
+# without DATABASE_URL; non-production falls back to a project-root-anchored
+# local SQLite file (see backend/database.py, audit C10).
 aiosqlite>=0.19.0
 asyncpg>=0.28.0
 reportlab>=4.0.0
