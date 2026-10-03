@@ -1201,10 +1201,11 @@ async def screen_document(
     request_id = request.headers.get("X-Request-ID") or _uuid.uuid4().hex
 
     user_agent = request.headers.get("User-Agent", "")[:300]
-    xff = request.headers.get("X-Forwarded-For", "")
-    x_real_ip = request.headers.get("X-Real-IP", "")
-    client_host = request.client.host if request.client else ""
-    device_info = f"UA:{user_agent} | IP:{client_host} | XFF:{xff} | XRealIP:{x_real_ip} | unit:{officer.get('unit','')}"
+    # Audit C12: never trust/log raw X-Forwarded-For — it is client-controlled
+    # unless TRUST_PROXY=1. Use the hardened client_ip() helper so audit rows
+    # cannot be poisoned past the login throttle.
+    trusted_ip = client_ip(request)
+    device_info = f"UA:{user_agent} | IP:{trusted_ip} | unit:{officer.get('unit','')}"
 
     _DOC_MAX_BYTES = 10_000_000
     _LIVE_MAX_BYTES = 5_000_000
@@ -3214,7 +3215,14 @@ async def override_case(case_id: int, req: OverrideRequest, request: Request):
                 detail="Access denied: final denial requires supervisor approval — please use 'escalate' to send to supervisor",
             )
 
-
+        # Audit C9: a Red verdict must never be cleared by a single officer —
+        # clearing a high-risk hit needs supervisor four-eyes. Officers may
+        # still escalate Red cases up; supervisors retain full authority.
+        if req.action == "clear" and (case.verdict or "").strip().lower() == "red" and role != "supervisor":
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied: Red-verdict cases can only be cleared by a supervisor — please use 'escalate'.",
+            )
 
         if case.status == "escalated" and role == "officer":
             raise HTTPException(status_code=403, detail="Access denied: escalated cases can only be decided by a supervisor")
@@ -4161,7 +4169,7 @@ async def list_citizens(
                     entity=f"citizens:q={q} reason:{reason[:80]}",
                     officer_id=int(officer.get("sub", 0)) or None,
                     request_id=request.headers.get("X-Request-ID") or "",
-                    device_info=f"UA:{request.headers.get('User-Agent','')[:100]} IP:{request.client.host if request.client else ''}",
+                    device_info=f"UA:{request.headers.get('User-Agent','')[:100]} IP:{client_ip(request)}",
                 )
                 await _sess.commit()
         except Exception:
@@ -4303,7 +4311,12 @@ async def create_citizen(
     suffix = Path(photo.filename).suffix.lower() or ".png"
     if suffix not in (".png", ".jpg", ".jpeg", ".webp"):
         raise HTTPException(status_code=400, detail="Photo must be PNG, JPG/JPEG or WEBP.")
-    photo_bytes = await photo.read()
+    # Audit C3: bounded read (5 MB cap, 413) — never load an unbounded upload.
+    photo_bytes = await photo.read(5_000_001)
+    if len(photo_bytes) > 5_000_000:
+        raise HTTPException(status_code=413, detail="Photo too large (max 5 MB).")
+    if not photo_bytes:
+        raise HTTPException(status_code=400, detail="Photo is empty.")
     photo_hash = _verify_enrollment_photo(photo_bytes, photo.filename)
     _REGISTRY_FACES_DIR.mkdir(parents=True, exist_ok=True)
     rel = Path("samples") / "faces" / "uploads" / f"pending_{uuid.uuid4().hex}{suffix}"
@@ -5266,7 +5279,7 @@ async def enroll_iris(
 
     eye_bytes = await eye_image.read(5_000_001)
     if len(eye_bytes) > 5_000_000:
-        raise HTTPException(status_code=400, detail="Eye image too large (max 5 MB)")
+        raise HTTPException(status_code=413, detail="Eye image too large (max 5 MB)")
     if not eye_bytes:
         raise HTTPException(status_code=400, detail="Eye image is empty.")
 
@@ -5354,7 +5367,7 @@ async def verify_iris(
         ref_mask = _decrypt_template(tmpl.mask) if tmpl.mask else None
     eye_bytes = await eye_image.read(5_000_001)
     if len(eye_bytes) > 5_000_000:
-        raise HTTPException(status_code=400, detail="Eye image too large")
+        raise HTTPException(status_code=413, detail="Eye image too large (max 5 MB)")
     if not eye_bytes:
         raise HTTPException(status_code=400, detail="Eye image is empty")
     import tempfile
