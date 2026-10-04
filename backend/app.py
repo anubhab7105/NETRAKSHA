@@ -37,6 +37,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -469,8 +470,24 @@ _FRONTEND_DIR = _PROJECT_ROOT / "frontend" / "dist"
 
 
 
-@app.on_event("startup")
-async def startup():
+@asynccontextmanager
+async def lifespan(app_instance):
+    """Lifespan startup (replaces deprecated @app.on_event("startup"))."""
+    await _startup_tasks()
+    yield
+
+
+app.router.lifespan_context = lifespan
+
+
+_STARTED = False
+
+
+async def _startup_tasks():
+    global _STARTED
+    if _STARTED:
+        return
+    _STARTED = True
 
 
     _jwt_problem = secret_error(_JWT_SECRET, name="JWT_SECRET")

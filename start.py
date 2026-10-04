@@ -6,7 +6,15 @@ import os
 import uvicorn
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "8000"))
+    _raw_port = os.environ.get("PORT", "8000")
+    try:
+        # Platforms sometimes pass the literal "${PORT:-8000}" (exec form, no
+        # shell expansion) — fall back to 8000 instead of crash-looping.
+        port = int(str(_raw_port).strip().strip('"').strip("'"))
+    except (TypeError, ValueError):
+        port = 8000
+    if not 1 <= port <= 65535:
+        port = 8000
     # Audit C12: only trust X-Forwarded-For when behind a sanitising reverse
     # proxy (Railway/Render/Cloud Run set TRUST_PROXY=1). Otherwise the login
     # throttle and audit IP must use the direct socket peer so clients cannot
