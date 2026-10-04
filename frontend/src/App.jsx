@@ -92,8 +92,12 @@ const ProtectedRoute = ({ children, roles }) => {
 const SecurityGate = ({ children }) => {
   const token = localStorage.getItem('token');
   if (!token) return <Navigate to="/login" replace />;
+  // Password rotation applies to every role; MFA enrollment is supervisor-only
+  // (server enforces the same: _auth only raises MFA_SETUP_REQUIRED for
+  // supervisors — officers must never be locked out by this flag).
+  const role = (localStorage.getItem('role') || '').toLowerCase();
   if (localStorage.getItem('must_change_password') === '1' ||
-      localStorage.getItem('mfa_setup_required') === '1') {
+      (role === 'supervisor' && localStorage.getItem('mfa_setup_required') === '1')) {
     return <Navigate to="/change-password" replace />;
   }
   return children;
@@ -107,9 +111,13 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/change-password" element={<ProtectedRoute><SecuritySetup /></ProtectedRoute>} />
           <Route path="/" element={<SecurityGate><ProtectedRoute><Dashboard /></ProtectedRoute></SecurityGate>} />
+          {/* RoleGate per route (server still enforces RBAC — Sidebar hide is cosmetic):
+              /scan officer+supervisor, /case/:id officer+supervisor+auditor
+              (auditors are read-only but must open reports), /audit auditor only
+              (backend GET /api/audit rejects non-auditors). */}
           <Route path="/scan" element={<SecurityGate><ProtectedRoute roles={['officer', 'supervisor']}><Scanner /></ProtectedRoute></SecurityGate>} />
-          <Route path="/case/:id" element={<SecurityGate><ProtectedRoute><CaseReport /></ProtectedRoute></SecurityGate>} />
-          <Route path="/audit" element={<SecurityGate><ProtectedRoute roles={['auditor', 'supervisor']}><AuditTrail /></ProtectedRoute></SecurityGate>} />
+          <Route path="/case/:id" element={<SecurityGate><ProtectedRoute roles={['officer', 'supervisor', 'auditor']}><CaseReport /></ProtectedRoute></SecurityGate>} />
+          <Route path="/audit" element={<SecurityGate><ProtectedRoute roles={['auditor']}><AuditTrail /></ProtectedRoute></SecurityGate>} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>

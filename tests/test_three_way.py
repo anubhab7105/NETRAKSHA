@@ -12,6 +12,8 @@ Run:  python -m pytest tests/test_three_way.py -v
 
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 
 from pipeline.face_match import (
@@ -20,15 +22,16 @@ from pipeline.face_match import (
 )
 from pipeline.risk_engine import assess_risk
 
-DOC = "samples/genuine_doc.png"
-LIVE = "samples/live/blink_burst_05.png"
-DB_SAME = "samples/faces/person_a.png"
-DB_OTHER = "samples/faces/person_b.png"
+_ROOT = pathlib.Path(__file__).resolve().parent.parent
+DOC = str(_ROOT / "samples" / "genuine_doc.png")
+LIVE = str(_ROOT / "samples" / "live" / "blink_burst_05.png")
+DB_SAME = str(_ROOT / "samples" / "faces" / "person_a.png")
+DB_OTHER = str(_ROOT / "samples" / "faces" / "person_b.png")
 
 
 needs_engine = pytest.mark.skipif(
     not buffalo_models_present(),
-    reason="buffalo_l pack not provisioned — engine legs unavailable",
+    reason="buffalo_l pack not provisioned — engine legs unavailable (run scripts/setup_vendor.sh to enable)",
 )
 
 
@@ -84,6 +87,20 @@ def test_three_way_unavailable_without_inputs():
     out = run_three_way_match(DOC, None, None)
     assert out["completeness"] in ("partial", "unavailable")
     assert out["db_pairs_unavailable_reason"] is not None
+
+
+def test_three_way_without_engine_never_red_from_sim(monkeypatch):
+    """When buffalo_l is absent the suite SKIPS engine legs above — but the
+    no-engine path itself must still be exercised: partial, never raising,
+    and never Red-forcing from simulated guesses."""
+    import pipeline.face_match as fm
+
+    if fm.buffalo_models_present():
+        pytest.skip("engine present — covered by needs_engine legs above")
+    out = run_three_way_match(DOC, LIVE, DB_SAME)
+    assert out["completeness"] in ("partial", "unavailable")
+    for pair in out["pairs"].values():
+        assert pair["status"] in ("ok", "unavailable")
 
 
 def test_three_way_dead_engine_stays_partial(monkeypatch):

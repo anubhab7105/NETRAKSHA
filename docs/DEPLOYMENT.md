@@ -44,11 +44,15 @@ python -m pytest tests/ -v
 
 | Suite | Covers | Key asserts |
 |---|---|---|
-| `tests/test_pipeline.py` | Checksums (Verhoeff/PAN/EPIC/ICAO), demographic (fuzzy/DoB), watchlist, risk engine (Green→Red escalation), Gemini offline simulation, tamper speed | Tamper **< 1.5 s** on both `genuine_doc.png` and `tampered_doc.png` |
+| `tests/test_pipeline.py` | Checksums (Verhoeff/PAN/EPIC/ICAO), demographic (fuzzy/DoB), watchlist, risk engine (Green→Red escalation + boundary floors), Gemini offline simulation, tamper speed (median-of-3, flaky-tolerant) | Tamper **< 1.5 s** median on both `genuine_doc.png` and `tampered_doc.png` |
+| `tests/test_api_contracts.py` | `/screen` idempotency matrix, RBAC override matrix, `/audit/verify` chain, HMAC import, evidence bounds + `/evidence/*` 404, masking, boundaries, document_quality/fairness/Gemini-parse/OCR-no-Tesseract | Isolated `:memory:` SQLite; heavy pipeline mocked |
 | `tests/test_auth_security.py` | Password policy, TOTP (`totp_at`/`verify_totp`/`match_window`), `RateLimiter`, `secret_error`, `is_production` | Isolated `:memory:` SQLite engines — never touches the app DB |
 | `tests/test_face_quality.py` | Capture/face quality gates | Blur/brightness/pose thresholds |
-| `tests/test_physical_forgery.py` | 6 sub-checks (layout/font/frame/moiré/QR/guilloche) | **< 5 s** end-to-end |
-| `tests/test_three_way.py` | `run_three_way_match` completeness + simulated-exclusion | Only `evidence=="local"` registry mismatches force Red |
+| `tests/test_physical_forgery.py` | 6 sub-checks (layout/font/frame/moiré/QR/guilloche) | **< 5 s** median-of-3 end-to-end |
+| `tests/test_three_way.py` | `run_three_way_match` completeness + simulated-exclusion (engine legs skip without `buffalo_l`) | Only `evidence=="local"` registry mismatches force Red |
+| `tests/test_liveness_challenge.py` | Liveness challenges + bursts | Blink `live`, static not-live |
+| `tests/test_security_zones.py` | Legacy zone ROIs | Score bounds + shape |
+| `tests/test_iris.py` | RGB prototype (experimental uncalibrated thresholds 0.28/0.32/0.36) | Prototype placeholder, not production-grade |
 
 The default `GEMINI_API_KEY=""` in `.env.example` is intentional — tests assert `is_simulated=True` and that simulated scores never force Red. CPU-only; InsightFace uses `CPUExecutionProvider`; sub-2.5 s end-to-end (sequential OCR + 3× local face + Gemini) is aspirational.
 

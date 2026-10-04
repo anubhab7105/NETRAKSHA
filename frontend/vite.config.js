@@ -1,15 +1,16 @@
 import react from '@vitejs/plugin-react'
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 
 
- 
- 
- 
- const SITE_URL = (process.env.VITE_SITE_URL || 'https://netraksha.xyz').replace(/\/+$/, '')
+
+// Single default for SITE_URL — src/config/site.js mirrors this fallback.
+// %SITE_URL% replacement intentionally applies to index.html only (Vite
+// transformIndexHtml); robots/sitemap/llms are generated from this value.
+const SITE_URL_FALLBACK = 'https://netraksha.xyz'
 
 const BUILD_DATE = new Date().toISOString().slice(0, 10)
 
-const robotsTxt = () => `# Netraksha — See. Verify. Secure.
+const robotsTxt = (siteUrl) => `# Netraksha — See. Verify. Secure.
 # Public crawl policy. All application data sits behind officer authentication.
 
 User-agent: *
@@ -22,64 +23,34 @@ Disallow: /audit
 Disallow: /login
 
 # Sitemap
-Sitemap: ${SITE_URL}/sitemap.xml
-
-# Host
-Host: ${SITE_URL.replace('https://', '')}
+Sitemap: ${siteUrl}/sitemap.xml
 `
 
-const sitemapXml = () => `<?xml version="1.0" encoding="UTF-8"?>
+const sitemapXml = (siteUrl) => `<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
         xmlns:xhtml="http://www.w3.org/1999/xhtml">
   <url>
-    <loc>${SITE_URL}/</loc>
+    <loc>${siteUrl}/</loc>
     <lastmod>${BUILD_DATE}</lastmod>
     <changefreq>daily</changefreq>
     <priority>1.0</priority>
-    <xhtml:link rel="alternate" hreflang="en-IN" href="${SITE_URL}/" />
-    <xhtml:link rel="alternate" hreflang="x-default" href="${SITE_URL}/" />
-  </url>
-  <url>
-    <loc>${SITE_URL}/scan</loc>
-    <lastmod>${BUILD_DATE}</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.8</priority>
-    <xhtml:link rel="alternate" hreflang="en-IN" href="${SITE_URL}/scan" />
-    <xhtml:link rel="alternate" hreflang="x-default" href="${SITE_URL}/scan" />
-  </url>
-  <url>
-    <loc>${SITE_URL}/audit</loc>
-    <lastmod>${BUILD_DATE}</lastmod>
-    <changefreq>weekly</changefreq>
-    <priority>0.6</priority>
-    <xhtml:link rel="alternate" hreflang="en-IN" href="${SITE_URL}/audit" />
-    <xhtml:link rel="alternate" hreflang="x-default" href="${SITE_URL}/audit" />
-  </url>
-  <url>
-    <loc>${SITE_URL}/login</loc>
-    <lastmod>${BUILD_DATE}</lastmod>
-    <changefreq>monthly</changefreq>
-    <priority>0.5</priority>
-    <xhtml:link rel="alternate" hreflang="en-IN" href="${SITE_URL}/login" />
-    <xhtml:link rel="alternate" hreflang="x-default" href="${SITE_URL}/login" />
+    <xhtml:link rel="alternate" hreflang="en-IN" href="${siteUrl}/" />
+    <xhtml:link rel="alternate" hreflang="x-default" href="${siteUrl}/" />
   </url>
 </urlset>
 `
 
-const llmsTxt = () => `# Netraksha — See. Verify. Secure.
+const llmsTxt = (siteUrl, apiBase) => `# Netraksha — See. Verify. Secure.
 # Sashastra Seema Bal, Ministry of Home Affairs (Government of India)
 
 ## Overview
 Netraksha is an AI-assisted forensic screening system for border checkpoints. It provides six-layer document forensics, 3-way biometric face matching, and liveness detection with an explainable Green/Yellow/Red risk verdict for authorized officers.
 
 ## Key Pages
-- Home / Case Dashboard: ${SITE_URL}/ — Monitor and adjudicate identity screening cases
-- Kiosk Scanner: ${SITE_URL}/scan — Capture identity document and traveler's live face for screening
-- Audit Trail: ${SITE_URL}/audit — Immutable event ledger of every automated check and officer decision
-- Login: ${SITE_URL}/login — Officer authentication portal
+- Home / Case Dashboard: ${siteUrl}/ — Monitor and adjudicate identity screening cases (authenticated)
 
 ## API Endpoints (Backend)
-Base URL: ${SITE_URL.replace('netraksha.xyz', 'api.netraksha.xyz')}/
+Base URL: ${apiBase} (same-origin /api when the SPA is served by the backend; VITE_API_BASE_URL otherwise)
 - POST /screen — Submit document and face images for screening
 - GET /cases — List recent screening cases
 - GET /cases/:id — Get detailed forensic report for a case
@@ -120,34 +91,35 @@ Base URL: ${SITE_URL.replace('netraksha.xyz', 'api.netraksha.xyz')}/
 
 
 
-function seoFiles() {
+function seoFiles(siteUrl, apiBase) {
   return {
     name: 'ssb-seo-files',
     transformIndexHtml(html) {
-      return html.replaceAll('%SITE_URL%', SITE_URL)
+      return html.replaceAll('%SITE_URL%', siteUrl)
     },
     generateBundle() {
-      this.emitFile({ type: 'asset', fileName: 'robots.txt', source: robotsTxt() })
-      this.emitFile({ type: 'asset', fileName: 'sitemap.xml', source: sitemapXml() })
-      this.emitFile({ type: 'asset', fileName: 'llms.txt', source: llmsTxt() })
+      this.emitFile({ type: 'asset', fileName: 'robots.txt', source: robotsTxt(siteUrl) })
+      this.emitFile({ type: 'asset', fileName: 'sitemap.xml', source: sitemapXml(siteUrl) })
+      this.emitFile({ type: 'asset', fileName: 'llms.txt', source: llmsTxt(siteUrl, apiBase) })
     },
   }
 }
 
 
-export default defineConfig({
-  plugins: [react(), seoFiles()],
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '')
+  const SITE_URL = (env.VITE_SITE_URL || process.env.VITE_SITE_URL || SITE_URL_FALLBACK).replace(/\/+$/, '')
+  const API_BASE = (env.VITE_API_BASE_URL || process.env.VITE_API_BASE_URL || `${SITE_URL}/api`).replace(/\/+$/, '')
+
+  return {
+  plugins: [react(), seoFiles(SITE_URL, API_BASE)],
   build: {
-    
-    
     sourcemap: false,
     cssCodeSplit: true,
     minify: true,
     chunkSizeWarningLimit: 500,
     rollupOptions: {
       output: {
-        
-        
         manualChunks(id) {
           if (id.includes('node_modules/react/') || id.includes('node_modules/react-dom/') || id.includes('node_modules/scheduler/')) {
             return 'react-vendor';
@@ -162,7 +134,6 @@ export default defineConfig({
             return 'http-client';
           }
         },
-        
         chunkFileNames: 'assets/js/[name]-[hash].js',
         entryFileNames: 'assets/js/[name]-[hash].js',
         assetFileNames: (assetInfo) => {
@@ -183,8 +154,6 @@ export default defineConfig({
     },
   },
   server: {
-    
-    
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:8000',
@@ -192,4 +161,5 @@ export default defineConfig({
       },
     },
   },
+  }
 })

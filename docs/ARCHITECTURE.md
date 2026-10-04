@@ -108,19 +108,25 @@ Helpers: `ok_result(...)` and `inconclusive_result(module, reason)` (`pipeline/c
 | 8 | **Liveness** | `pipeline/liveness.py` | MediaPipe `face_landmarker.task` (468-pt EAR, adaptive threshold) + inter-frame motion + FFT moiré + head-yaw/mouth-open; challenges `blink / head_turn / mouth_open` ; `MIN_BURST=3`, `LIVE_THRESHOLD=0.45` | 14-frame burst defeats photo/screen replay; challenge miss is `challenge_not_observed:*` not a fail when another genuine action occurred | `blink_count`, `motion_score`, `screen_artifact_score` |
 | 9 | **Iris** | `pipeline/iris.py` → `backend/biometric/iris/` | Classical Hough circles → polar unwrap (64×512) → Gabor → 512-byte template; Hamming threshold **0.32** (low-conf band 0.28–0.36) | RGB eye verification + PAD (temporal + moiré) | `quality`, `liveness`, `hamming_distance` |
 | 10 | **Watchlist** | `pipeline/watchlist.py` | `WatchlistProvider` / `MockWatchlistProvider` (5 fictional entries) or DB-backed via `load_db_watchlist_provider` | `is_hit`, `is_mocked=True` controls violet **MOCKED DATA** badge | `hits[]`, `is_mocked` |
-| — | **Quality / Fairness / Zones** | `pipeline/document_quality.py` · `pipeline/face_quality.py` · `pipeline/fairness.py` · `pipeline/security_zones.py` | Laplacian blur ≥ 50, brightness; face gates (blur/light/size/pose); in-memory fairness ledger; legacy ROIs | Gates (`recapture_requested`) + `GET /api/fairness/report` | Not standalone verdicts |
+| — | **Quality / Fairness / Zones** | `pipeline/document_quality.py` · `pipeline/face_quality.py` · `pipeline/fairness.py` · `pipeline/security_zones.py` | Laplacian blur ≥ 35.0, brightness; face gates (blur/light/size/pose); in-memory fairness ledger; legacy ROIs | Gates (`recapture_requested`) + `GET /api/fairness/report` | Not standalone verdicts |
 
-**Thresholds** — single source `pipeline/thresholds.json:1` (v1.0):
+**Thresholds** — single source `pipeline/thresholds.json:1` (v1.1):
 
 ```json
 {
   "face_match": 0.55, "face_low_conf_low": 0.45, "face_low_conf_high": 0.65,
   "tamper_high": 0.7, "tamper_moderate": 0.4,
+  "physical_high": 0.7, "physical_moderate": 0.4,
   "deepfake_high": 0.7, "liveness": 0.45,
-  "document_quality_blur": 50.0,
-  "iris_match": 0.32, "iris_low_conf_low": 0.28, "iris_low_conf_high": 0.36
+  "name_match": 0.85, "address_match": 0.60,
+  "risk_red": 0.65, "risk_yellow": 0.35,
+  "document_quality_blur": 35.0, "document_quality_dark": 35.0,
+  "iris_match": 0.32, "iris_low_conf_low": 0.28, "iris_low_conf_high": 0.36,
+  "iris_calibration": "uncalibrated-prototype"
 }
 ```
+
+Face decision band is `0.45–0.65` (low-confidence → manual review, threshold `0.55`); name `≥0.85`, address `≥0.60`; tamper/physical `≥0.4 Yellow / ≥0.7 Red`; deepfake `≥0.7 Yellow`; liveness `0.45`.
 
 Calibrated on `samples/genuine_doc.png` (tamper 0.08) vs `samples/tampered_doc.png` (0.72), face pairs 0.93–0.95. Iris band is an **uncalibrated prototype** — re-tune on held-out data before production.
 
@@ -196,10 +202,10 @@ Bias note: the face low-confidence band routes near-threshold scores to manual r
 | **Segmentation** | Classical Hough circles on eye crop (`segmenter.py`) |
 | **Normalization** | Polar unwrapping `64×512` (`normalizer.py`) |
 | **Encoding** | Single Gabor filter → binary template `64×8` → 512 bytes (`encoder.py`) |
-| **Matching** | Hamming distance, threshold `0.32` (low-conf band `0.28–0.36`) (`matcher.py`, `pipeline/thresholds.json:12`) |
+| **Matching** | Hamming distance, threshold `0.32` (low-conf band `0.28–0.36`) (`matcher.py`, `pipeline/thresholds.json:12`) — **experimental uncalibrated prototype, not production-validated** |
 | **Quality** | Blur, illumination, iris area (`quality.py`) |
 | **PAD** | Temporal movement + FFT moiré + screen replay (`liveness.py`) |
-| **Storage** | `iris_templates.template` encrypted at rest (HMAC+base64; production should use `Fernet`/`AES-GCM` with `IRIS_ENCRYPTION_KEY`); raw eye images deleted after enrollment (`unlink`) |
+| **Storage** | `iris_templates.template` encrypted at rest (Fernet `enc:v1:…` via `IRIS_ENCRYPTION_KEY`, legacy `sig:b64` HMAC rows still verified on read); raw eye images deleted after enrollment (`unlink`) |
 
 No learned weights yet. Future training data: `UBIRIS.v2`, `CASIA-Iris-Thousand` (check licenses), with heavy augmentation for phone capture.
 
@@ -210,8 +216,8 @@ No learned weights yet. Future training data: `UBIRIS.v2`, `CASIA-Iris-Thousand`
 
 Preserved honestly — do not claim these as done until implemented:
 
-- **Violet `MOCKED DATA` badge** and **Aadhaar `XXXX-XXXX-1234` masking** are spec'd but **unimplemented** (the badge currently renders as `HIT`/`CLEAR` chips + `is_mocked` notice).
-- `VITE_SITE_URL` has a triple-default (`vite.config.js` / `vercel.json` / docs) — not yet single-sourced.
+- **Violet `MOCKED DATA` badge** is partially implemented (renders as `HIT`/`CLEAR` chips + `is_mocked` notice; full violet badge still open) and **Aadhaar `XXXX-XXXX-1234` masking** is implemented server-side (`mask_document_number()` in `backend/app.py`, applied in `GET /api/cases/{id}` for `document_type==aadhaar` or Aadhaar-like field names).
+- `VITE_SITE_URL` default (`https://netraksha.xyz`) is defined once in `frontend/vite.config.js:8` (overridable via env at build time); `vercel.json` sets no `SITE_URL` (only rewrites/headers) and docs (`README`, `docs/DEPLOYMENT.md`) mirror that default — keep them in sync when the canonical domain changes.
 - `og-image` extension mismatch and `public/%SITE_URL%` placeholder are open bugs.
 - `EvidenceImage` component hardcodes `/api` instead of `api.defaults.baseURL`.
 - `handleVerify` is duplicated in two views.

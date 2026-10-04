@@ -3,6 +3,20 @@ import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, ScanLine, ScrollText, LogOut, UserRound, ShieldCheck } from 'lucide-react';
 import api from '../api';
 
+const KNOWN_SESSION_KEYS = ['token', 'role', 'username', 'must_change_password', 'mfa_setup_required'];
+
+function clearKnownSession() {
+  KNOWN_SESSION_KEYS.forEach((k) => localStorage.removeItem(k));
+}
+
+// Cosmetic RoleGate — mirrors App.jsx route guards. The server still enforces
+// RBAC on every /api/* call, so hiding a link never grants or denies access.
+function RoleGate({ roles, children }) {
+  const role = (localStorage.getItem('role') || '').toLowerCase();
+  if (Array.isArray(roles) && roles.length > 0 && !roles.includes(role)) return null;
+  return children;
+}
+
 export default function Sidebar() {
   const navigate = useNavigate();
   const role = localStorage.getItem('role') || 'officer';
@@ -11,19 +25,12 @@ export default function Sidebar() {
   const handleLogout = async () => {
     try {
       await api.post('/auth/logout');
-    } catch (e) {
-      
+    } catch {
+      // Still wipe local session even if the server call fails.
     }
-    localStorage.clear();
+    clearKnownSession();
     navigate('/login');
   };
-
-  
-  
-  
-  
-  const showScanner = role === 'officer' || role === 'supervisor';
-  const showAudit = role === 'supervisor' || role === 'auditor';
 
   const linkCls = ({ isActive }) =>
     `gov-nav-link ${isActive ? 'gov-nav-link-active' : ''}`;
@@ -55,18 +62,18 @@ export default function Sidebar() {
             <LayoutDashboard size={18} aria-hidden="true" />
             <span className="whitespace-nowrap">Overview</span>
           </NavLink>
-          {showScanner && (
+          <RoleGate roles={['officer', 'supervisor']}>
             <NavLink to="/scan" className={linkCls}>
               <ScanLine size={18} aria-hidden="true" />
               <span className="whitespace-nowrap">New Verification</span>
             </NavLink>
-          )}
-          {showAudit && (
+          </RoleGate>
+          <RoleGate roles={['auditor']}>
             <NavLink to="/audit" className={linkCls}>
               <ScrollText size={18} aria-hidden="true" />
               <span className="whitespace-nowrap">Audit Logs</span>
             </NavLink>
-          )}
+          </RoleGate>
           <p className="mt-3 hidden px-2 text-[11px] font-medium leading-relaxed text-[#98A2B3] md:block">
             Case queue, alerts and reports are reviewed from the Overview dashboard.
           </p>
@@ -86,7 +93,7 @@ export default function Sidebar() {
         <button
           onClick={handleLogout}
           aria-label="Sign out"
-          className="gov-btn gov-btn-ghost shrink-0 !px-3 md:w-full md:justify-start"
+          className="gov-btn gov-btn-ghost shrink-0 px-3! md:w-full md:justify-start"
         >
           <LogOut size={18} aria-hidden="true" />
           <span className="hidden sm:inline">Sign Out</span>

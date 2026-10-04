@@ -3,7 +3,7 @@
 ## Database Schema
 
 
-**11 tables** (`backend/models.py:1`) — Supabase PostgreSQL in production, SQLite (`aiosqlite`) only for isolated `:memory:` fixtures in `tests/test_auth_security.py`.
+**11 tables** (`backend/models.py:1`) — Supabase PostgreSQL required in production (`APP_ENV=production` fails fast without `DATABASE_URL`); SQLite (`aiosqlite`) dev fallback in non-prod (local file `local_dev.db` / `LOCAL_DB_PATH`, plus isolated `:memory:` fixtures in tests).
 
 ```
 officers  ─┬─< screening_cases ─┬─< extracted_fields

@@ -206,13 +206,9 @@ def assess_risk(
         is_low_confidence = True
         flags.append(f"FACE_LOW_CONFIDENCE:{face_similarity:.3f}")
 
-        min_verdict = _escalate(min_verdict, "Yellow")
-        risk_components.append(0.55)
-        recommendations.append(
-            f"Face similarity {face_similarity:.3f} is near the decision threshold (0.55) — low confidence. "
-            "Manual officer review required to avoid bias. Environmental factors (lighting, camera quality) "
-            "or demographic variations may have affected the score. Do not auto-clear."
-        )
+    # Hard biometric first: an explicit local mismatch forces Red even
+    # inside the low-confidence band (the band only routes *uncertain*
+    # scores to manual review — never suppresses a decisive non-match).
     if face_status == "inconclusive":
         flags.append("FACE_VERIFICATION_INCONCLUSIVE")
         min_verdict = _escalate(min_verdict, "Yellow")
@@ -220,7 +216,7 @@ def assess_risk(
         recommendations.append(
             "Face verification module was inconclusive. Manual face comparison required."
         )
-    elif face_match is False and not is_low_confidence:
+    elif face_match is False:
         flags.append("FACE_MISMATCH")
         min_verdict = _escalate(min_verdict, "Red")
         risk_components.append(0.9)
@@ -228,7 +224,15 @@ def assess_risk(
             "CRITICAL: Face on document does not match live capture. "
             "Possible impersonation or photo substitution."
         )
-    elif face_similarity is not None and not is_low_confidence:
+    elif is_low_confidence:
+        min_verdict = _escalate(min_verdict, "Yellow")
+        risk_components.append(0.55)
+        recommendations.append(
+            f"Face similarity {face_similarity:.3f} is near the decision threshold (0.55) — low confidence. "
+            "Manual officer review required to avoid bias. Environmental factors (lighting, camera quality) "
+            "or demographic variations may have affected the score. Do not auto-clear."
+        )
+    elif face_similarity is not None:
 
         face_risk = max(0.0, 1.0 - face_similarity)
         risk_components.append(face_risk)
@@ -237,9 +241,20 @@ def assess_risk(
     if gemini_face_match is not None:
         live_vs_doc = gemini_face_match.get("live_vs_doc_match")
         if live_vs_doc is False:
-            flags.append("GEMINI_FACE_LIVE_VS_DOC_MISMATCH")
-            min_verdict = _escalate(min_verdict, "Red")
-            risk_components.append(0.85)
+            if _gemini_is_simulated(gemini_face_match):
+                # Simulated cloud guesses cap at Yellow (demo safety: a
+                # random offline guess must never manufacture a Red).
+                flags.append("GEMINI_FACE_LIVE_VS_DOC_MISMATCH_SIMULATED")
+                min_verdict = _escalate(min_verdict, "Yellow")
+                risk_components.append(0.6)
+                recommendations.append(
+                    "Simulated AI reports a face mismatch (offline demo data) — "
+                    "manual officer comparison required."
+                )
+            else:
+                flags.append("GEMINI_FACE_LIVE_VS_DOC_MISMATCH")
+                min_verdict = _escalate(min_verdict, "Red")
+                risk_components.append(0.85)
 
 
     if gemini_photo_tamper is True:
@@ -468,6 +483,29 @@ def assess_risk(
 
 _VERDICT_LEVELS = {"Green": 0, "Yellow": 1, "Red": 2}
 _LEVEL_TO_VERDICT = {0: "Green", 1: "Yellow", 2: "Red"}
+
+
+def _gemini_is_simulated(gemini_face_match: Any) -> bool:
+    """True when a Gemini face block is simulated/mock (must never force Red)."""
+    try:
+        if not isinstance(gemini_face_match, dict):
+            return False
+        if gemini_face_match.get("is_simulated") is True:
+            return True
+        if gemini_face_match.get("is_mocked") is True:
+            return True
+        if gemini_face_match.get("simulated") is True:
+            return True
+        # Backend stamps simulated legs via pair_sources / evidence markers.
+        ev = str(gemini_face_match.get("evidence") or "").lower()
+        if ev in ("simulated", "mock", "offline"):
+            return True
+        src = gemini_face_match.get("source")
+        if isinstance(src, str) and src.lower() in ("simulated", "mock", "offline_simulation"):
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def _escalate(current: str, proposed: str) -> str:

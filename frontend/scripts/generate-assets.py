@@ -137,7 +137,7 @@ def glow(canvas, center, radius, color, alpha=110):
     canvas.alpha_composite(overlay)
 
 
-def generate_og_image(path):
+def generate_og_image(path, domain=None):
     w, h = 1200, 630
     img = Image.new("RGBA", (w, h), BACKGROUND + (255,))
     glow(img, (-140, -160), 330, PRIMARY)
@@ -171,14 +171,31 @@ def generate_og_image(path):
 
     d.line([(96, 568), (w - 96, 568)], fill=(51, 65, 85, 255), width=2)
     d.text((96, 586), "Ministry of Home Affairs · Sashastra Seema Bal", font=f_small, fill=MUTED)
-    domain = "sih-weld-psi.vercel.app"
+    domain = domain or resolve_domain()
     tw = d.textlength(domain, font=f_small)
     d.text((w - 96 - tw, 586), domain, font=f_small, fill=(100, 116, 139))
 
     img.convert("RGB").save(path, "PNG", optimize=True)
 
 
+def resolve_domain():
+    """Footer domain: --domain > VITE_SITE_URL host > legacy default."""
+    import re
+    raw = os.environ.get("VITE_SITE_URL", "").strip()
+    if raw:
+        host = re.sub(r'^https?://', '', raw).split('/')[0].strip()
+        if host:
+            return host
+    return "sih-weld-psi.vercel.app"
+
+
 def main():
+    import argparse
+    ap = argparse.ArgumentParser(description="Generate Netraksha brand assets.")
+    ap.add_argument("--domain", default=None,
+                    help="Domain printed on the og-image footer (default: VITE_SITE_URL host or sih-weld-psi.vercel.app).")
+    args = ap.parse_args()
+
     os.makedirs(PUBLIC, exist_ok=True)
 
     with open(os.path.join(PUBLIC, "favicon.svg"), "w", encoding="utf-8") as f:
@@ -197,7 +214,7 @@ def main():
         sizes=[(16, 16), (32, 32), (48, 48)],
     )
 
-    generate_og_image(os.path.join(PUBLIC, "og-image.png"))
+    generate_og_image(os.path.join(PUBLIC, "og-image.png"), domain=args.domain)
     print("Generated brand assets in", PUBLIC)
 
 

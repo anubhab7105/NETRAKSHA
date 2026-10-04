@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { ChevronRight, House } from 'lucide-react';
 import { SITE_URL } from '../config/site';
@@ -11,29 +11,33 @@ import { SITE_URL } from '../config/site';
 
 
 export default function Breadcrumbs({ items = [] }) {
-  const safeItems = Array.isArray(items) ? items : [];
+  const safeItems = useMemo(() => (Array.isArray(items) ? items : []), [items]);
+  const jsonLd = useMemo(
+    () =>
+      JSON.stringify({
+        '@context': 'https://schema.org',
+        '@type': 'BreadcrumbList',
+        itemListElement: safeItems.map((item, i) => ({
+          '@type': 'ListItem',
+          position: i + 1,
+          name: item.label,
+          ...(item.to ? { item: `${SITE_URL}${item.to}` } : {}),
+        })),
+      }),
+    [safeItems],
+  );
   useEffect(() => {
     const id = 'breadcrumb-jsonld';
     const existing = document.getElementById(id);
     if (existing) existing.remove();
 
-    const list = Array.isArray(items) ? items : [];
     const script = document.createElement('script');
     script.type = 'application/ld+json';
     script.id = id;
-    script.textContent = JSON.stringify({
-      '@context': 'https://schema.org',
-      '@type': 'BreadcrumbList',
-      itemListElement: list.map((item, i) => ({
-        '@type': 'ListItem',
-        position: i + 1,
-        name: item.label,
-        ...(item.to ? { item: `${SITE_URL}${item.to}` } : {}),
-      })),
-    });
+    script.textContent = jsonLd;
     document.head.appendChild(script);
     return () => script.remove();
-  }, [items]);
+  }, [jsonLd]);
 
   return (
     <nav aria-label="Breadcrumb">

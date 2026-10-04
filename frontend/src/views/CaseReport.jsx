@@ -10,6 +10,19 @@ import SEO from '../components/SEO';
 import Breadcrumbs from '../components/Breadcrumbs';
 import { CheckRow, GovNotice, StatusBadge } from '../components/ui';
 
+// Display bands for tamper/physical scores. Single source of truth is
+// pipeline/thresholds.json, served live by GET /api/thresholds (added for
+// this). Falls back to the shipped 0.4/0.7 when the endpoint is unreachable
+// (offline demo, old backend) so the UI never shows stale 0.25/0.50 bands.
+const FALLBACK_BANDS = { moderate: 0.4, high: 0.7 };
+
+function bandState(score, bands = FALLBACK_BANDS) {
+  if (score == null) return 'NA';
+  if (score >= (bands.high ?? 0.7)) return 'FAIL';
+  if (score >= (bands.moderate ?? 0.4)) return 'REVIEW';
+  return 'PASS';
+}
+
 const VERDICT_META = {
   Green: {
     tone: 'green', bar: '#16803C', icon: <CheckCircle2 size={30} aria-hidden="true" />,
@@ -173,6 +186,7 @@ export default function CaseReport() {
   const [reason, setReason] = useState('');
   const [provenance, setProvenance] = useState(null);
   const [provVerified, setProvVerified] = useState(null);
+  const [bands, setBands] = useState(FALLBACK_BANDS);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const caseLabel = `Case #${(id ?? '').toString().padStart(4, '0')}`;
 
@@ -202,13 +216,21 @@ export default function CaseReport() {
       try {
         const res = await api.get(`/cases/${id}`);
         setData(res.data);
-        
         try {
           const provRes = await api.get(`/cases/${id}/provenance`);
           setProvenance(provRes.data);
           setProvVerified(provRes.data.verified);
         } catch {
-          
+        }
+        try {
+          const thr = await api.get('/thresholds');
+          const t = thr.data || {};
+          setBands({
+            moderate: Number(t.tamper_moderate ?? t.physical_moderate ?? 0.4),
+            high: Number(t.tamper_high ?? t.physical_high ?? 0.7),
+          });
+        } catch {
+          // Offline/old backend — FALLBACK_BANDS (0.4/0.7) already set.
         }
       } catch (err) {
         if (import.meta.env.DEV) console.error(err);
@@ -316,11 +338,14 @@ export default function CaseReport() {
 
   
   const mismatchCount = (extracted_fields || []).filter((f) => f.match_status === 'mismatch').length;
+  // Bands come from GET /api/thresholds (pipeline/thresholds.json); never hardcode 0.25/0.50 here.
+  const tamperBands = bands;
+  const physicalBands = bands;
   const summaryRows = [
     {
       label: 'DOCUMENT AUTHENTICITY',
-      state: tamperModule?.status === 'inconclusive' ? 'REVIEW' : tamperModule?.score != null ? (tamperModule.score >= 0.5 ? 'FAIL' : tamperModule.score >= 0.25 ? 'REVIEW' : 'PASS') : 'NA',
-      detail: tamperModule?.status === 'inconclusive' ? 'Tamper analysis inconclusive — physical inspection advised' : undefined,
+      state: tamperModule?.status === 'inconclusive' ? 'REVIEW' : tamperModule?.score != null ? bandState(tamperModule.score, tamperBands) : 'NA',
+      detail: tamperModule?.status === 'inconclusive' ? 'Tamper analysis inconclusive — physical inspection advised' : `Band ≥${tamperBands.high} fail / ≥${tamperBands.moderate} review`,
     },
     {
       label: 'MRZ CONSISTENCY',
@@ -677,12 +702,12 @@ export default function CaseReport() {
                   <div key={name} className="rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] p-3">
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-sm font-medium text-[#172033]">{name.replace(/_/g, ' ')}</span>
-                      <span className={`font-mono text-xs font-semibold ${chk.status !== 'ok' ? 'text-[#98A2B3]' : chk.score >= 0.5 ? 'text-[#C62828]' : chk.score >= 0.25 ? 'text-[#B7791F]' : 'text-[#16803C]'}`}>
+                      <span className={`font-mono text-xs font-semibold ${chk.status !== 'ok' ? 'text-[#98A2B3]' : bandState(chk.score, physicalBands) === 'FAIL' ? 'text-[#C62828]' : bandState(chk.score, physicalBands) === 'REVIEW' ? 'text-[#B7791F]' : 'text-[#16803C]'}`}>
                         {chk.status !== 'ok' ? chk.status.replace(/_/g, ' ') : `${(chk.score * 100).toFixed(0)}%`}
                       </span>
                     </div>
                     <div className="mt-2 h-1.5 rounded-full bg-[#E4E9F1]">
-                      <div className={`h-1.5 rounded-full ${chk.status !== 'ok' ? 'bg-[#BEC6D5]' : chk.score >= 0.5 ? 'bg-[#C62828]' : chk.score >= 0.25 ? 'bg-[#B7791F]' : 'bg-[#16803C]'}`} style={{ width: `${chk.status === 'ok' ? Math.round(chk.score * 100) : 0}%` }} />
+                      <div className={`h-1.5 rounded-full ${chk.status !== 'ok' ? 'bg-[#BEC6D5]' : bandState(chk.score, physicalBands) === 'FAIL' ? 'bg-[#C62828]' : bandState(chk.score, physicalBands) === 'REVIEW' ? 'bg-[#B7791F]' : 'bg-[#16803C]'}`} style={{ width: `${chk.status === 'ok' ? Math.round(chk.score * 100) : 0}%` }} />
                     </div>
                     {(chk.details?.findings?.length > 0) && (
                       <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-[#667085]">
@@ -787,7 +812,7 @@ export default function CaseReport() {
                   </div>
                 )}
                 {livenessModule.status === 'inconclusive' && (
-                  <div className="gov-notice gov-notice-amber !p-2.5 !text-xs">
+                  <div className="gov-notice gov-notice-amber p-2.5! text-xs!">
                     {livenessModule.raw_output?.reason || 'Liveness check was inconclusive. A multi-frame burst is required for reliable detection.'}
                   </div>
                 )}
@@ -846,7 +871,7 @@ export default function CaseReport() {
       </section>
 
       {}
-      <section aria-label="Watchlist lookup" className={`gov-card-padded ${!watchlistModule?.is_mocked && watchlistModule?.raw_output?.is_hit ? 'border-l-4 !border-l-[#C62828]' : ''}`}>
+      <section aria-label="Watchlist lookup" className={`gov-card-padded ${!watchlistModule?.is_mocked && watchlistModule?.raw_output?.is_hit ? 'border-l-4 border-l-[#C62828]!' : ''}`}>
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <ShieldAlert className={!watchlistModule?.is_mocked && watchlistModule?.raw_output?.is_hit ? 'text-[#C62828]' : 'text-[#667085]'} size={20} aria-hidden="true" />
           <h2 className="gov-card-title">Watchlist Lookup</h2>
@@ -898,10 +923,10 @@ export default function CaseReport() {
         }
         if (c.status === 'escalated') {
           return (
-            <div className="gov-card-padded mt-6 border-t-4 !border-t-[#B7791F]">
+            <div className="gov-card-padded mt-6 border-t-4 border-t-[#B7791F]!">
               <div className="mb-3 flex items-center gap-2 text-[#B7791F]">
                 <AlertTriangle size={18} aria-hidden="true" />
-                <h2 className="gov-card-title !text-[#7A5410]">Escalated — Awaiting Supervisor Decision</h2>
+                <h2 className="gov-card-title text-[#7A5410]!">Escalated — Awaiting Supervisor Decision</h2>
               </div>
               <p className="mb-4 text-sm text-[#667085]">This case was escalated for supervisor review. Only a supervisor can clear or deny it.</p>
               {isAuditor ? (
@@ -926,7 +951,7 @@ export default function CaseReport() {
         }
         
         return (
-          <div className="gov-card-padded mt-6 border-t-4 !border-t-[#123B66]">
+          <div className="gov-card-padded mt-6 border-t-4 border-t-[#123B66]!">
             <h2 className="gov-card-title mb-3">Officer Adjudication <span className="text-xs font-normal text-[#98A2B3]">(v{c.version ?? 0})</span></h2>
             <div className="space-y-4">
               <label htmlFor="adjudication-reason" className="gov-label">
@@ -939,7 +964,7 @@ export default function CaseReport() {
                 {canDeny && (
                   <button onClick={() => handleAction('deny')} disabled={actionLoading} className="gov-btn gov-btn-danger flex-1 disabled:opacity-50"><X size={17} aria-hidden="true" /> Deny Entry</button>
                 )}
-                <button onClick={() => handleAction('escalate')} disabled={actionLoading || isAuditor} className="gov-btn gov-btn-secondary flex-1 !border-[#B7791F] !text-[#7A5410] hover:!bg-[#FBF3E2] disabled:opacity-50"><ShieldCheck size={17} aria-hidden="true" /> Escalate to Supervisor</button>
+                <button onClick={() => handleAction('escalate')} disabled={actionLoading || isAuditor} className="gov-btn gov-btn-secondary flex-1 border-[#B7791F]! text-[#7A5410]! hover:bg-[#FBF3E2]! disabled:opacity-50"><ShieldCheck size={17} aria-hidden="true" /> Escalate to Supervisor</button>
               </div>
               {isOfficer && (
                 <p className="rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] px-3 py-2 text-xs text-[#667085]">

@@ -115,13 +115,18 @@ def secret_error(secret: str, *, name: str = "JWT_SECRET") -> str | None:
 MIN_PASSWORD_CHARS = 10
 
 
-def validate_new_password(password: str) -> None:
+def validate_new_password(password: str, username: str = "") -> None:
     """Enforce the officer password policy. Raises ValueError with the reason."""
     pw = password or ""
     if len(pw) < MIN_PASSWORD_CHARS:
         raise ValueError(f"Password must be at least {MIN_PASSWORD_CHARS} characters.")
     if len(pw) > 256:
         raise ValueError("Password must be at most 256 characters.")
+    # bcrypt truncates at 72 bytes: longer inputs give false assurance that
+    # characters past the cutoff matter. Reject so every accepted character
+    # is actually verified.
+    if len(pw.encode("utf-8")) > 72:
+        raise ValueError("Password must be at most 72 bytes (bcrypt limit) — use a shorter passphrase.")
     classes = sum((
         any(c.islower() for c in pw),
         any(c.isupper() for c in pw),
@@ -136,6 +141,9 @@ def validate_new_password(password: str) -> None:
     for banned in ("password", "netraksha", "border", "officer", "supervisor", "qwerty", "123456"):
         if banned in lowered:
             raise ValueError("Password is too guessable — avoid common words and sequences.")
+    user = (username or "").strip().lower()
+    if len(user) >= 4 and user in lowered:
+        raise ValueError("Password must not contain your username.")
 
 
 
@@ -161,8 +169,21 @@ def dummy_hash() -> str:
     return _DUMMY_HASH_RUNTIME
 
 
+def _ensure_bcrypt_about():
+    """Compat shim: passlib 1.7.4 reads bcrypt.__about__.__version__; bcrypt>=4.1
+    removed it, which 500s every login. Patch it back when missing."""
+    try:
+        import bcrypt as _b
+        if not hasattr(_b, "__about__"):
+            import types as _t
+            _b.__about__ = _t.SimpleNamespace(__version__=getattr(_b, "__version__", "4.x"))
+    except Exception:
+        pass
+
+
 def _password_context():
     """Shared bcrypt context (built once — per-call construction is CPU DoS)."""
+    _ensure_bcrypt_about()
     from passlib.context import CryptContext
 
     return CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -268,9 +289,15 @@ class RateLimiter:
         self._lock = threading.Lock()
         self._hits: dict[str, deque] = {}
 
+    _MAX_KEYS = 10000
+
     def _prune(self, key: str, now: float) -> deque:
         dq = self._hits.get(key)
         if dq is None:
+            if len(self._hits) >= self._MAX_KEYS:
+                # LRU-ish eviction: drop oldest 10% of keys to stay bounded.
+                for _k in list(self._hits)[: self._MAX_KEYS // 10]:
+                    self._hits.pop(_k, None)
             dq = self._hits[key] = deque()
         while dq and dq[0] <= now - self.window_s:
             dq.popleft()

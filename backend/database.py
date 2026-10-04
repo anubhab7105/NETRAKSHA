@@ -87,6 +87,17 @@ else:
 
 
 
+def _safe_pool_int(primary: str, legacy: str, default: int, minimum: int, maximum: int) -> int:
+    for _name in (primary, legacy):
+        try:
+            _raw = os.environ.get(_name, "")
+            if _raw not in (None, ""):
+                return max(minimum, min(maximum, int(_raw)))
+        except (TypeError, ValueError):
+            continue
+    return default
+
+
 if IS_SQLITE:
     _engine_kwargs = {
         "echo": os.environ.get("DB_ECHO", "").lower() in ("1", "true"),
@@ -95,8 +106,8 @@ if IS_SQLITE:
 else:
     _engine_kwargs = {
         "echo": os.environ.get("DB_ECHO", "").lower() in ("1", "true"),
-        "pool_size": int(os.environ.get("DB_POOL_SIZE", os.environ.get("POOL_SIZE", "5")) or 5),
-        "max_overflow": int(os.environ.get("DB_MAX_OVERFLOW", os.environ.get("MAX_OVERFLOW", "10")) or 10),
+        "pool_size": _safe_pool_int("DB_POOL_SIZE", "POOL_SIZE", 5, 1, 50),
+        "max_overflow": _safe_pool_int("DB_MAX_OVERFLOW", "MAX_OVERFLOW", 10, 0, 100),
         "pool_pre_ping": True,
         "connect_args": {
             "statement_cache_size": 0

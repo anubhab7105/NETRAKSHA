@@ -27,9 +27,36 @@ the human officer.
 __version__ = "0.1.0"
 
 from .common import ModuleResult
-from . import ocr_mrz, tamper, deepfake, face_match, liveness
-from . import checksums, gemini_scanner, demographic, watchlist, risk_engine
-from . import physical_forgery, face_quality, document_quality, security_zones, fairness
+
+_LAZY_MODULES = {
+    "ocr_mrz",
+    "tamper",
+    "deepfake",
+    "face_match",
+    "liveness",
+    "checksums",
+    "gemini_scanner",
+    "demographic",
+    "watchlist",
+    "risk_engine",
+    "physical_forgery",
+    "face_quality",
+    "document_quality",
+    "security_zones",
+    "fairness",
+}
+
+
+def __getattr__(name: str):
+    """Lazy submodule import — avoids pulling cv2/mediapipe/onnx at package import."""
+    if name in _LAZY_MODULES:
+        import importlib
+
+        mod = importlib.import_module(f"{__name__}.{name}")
+        globals()[name] = mod
+        return mod
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "ModuleResult",
@@ -50,4 +77,3 @@ __all__ = [
     "fairness",
     "__version__",
 ]
-

@@ -93,6 +93,51 @@ _FACELANDMARKER_TASK = os.path.join(
 )
 
 
+def mediapipe_tasks_available() -> bool:
+    """True when the mediapipe>=1.0 tasks API (FaceLandmarker) is importable."""
+    try:
+        from mediapipe.tasks import python as _mp_py  # noqa: F401
+        from mediapipe.tasks.python import vision as _vision  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def mp_image(rgb_uint8: np.ndarray):
+    """Version-guarded mp.Image constructor.
+
+    Returns (mp_image, mediapipe_module) or (None, None) when the tasks API
+    or model input is unavailable — callers degrade to inconclusive instead
+    of AttributeError on `mp.Image` (removed/renamed across 0.10→1.x).
+    """
+    try:
+        import mediapipe as mp
+
+        ImageCls = getattr(mp, "Image", None)
+        FormatCls = getattr(mp, "ImageFormat", None)
+        if ImageCls is None or FormatCls is None:
+            return None, None
+        arr = np.ascontiguousarray(rgb_uint8, dtype=np.uint8)
+        return ImageCls(image_format=FormatCls.SRGB, data=arr), mp
+    except Exception:
+        return None, None
+
+
+def liveness_engine_status() -> dict:
+    """Startup probe for ops: tasks API + model file presence (never downloads)."""
+    try:
+        import mediapipe
+
+        _mp_version = getattr(mediapipe, "__version__", "unknown")
+    except Exception:
+        _mp_version = "unavailable"
+    return {
+        "tasks_api": mediapipe_tasks_available(),
+        "model_present": os.path.exists(_FACELANDMARKER_TASK),
+        "mediapipe_version": _mp_version,
+    }
+
+
 _LEFT_EYE = [33, 160, 158, 133, 153, 144]
 _RIGHT_EYE = [362, 385, 387, 263, 373, 380]
 
@@ -126,7 +171,13 @@ def _face_mesh():
 
     mediapipe >= 1.0 exposes the `tasks` API only (the legacy `mp.solutions`
     was removed), so we use FaceLandmarker with a downloaded .task model.
+    Raises FileNotFoundError (→ inconclusive) when the model is missing and
+    ImportError when the tasks API itself is unavailable.
     """
+    if not mediapipe_tasks_available():
+        raise ImportError(
+            "mediapipe tasks API (mediapipe>=1.0) is not installed"
+        )
     from mediapipe.tasks import python as mp_py
     from mediapipe.tasks.python import vision
 
@@ -211,9 +262,10 @@ def _extract_frame_features(landmarker, mp, frame: np.ndarray):
     rgb = frame[:, :, ::-1] if frame.ndim == 3 and frame.shape[2] == 3 else frame
     if rgb.dtype != np.uint8:
         rgb = np.clip(rgb, 0, 255).astype(np.uint8)
-    results = landmarker.detect(
-        mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-    )
+    mp_img, _ = mp_image(np.ascontiguousarray(rgb))
+    if mp_img is None:
+        return None
+    results = landmarker.detect(mp_img)
     if not results or not results.face_landmarks:
         return None
 

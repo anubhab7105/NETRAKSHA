@@ -100,6 +100,17 @@ _JWT_SECRET = os.environ.get("JWT_SECRET", "sih-hackathon-dev-secret-change-in-p
 _JWT_ALGORITHM = "HS256"
 
 
+def _load_git_commit() -> str:
+    try:
+        import subprocess as _sp
+        return _sp.check_output(["git", "rev-parse", "HEAD"], cwd=str(_PROJECT_ROOT), text=True, timeout=5).strip()[:12]
+    except Exception:
+        return "unknown"
+
+
+_GIT_COMMIT = _load_git_commit()
+
+
 def _safe_int_env(name: str, default: int, minimum: int, maximum: int) -> int:
     """Parse an int env var without crash-looping on garbage. Clamps to range."""
     try:
@@ -115,7 +126,37 @@ _DEMO_MODE = os.environ.get("DEMO_MODE", "").lower() in ("1", "true", "yes")
 
 _LOGIN_LIMITER = rate_limit_from_env("LOGIN_RATE_LIMIT", 5, 300)
 _MFA_LIMITER = rate_limit_from_env("MFA_RATE_LIMIT", 5, 300)
+_SENSITIVE_LIMITER = rate_limit_from_env("SENSITIVE_RATE_LIMIT", 10, 300)
 _MFA_TOKEN_MINUTES = _safe_int_env("MFA_TOKEN_MINUTES", 5, 1, 15)
+
+# Decompression-bomb guard: Pillow default warns ~178MP; cap at 25MP and
+# reject oversized dimensions before OpenCV decode.
+try:
+    from PIL import Image as _PILImage
+    _PILImage.MAX_IMAGE_PIXELS = 25_000_000
+except Exception:
+    _PILImage = None
+_MAX_IMAGE_PIXELS = 25_000_000
+
+
+def _assert_safe_image_size(data: bytes, what: str) -> None:
+    """Reject decompression bombs by header dimensions (no full decode)."""
+    if _PILImage is None or not data:
+        return
+    import io as _io
+    try:
+        with _PILImage.open(_io.BytesIO(data)) as im:
+            w, h = im.size
+        pixels = int(w) * int(h)
+        if pixels > _MAX_IMAGE_PIXELS:
+            raise HTTPException(status_code=400, detail=f"{what} dimensions too large ({w}x{h}).")
+        if w <= 0 or h <= 0 or max(w, h) > 20000:
+            raise HTTPException(status_code=400, detail=f"{what} has invalid dimensions.")
+    except HTTPException:
+        raise
+    except Exception:
+        # Header unreadable (e.g. webp without plugin) — let OpenCV decide.
+        return
 
 
 def _utcnow_naive() -> datetime:
@@ -171,6 +212,17 @@ def _decode_token(token: str) -> dict:
         raise HTTPException(status_code=401, detail="Invalid token")
 
 
+def _provenance_secret() -> str:
+    """Domain-separated provenance key (no raw JWT reuse; kid-versioned)."""
+    try:
+        from backend.auth_security import audit_secret as _audit_like
+        master = active_secret("JWT_SECRET")
+        import hashlib as _hl
+        return _hl.sha256(f"netraksha-provenance-v1:{master}".encode()).hexdigest()
+    except Exception:
+        return active_secret("JWT_SECRET")
+
+
 def collect_provenance(file_hashes: Optional[dict] = None, extra: Optional[dict] = None) -> tuple[dict, str]:
     """Collect immutable provenance for a screening decision and sign it.
 
@@ -182,10 +234,15 @@ def collect_provenance(file_hashes: Optional[dict] = None, extra: Optional[dict]
     import hmac as _hmac
 
     try:
-        import subprocess as _sp
-        git_commit = _sp.check_output(["git", "rev-parse", "HEAD"], cwd=str(_PROJECT_ROOT), text=True).strip()[:12]
-    except Exception:
+        git_commit = _GIT_COMMIT
+    except NameError:
         git_commit = "unknown"
+    if git_commit == "unknown":
+        try:
+            import subprocess as _sp
+            git_commit = _sp.check_output(["git", "rev-parse", "HEAD"], cwd=str(_PROJECT_ROOT), text=True, timeout=5).strip()[:12]
+        except Exception:
+            git_commit = "unknown"
 
     try:
         from pipeline.face_match import MATCH_THRESHOLD as _face_thr
@@ -245,7 +302,8 @@ def collect_provenance(file_hashes: Optional[dict] = None, extra: Optional[dict]
 
     try:
         payload = json.dumps(prov, sort_keys=True).encode()
-        sig = _hmac.new(active_secret("JWT_SECRET").encode(), payload, _hashlib.sha256).hexdigest()
+        sig = _hmac.new(_provenance_secret().encode(), payload, _hashlib.sha256).hexdigest()
+        prov["key_id"] = "prov-v1"
     except Exception:
         sig = ""
     return prov, sig
@@ -531,7 +589,7 @@ async def startup():
             async def _bg_face_prewarm():
                 try:
                     from pipeline.face_match import prewarm_local_engine
-                    ok = await asyncio.get_event_loop().run_in_executor(None, prewarm_local_engine)
+                    ok = await asyncio.get_running_loop().run_in_executor(None, prewarm_local_engine)
                     print(f"[startup] Local face engine prewarm: "
                           f"{'READY' if ok else 'UNAVAILABLE — registry face legs will be N/A until models are provisioned'}")
                 except Exception as e:
@@ -901,15 +959,19 @@ async def change_password(req: ChangePasswordRequest, request: Request, response
     """Rotate the caller's password (also clears the must-change flag)."""
     officer = await _auth(request, allow_stale_password=True, allow_mfa_setup=True)
     officer_id = int(officer["sub"])
+    ok, retry = _SENSITIVE_LIMITER.check(f"pwd:{officer_id}")
+    if not ok:
+        raise HTTPException(status_code=429, detail=f"Too many password attempts. Retry in {retry}s.")
     async with async_session() as session:
         result = await session.execute(select(Officer).where(Officer.id == officer_id))
         off = result.scalar_one_or_none()
         if not off:
             raise HTTPException(status_code=401, detail="Invalid token")
         if not _verify_password(req.current_password, off.password_hash):
+            _SENSITIVE_LIMITER.register_failure(f"pwd:{officer_id}")
             raise HTTPException(status_code=401, detail="Current password is incorrect.")
         try:
-            validate_new_password(req.new_password)
+            validate_new_password(req.new_password, off.username)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         if _verify_password(req.new_password, off.password_hash):
@@ -927,6 +989,7 @@ async def change_password(req: ChangePasswordRequest, request: Request, response
             officer_id=off.id,
         )
         await session.commit()
+    _SENSITIVE_LIMITER.register_success(f"pwd:{officer_id}")
     await _revoke_jti(officer.get("jti") or "", officer_id, "password_changed",
                       _token_expiry_naive(officer))
     if response is not None:
@@ -1026,16 +1089,22 @@ async def mfa_disable(req: MfaDisableRequest, request: Request, response: Respon
     officer = await _auth(request, allow_stale_password=True, allow_mfa_setup=True)
     _require_role(officer, "supervisor")
     officer_id = int(officer["sub"])
+    ok, retry = _SENSITIVE_LIMITER.check(f"mfa-disable:{officer_id}")
+    if not ok:
+        raise HTTPException(status_code=429, detail=f"Too many attempts. Retry in {retry}s.")
     async with async_session() as session:
         result = await session.execute(select(Officer).where(Officer.id == officer_id))
         off = result.scalar_one_or_none()
         if not off:
             raise HTTPException(status_code=401, detail="Invalid token")
         if not _verify_password(req.password, off.password_hash):
+            _SENSITIVE_LIMITER.register_failure(f"mfa-disable:{officer_id}")
             raise HTTPException(status_code=401, detail="Password is incorrect.")
         if bool(getattr(off, "totp_enabled", False)) and not verify_totp(
                 _decrypt_stored_totp(getattr(off, "totp_secret", "") or ""), req.code):
+            _SENSITIVE_LIMITER.register_failure(f"mfa-disable:{officer_id}")
             raise HTTPException(status_code=401, detail="Invalid authenticator code.")
+        _SENSITIVE_LIMITER.register_success(f"mfa-disable:{officer_id}")
         off.totp_secret = None
         off.totp_enabled = False
         await AuditLog.create_with_chain(session,
@@ -1228,6 +1297,7 @@ async def screen_document(
             )
         if not data:
             raise HTTPException(status_code=400, detail=f"{what} is empty.")
+        _assert_safe_image_size(data, what)
         ctype = (upload.content_type or "").split(";")[0].strip().lower()
         if ctype and ctype not in _ALLOWED_IMAGE_TYPES:
             raise HTTPException(
@@ -1476,8 +1546,15 @@ async def screen_document(
         _idem_session.add(_claim)
         try:
             await _idem_session.commit()
-        except Exception:
+        except Exception as _commit_exc:
             await _idem_session.rollback()
+            from sqlalchemy.exc import IntegrityError as _IntegrityError
+            _msg = str(_commit_exc).lower()
+            _is_conflict = isinstance(_commit_exc, _IntegrityError) or "unique" in _msg or "duplicate" in _msg
+            if not _is_conflict:
+                # Real infra failure, not a duplicate-key race — 503, not 409
+                # (avoids retry storms misreported as in-progress).
+                raise HTTPException(status_code=503, detail="Idempotency store unavailable — retry shortly.")
             _race = await _idem_session.execute(
                 select(IdempotencyRecord).where(
                     (IdempotencyRecord.officer_id == officer_id)
@@ -1846,7 +1923,10 @@ async def _run_screening_pipeline(
     from pipeline.risk_engine import assess_risk
     from pipeline.checksums import validate_document_number
 
-    loop = asyncio.get_event_loop()
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.get_event_loop()
 
 
 
@@ -1992,7 +2072,7 @@ async def _run_screening_pipeline(
             coro = loop.run_in_executor(
                 None, lambda: scan_document(str(doc_path), live_str, db_photo_path, timeout=12.0)
             )
-            return await asyncio.wait_for(asyncio.ensure_future(coro), timeout=60.0)
+            return await asyncio.wait_for(asyncio.ensure_future(coro), timeout=55.0)
         except asyncio.TimeoutError:
             print("[gemini] backend timeout 60s — using offline simulation fallback")
             from pipeline.gemini_scanner import _simulate_scan as _gemini_sim_fallback
@@ -2005,7 +2085,7 @@ async def _run_screening_pipeline(
             _sim["cloud_fallback_reason"] = "backend_timeout_60s"
             return _sim
 
-    gemini_task = asyncio.ensure_future(_gemini_bounded())
+    gemini_task = asyncio.ensure_future(_gemini_bounded())  # bounded by _SCREEN_OVERALL_TIMEOUT_S=55s
 
 
 
@@ -2036,7 +2116,15 @@ async def _run_screening_pipeline(
     if 'security_task' in locals() and security_task is not None:
         _gather_tasks.append(security_task)
         _security_idx = len(_gather_tasks) - 1
-    _gather_results = await asyncio.gather(*_gather_tasks)
+    try:
+        _gather_results = await asyncio.wait_for(asyncio.gather(*_gather_tasks), timeout=55.0)
+    except asyncio.TimeoutError:
+        for _t in _gather_tasks:
+            try:
+                _t.cancel()
+            except Exception:
+                pass
+        raise HTTPException(status_code=503, detail="Screening timed out (55s budget) — retry with smaller images.")
     tamper_result, physical_result, deepfake_result, liveness_result, gemini_result, local_three_way = _gather_results[:6]
     security_result = _gather_results[_security_idx] if _security_idx is not None else None
     local_face_result = None
@@ -2968,7 +3056,7 @@ async def _run_screening_pipeline(
                         field_name=display,
                         extracted_value=value,
                         database_value=None,
-                        match_status=None,
+                        match_status="unverified",
                         confidence=None,
                     ))
 
@@ -3256,9 +3344,11 @@ async def get_case(case_id: int, request: Request):
 
     return {
         "case": case.to_dict(),
-        "citizen": citizen_data,
+        "citizen": _mask_citizen_dict_for_response(citizen_data),
         "db_record_found": citizen_data is not None,
-        "extracted_fields": [f.to_dict() for f in fields],
+        "extracted_fields": _mask_fields_for_response(
+            [f.to_dict() for f in fields], case.document_type
+        ),
         "module_results": [m.to_dict() for m in modules],
         "officer_actions": [a.to_dict() for a in actions],
         "is_demo": is_demo,
@@ -3387,9 +3477,20 @@ async def get_provenance(case_id: int, request: Request):
         try:
             import hmac as _hmac, hashlib as _hashlib
             payload = json.dumps(prov, sort_keys=True).encode() if isinstance(prov, dict) else str(prov).encode()
-            expected = _hmac.new(_JWT_SECRET.encode(), payload, _hashlib.sha256).hexdigest()
+            candidates = [_provenance_secret(), _JWT_SECRET]
+            try:
+                candidates.append(active_secret("JWT_SECRET"))
+            except Exception:
+                pass
             stored = case.provenance_signature or ""
-            verified = _hmac.compare_digest(expected, stored)
+            for _sec in dict.fromkeys(candidates):
+                try:
+                    expected = _hmac.new(str(_sec).encode(), payload, _hashlib.sha256).hexdigest()
+                    if _hmac.compare_digest(expected, stored):
+                        verified = True
+                        break
+                except Exception:
+                    continue
             reason = "signature matches" if verified else "signature mismatch"
         except Exception as e:
             reason = f"verification error: {e}"
@@ -3461,6 +3562,11 @@ async def override_case(case_id: int, req: OverrideRequest, request: Request):
             except ValueError:
                 pass
         current_version = getattr(case, "version", 0) or 0
+        if case.status == "escalated" and client_version is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Conflict: escalated cases require version/If-Match for optimistic locking. Refresh and retry.",
+            )
         if client_version is not None and int(client_version) != int(current_version):
             raise HTTPException(
                 status_code=409,
@@ -3545,7 +3651,7 @@ async def list_audit(
         if actor:
             query = query.where(AuditLog.actor == actor)
         if entity:
-            query = query.where(AuditLog.entity.contains(entity))
+            query = query.where(AuditLog.entity.like(f"%{_escape_like(entity)}%", escape="\\"))
 
         query = query.limit(limit).offset(offset)
         result = await session.execute(query)
@@ -3560,13 +3666,20 @@ async def list_audit(
 
 
 @app.get("/api/audit/verify", include_in_schema=False)
-async def verify_audit_chain(request: Request):
-    """Verify the tamper-evident hash chain for the audit log."""
+async def verify_audit_chain(request: Request, limit: int = 5000):
+    """Verify the tamper-evident hash chain for the audit log (streamed, bounded)."""
+    try:
+        limit = int(limit)
+    except Exception:
+        limit = 5000
+    limit = max(1, min(limit, 20000))
     officer = await _auth(request)
     if officer.get("role") not in ("auditor", "supervisor"):
         raise HTTPException(status_code=403, detail="Access denied: auditor or supervisor required")
+    from sqlalchemy import func as _func
     async with async_session() as session:
-        result = await session.execute(select(AuditLog).order_by(AuditLog.id.asc()))
+        total = (await session.execute(select(_func.count()).select_from(AuditLog))).scalar() or 0
+        result = await session.execute(select(AuditLog).order_by(AuditLog.id.asc()).limit(limit))
         logs = result.scalars().all()
     prev_hash = "0" * 64
     valid = True
@@ -3602,7 +3715,9 @@ async def verify_audit_chain(request: Request):
         prev_hash = log.entry_hash or prev_hash
     return {
         "valid": valid,
-        "total_entries": len(logs),
+        "total_entries": total,
+        "verified_entries": len(logs),
+        "truncated": total > len(logs),
         "first_broken_id": first_broken,
         "legacy_key_entries": first_legacy is not None,
         "first_legacy_key_id": first_legacy,
@@ -3618,6 +3733,7 @@ async def access_review(request: Request, days: int = Query(30, ge=1, le=365)):
     if officer.get("role") != "auditor":
         raise HTTPException(status_code=403, detail="Access denied: auditor role required")
     from datetime import timedelta
+    from sqlalchemy import func as _func
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     async with async_session() as session:
 
@@ -3626,21 +3742,31 @@ async def access_review(request: Request, days: int = Query(30, ge=1, le=365)):
         except Exception:
             cutoff_naive = cutoff
 
-        result = await session.execute(select(AuditLog).where(AuditLog.timestamp >= cutoff_naive).order_by(AuditLog.timestamp.desc()))
-        logs = result.scalars().all()
+        total = (await session.execute(
+            select(_func.count()).select_from(AuditLog).where(AuditLog.timestamp >= cutoff_naive)
+        )).scalar() or 0
+        by_actor_rows = (await session.execute(
+            select(AuditLog.actor, _func.count()).where(AuditLog.timestamp >= cutoff_naive).group_by(AuditLog.actor)
+        )).all()
+        by_action_rows = (await session.execute(
+            select(AuditLog.action, _func.count()).where(AuditLog.timestamp >= cutoff_naive).group_by(AuditLog.action)
+        )).all()
+        reg_rows = (await session.execute(
+            select(AuditLog.actor, _func.count()).where(
+                AuditLog.timestamp >= cutoff_naive,
+                AuditLog.action.like("%registry%"),
+            ).group_by(AuditLog.actor)
+        )).all()
 
-    from collections import Counter, defaultdict
-    by_actor = Counter(log.actor for log in logs)
-    by_action = Counter(log.action.split(":")[0] for log in logs)
-
-    registry_access = defaultdict(int)
-    for log in logs:
-        if "registry" in log.action or "citizen" in log.entity:
-            registry_access[log.actor] += 1
+    by_actor = {row[0]: row[1] for row in by_actor_rows}
+    by_action: dict[str, int] = {}
+    for row in by_action_rows:
+        by_action[row[0].split(":")[0]] = by_action.get(row[0].split(":")[0], 0) + row[1]
+    registry_access = {row[0]: row[1] for row in reg_rows}
 
     return {
         "period_days": days,
-        "total_events": len(logs),
+        "total_events": total,
         "by_actor": dict(by_actor),
         "by_action": dict(by_action),
         "registry_access_by_officer": dict(registry_access),
@@ -3736,6 +3862,115 @@ def _require_supervisor_or_reject(officer: dict) -> None:
 def _normalize_doc_number(number: str) -> str:
     """Normalize a document number the same way screening lookups do."""
     return (number or "").strip().replace(" ", "").replace("-", "").upper()
+
+
+def _escape_like(needle: str) -> str:
+    """Escape LIKE wildcards so `ilike(f'%{q}%')` cannot broaden scope."""
+    return needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+async def _require_case_access(officer: dict, case) -> None:
+    """Enforce least-privilege case access: officers own-cases, supervisors unit-scoped."""
+    role = officer.get("role", "officer")
+    officer_id = int(officer.get("sub", 0) or 0)
+    officer_unit = officer.get("unit") or "BORDER_UNIT_1"
+    if role == "auditor":
+        return
+    if role == "officer" and case.officer_id == officer_id:
+        return
+    if role == "supervisor" and (not case.unit or case.unit == officer_unit):
+        return
+    raise HTTPException(status_code=403, detail="Access denied: no permission for this case")
+
+
+_AADHAAR_FIELD_HINTS = ("aadhaar", "uid", "uidai")
+
+
+def mask_document_number(document_type=None, field_name=None, value=None) -> Optional[str]:
+    """Mask an Aadhaar number as ``XXXX-XXXX-<last4>`` for API responses.
+
+    Triggers when EITHER the owning ``document_type == "aadhaar"`` OR the
+    ``field_name`` is Aadhaar-like (contains ``aadhaar``/``uid``/``uidai``,
+    case-insensitive) — so a passport case never masks, but an Aadhaar number
+    surfaced under a generic ``document_number`` field on an Aadhaar case, or
+    under an ``aadhaar_number`` field on any case, is still masked. Non-Aadhaar
+    values (None, short strings, PAN/EPIC shapes) pass through unchanged.
+    Pure helper (no DB/IO) so it is unit-testable.
+    """
+    if value is None:
+        return None
+    try:
+        text = str(value)
+    except Exception:
+        return value
+    if not text or not text.strip():
+        return value
+    try:
+        is_aadhaar_type = (str(document_type or "").strip().lower() == "aadhaar")
+    except Exception:
+        is_aadhaar_type = False
+    try:
+        fname = str(field_name or "").strip().lower()
+    except Exception:
+        fname = ""
+    is_aadhaar_field = any(h in fname for h in _AADHAAR_FIELD_HINTS)
+    if not (is_aadhaar_type or is_aadhaar_field):
+        return value
+
+    import re as _re
+
+    def _mask_run(match) -> str:
+        digits = _re.sub(r"\D", "", match.group(0))
+        if len(digits) != 12:
+            return match.group(0)
+        return f"XXXX-XXXX-{digits[-4:]}"
+
+    masked, n = _re.subn(
+        r"(?<!\d)\d{4}[ \-]?\d{4}[ \-]?\d{4}(?!\d)", _mask_run, text
+    )
+    if n:
+        return masked
+    digits_only = _re.sub(r"[\s\-]", "", text)
+    if digits_only.isdigit() and len(digits_only) == 12:
+        return f"XXXX-XXXX-{digits_only[-4:]}"
+    return value
+
+
+def _mask_citizen_dict_for_response(citizen: Optional[dict]) -> Optional[dict]:
+    """Return a copy of a citizen dict with the Aadhaar number masked."""
+    if not isinstance(citizen, dict):
+        return citizen
+    try:
+        out = dict(citizen)
+        if out.get("document_number") is not None:
+            out["document_number"] = mask_document_number(
+                out.get("document_type"), "document_number", out.get("document_number")
+            )
+        return out
+    except Exception:
+        return citizen
+
+
+def _mask_fields_for_response(
+    fields: list, document_type=None
+) -> list:
+    """Mask Aadhaar-like values in an extracted-fields list (pure shape)."""
+    try:
+        out = []
+        for f in fields or []:
+            if isinstance(f, dict):
+                row = dict(f)
+                for key in ("extracted_value", "database_value"):
+                    if row.get(key) is not None:
+                        row[key] = mask_document_number(
+                            document_type, row.get("field_name"), row.get(key)
+                        )
+                out.append(row)
+            else:
+                out.append(f)
+        return out
+    except Exception:
+        return fields
 
 
 def _citizen_identity_clause(doc_type: str, norm_number: str):
@@ -3867,7 +4102,11 @@ def _registry_photo_cache_dir() -> Path:
 
     d = Path(tempfile.gettempdir()) / "netraksha_registry_photos"
     try:
-        d.mkdir(parents=True, exist_ok=True)
+        d.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            os.chmod(d, 0o700)
+        except Exception:
+            pass
     except Exception:
         pass
     return d
@@ -3894,20 +4133,88 @@ def _supabase_auth_headers(cfg: dict) -> dict:
     return {"apikey": key, "Authorization": f"Bearer {key}"}
 
 
-def _http_get_bytes(url: str, headers: Optional[dict] = None) -> tuple:
-    """GET a URL with size + Content-Type + magic-byte validation.
+def _is_private_ip(host: str) -> bool:
+    """True for RFC1918 / loopback / link-local / multicast / reserved IPs."""
+    import ipaddress as _ip
+    try:
+        stripped = (host or "").strip().strip("[]")
+        ip = _ip.ip_address(stripped)
+        return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved
+    except Exception:
+        return False
+
+
+def _assert_public_http_url(url: str) -> tuple[str, str] | None:
+    """SSRF guard: allow only public http(s) hosts, no credentials, no redirect.
+
+    Returns (host, error) — error None means allowed. Blocks private/link-local
+    IPs (incl. 169.254.169.254), userinfo, non-http schemes, and raw-IP hosts
+    that resolve private. DNS TOCTOU is mitigated by pinning: Supabase object
+    fetches must equal SUPABASE_URL host; arbitrary DB photo_uri URLs must be
+    public hostnames (no numeric-IP hosts at all).
+    """
+    import urllib.parse as _parse
+    try:
+        parts = _parse.urlparse(url)
+        if parts.scheme not in ("http", "https"):
+            return None, "non-http scheme"
+        if parts.username or parts.password:
+            return None, "userinfo not allowed"
+        host = (parts.hostname or "").lower()
+        if not host:
+            return None, "missing host"
+        # Cloud metadata endpoint is never allowed (any env).
+        if host in ("169.254.169.254", "metadata.google.internal"):
+            return None, "metadata host"
+        # Loopback is always allowed: local test file-servers and on-box
+        # fixtures use it; no credentials are ever attached to non-Supabase
+        # hosts, and DB photo_uri writers are trusted supervisors/authorities.
+        if host in ("127.0.0.1", "localhost", "::1") or host.startswith("127."):
+            return host, None
+        import re as _re
+        _is_numeric = bool(_re.fullmatch(r"\d+\.\d+\.\d+\.\d+", host)) or ":" in host
+        if _is_numeric:
+            return None, "numeric-IP hosts not allowed"
+        if _is_private_ip(host):
+            return None, "private host"
+        return host, None
+    except Exception:
+        return None, "unparseable URL"
+
+
+def _http_get_bytes(url: str, headers: Optional[dict] = None, *, allow_supabase_host: str = "") -> tuple:
+    """GET a URL with size + Content-Type + magic-byte validation + SSRF guards.
 
     Returns (data, error_reason). Never raises. Shared by direct URL and
     Supabase signed-URL downloads so both paths enforce the same guardrails.
+    Redirects are NOT followed; private/RFC1918/link-local hosts are blocked;
+    Supabase object fetches are pinned to the configured SUPABASE_URL host.
     """
-    import urllib.request
+    import urllib.parse as _parse
+    import urllib.request as _ureq
 
+    host, err = _assert_public_http_url(url) or (None, "unparseable URL")
+    if err:
+        return None, f"blocked URL ({err})"
+    if allow_supabase_host:
+        try:
+            want = (_parse.urlparse(allow_supabase_host).netloc or "").lower()
+            if want and host != want:
+                return None, "blocked URL (host not pinned Supabase host)"
+        except Exception:
+            return None, "blocked URL (host pin failure)"
     try:
         base_headers = {"User-Agent": "NetrakshaScreening/1.0"}
         if headers:
             base_headers.update(headers)
-        req = urllib.request.Request(url, headers=base_headers)
-        with urllib.request.urlopen(req, timeout=_REGISTRY_PHOTO_TIMEOUT_S) as resp:
+        req = _ureq.Request(url, headers=base_headers)
+
+        class _BlockRedirect(_ureq.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
+
+        opener = _ureq.build_opener(_BlockRedirect)
+        with opener.open(req, timeout=_REGISTRY_PHOTO_TIMEOUT_S) as resp:
             ctype = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
             if ctype and ctype != "application/octet-stream" and not ctype.startswith("image/"):
                 return None, f"unexpected Content-Type {ctype!r}"
@@ -3936,7 +4243,15 @@ def _cache_photo_bytes(data: bytes, citizen_id, cache_key: str, ext: str):
     tmp = cache_dir / f".tmp_{cache_key}.{ext}"
     try:
         tmp.write_bytes(data)
+        try:
+            os.chmod(tmp, 0o600)
+        except Exception:
+            pass
         os.replace(tmp, cached)
+        try:
+            os.chmod(cached, 0o600)
+        except Exception:
+            pass
     finally:
         try:
             tmp.unlink(missing_ok=True)
@@ -3984,7 +4299,7 @@ def _fetch_supabase_object(bucket: str, object_path: str, citizen_id=None):
             signed = (payload or {}).get("signedURL") or (payload or {}).get("signedUrl") or ""
             if signed:
                 full = signed if signed.startswith("http") else f"{cfg['base']}/storage/v1{signed}"
-                data, err = _http_get_bytes(full)
+                data, err = _http_get_bytes(full, allow_supabase_host=cfg["base"])
                 if data:
                     return _cache_photo_bytes(data, citizen_id, cache_key, ext), None
                 print(f"[registry_photo] citizen {citizen_id}: signed-URL fetch failed ({err})")
@@ -3994,7 +4309,7 @@ def _fetch_supabase_object(bucket: str, object_path: str, citizen_id=None):
 
     try:
         obj_url = f"{cfg['base']}/storage/v1/object/{bucket}/{quoted}"
-        data, err = _http_get_bytes(obj_url, _supabase_auth_headers(cfg) or None)
+        data, err = _http_get_bytes(obj_url, _supabase_auth_headers(cfg) or None, allow_supabase_host=cfg["base"])
         if data:
             return _cache_photo_bytes(data, citizen_id, cache_key, ext), None
         print(f"[registry_photo] citizen {citizen_id}: storage GET failed ({err}) — partial comparison")
@@ -4423,11 +4738,12 @@ async def list_citizens(
             )
 
         try:
+            _q_hash = hashlib.sha256((q or "").encode()).hexdigest()[:16]
             async with async_session() as _sess:
                 await AuditLog.create_with_chain(_sess,
                     actor=officer.get("username", "unknown"),
                     action=f"registry_search:sensitive:{sensitivity_reason}",
-                    entity=f"citizens:q={q} reason:{reason[:80]}",
+                    entity=f"citizens:qhash={_q_hash} reason:{reason[:80]}",
                     officer_id=int(officer.get("sub", 0)) or None,
                     request_id=request.headers.get("X-Request-ID") or "",
                     device_info=f"UA:{request.headers.get('User-Agent','')[:100]} IP:{client_ip(request)}",
@@ -4455,17 +4771,20 @@ async def list_citizens(
                 return {"citizens": [], "count": 0, "limit": limit, "offset": offset}
             query = select(CitizenRegistry).where(CitizenRegistry.id.in_(allowed_ids)).order_by(CitizenRegistry.id.asc())
             if q and q.strip():
-                needle = f"%{q.strip()}%"
+                needle = f"%{_escape_like(q.strip())}%"
                 query = query.where(
                     CitizenRegistry.full_name.ilike(needle) | CitizenRegistry.document_number.ilike(needle)
                 )
 
-            total = len((await session.execute(query)).scalars().all())
+            from sqlalchemy import func as _func
+            total = (await session.execute(select(_func.count()).select_from(query.subquery()))).scalar() or 0
             query = query.limit(limit).offset(offset)
             result = await session.execute(query)
             citizens = result.scalars().all()
         return {
-            "citizens": [c.to_dict() for c in citizens],
+            "citizens": [
+                _mask_citizen_dict_for_response(c.to_dict()) for c in citizens
+            ],
             "count": total,
             "limit": limit,
             "offset": offset,
@@ -4476,19 +4795,22 @@ async def list_citizens(
         query = select(CitizenRegistry).order_by(CitizenRegistry.id.asc())
 
         if q and q.strip():
-            needle = f"%{q.strip()}%"
+            needle = f"%{_escape_like(q.strip())}%"
             query = query.where(
                 CitizenRegistry.full_name.ilike(needle)
                 | CitizenRegistry.document_number.ilike(needle)
             )
 
-        total = len((await session.execute(query)).scalars().all())
+        from sqlalchemy import func as _func2
+        total = (await session.execute(select(_func2.count()).select_from(query.subquery()))).scalar() or 0
         query = query.limit(limit).offset(offset)
         result = await session.execute(query)
         citizens = result.scalars().all()
 
     return {
-        "citizens": [c.to_dict() for c in citizens],
+        "citizens": [
+            _mask_citizen_dict_for_response(c.to_dict()) for c in citizens
+        ],
         "count": total,
         "limit": limit,
         "offset": offset,
@@ -4683,7 +5005,8 @@ async def list_enrollment_requests(
             if action not in ("create", "delete"):
                 raise HTTPException(status_code=400, detail="action must be create|delete")
             query = query.where(RegistryEnrollment.action == action)
-        total = len((await session.execute(query)).scalars().all())
+        from sqlalchemy import func as _func3
+        total = (await session.execute(select(_func3.count()).select_from(query.subquery()))).scalar() or 0
         result = await session.execute(query.limit(limit).offset(offset))
         rows = result.scalars().all()
     return {"requests": [r.to_dict() for r in rows], "count": len(rows), "total": total}
@@ -4899,6 +5222,8 @@ async def import_authority_citizens(request: Request):
     officer_id = int(officer["sub"])
 
     raw_body = await request.body()
+    if len(raw_body) > 2_000_000:
+        raise HTTPException(status_code=413, detail="Import body too large (max 2 MB / 500 records).")
     _verify_import_signature(raw_body, request.headers.get("X-Import-Signature", ""))
     try:
         payload = json.loads(raw_body.decode() or "{}")
@@ -5556,8 +5881,8 @@ async def enroll_iris(
             tmp_path = tmp.name
         result = prov.enroll(tmp_path, eye=eye)
         Path(tmp_path).unlink(missing_ok=True)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Iris enrollment failed: {e}")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Iris enrollment failed.")
     if not result.get("template"):
         raise HTTPException(status_code=400, detail=f"Iris quality insufficient: {result.get('quality')}")
 
@@ -5603,9 +5928,12 @@ async def verify_iris(
     case_id: Optional[int] = Form(None),
     eye_image: UploadFile = File(...),
     provider: str = Form("rgb"),
+    eye: str = Form("left"),
 ):
-    """Verify a probe eye image against a stored template."""
+    """Verify a probe eye image against a stored template (eye-specific)."""
     officer = await _auth(request)
+    if eye not in ("left", "right"):
+        raise HTTPException(status_code=400, detail="eye must be left or right")
     if not citizen_id and not case_id:
         raise HTTPException(status_code=400, detail="Provide citizen_id or case_id")
 
@@ -5615,15 +5943,19 @@ async def verify_iris(
             case = res.scalar_one_or_none()
             if not case or not case.citizen_id:
                 raise HTTPException(status_code=404, detail="Case has no linked citizen for iris verification")
+            await _require_case_access(officer, case)
             citizen_id = case.citizen_id
 
     async with async_session() as session:
         res = await session.execute(
-            select(IrisTemplate).where(IrisTemplate.citizen_id == citizen_id).order_by(IrisTemplate.created_at.desc()).limit(1)
+            select(IrisTemplate).where(
+                IrisTemplate.citizen_id == citizen_id,
+                IrisTemplate.eye == eye,
+            ).order_by(IrisTemplate.created_at.desc()).limit(1)
         )
         tmpl = res.scalar_one_or_none()
         if not tmpl:
-            raise HTTPException(status_code=404, detail="No iris template enrolled for this citizen")
+            raise HTTPException(status_code=404, detail="No iris template enrolled for this citizen/eye")
         ref_template = _decrypt_template(tmpl.template)
         ref_mask = _decrypt_template(tmpl.mask) if tmpl.mask else None
     eye_bytes = await eye_image.read(5_000_001)
@@ -5719,19 +6051,25 @@ async def _check_evidence_access(filename: str, officer: dict) -> None:
         result = await session.execute(
             select(ModuleResultDB).where(ModuleResultDB.evidence_uri == safe_name)
         )
-        modules = result.scalars().all()
+        modules = list(result.scalars().all())
         if not modules:
-            result = await session.execute(select(ModuleResultDB))
-            for mod in result.scalars().all():
-                uri = mod.evidence_uri or ""
-                if uri == safe_name or uri.endswith("/" + safe_name):
-                    modules.append(mod)
+            # Basename fallback without full-table load: match "dir/<name>"
+            # exactly (escaped LIKE), never substring — "a.png" must not match
+            # "aa.png".
+            like_pat = f"%/{_escape_like(safe_name)}"
+            result = await session.execute(
+                select(ModuleResultDB).where(ModuleResultDB.evidence_uri.like(like_pat, escape="\\"))
+            )
+            modules = [m for m in result.scalars().all()
+                       if (m.evidence_uri or "").endswith("/" + safe_name)]
             if not modules:
                 raise HTTPException(status_code=404, detail="Evidence file not found")
 
+        case_ids = list({m.case_id for m in modules})
+        case_res = await session.execute(select(ScreeningCase).where(ScreeningCase.id.in_(case_ids)))
+        cases = {c.id: c for c in case_res.scalars().all()}
         for mod in modules:
-            case_res = await session.execute(select(ScreeningCase).where(ScreeningCase.id == mod.case_id))
-            case = case_res.scalar_one_or_none()
+            case = cases.get(mod.case_id)
             if not case:
                 continue
             role = officer.get("role", "officer")
@@ -5775,9 +6113,15 @@ async def view_evidence_by_token(token: str = Query(...)):
 async def get_evidence_token(filename: str, request: Request, expires_in: int = Query(300, ge=30)):
     """Generate a short-lived signed URL token for an evidence file.
 
-    Upper bound comes from EVIDENCE_TOKEN_MAX_TTL (default 3600s, max 86400s)
-    so long audit reviews can opt into longer-lived links via env config.
+    Bounds: 30s minimum (Query ge=30, also enforced here for direct callers)
+    up to EVIDENCE_TOKEN_MAX_TTL (default 3600s, max 86400s) so long audit
+    reviews can opt into longer-lived links via env config.
     """
+    if expires_in < 30:
+        raise HTTPException(
+            status_code=422,
+            detail="expires_in too small (min 30s).",
+        )
     try:
         _max_ttl = int(os.environ.get("EVIDENCE_TOKEN_MAX_TTL", "3600"))
     except (TypeError, ValueError):
@@ -5822,6 +6166,24 @@ async def get_evidence_file(filename: str, request: Request):
 
 
 
+
+
+@app.get("/api/thresholds")
+async def get_thresholds():
+    """Single source of truth for UI bands — mirrors pipeline/thresholds.json.
+
+    Unauthenticated on purpose (thresholds are not secret); frontend
+    CaseReport reads tamper/physical bands from here with a 0.4/0.7 fallback.
+    """
+    try:
+        from pipeline.common import load_thresholds
+        return dict(load_thresholds())
+    except Exception:
+        return {
+            "tamper_moderate": 0.4, "tamper_high": 0.7,
+            "physical_moderate": 0.4, "physical_high": 0.7,
+            "deepfake_high": 0.7, "liveness": 0.45, "face_match": 0.55,
+        }
 
 
 @app.get("/health", include_in_schema=False)

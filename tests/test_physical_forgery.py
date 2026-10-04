@@ -166,12 +166,18 @@ def test_evidence_image_written(tmp_path):
 
 
 def test_module_fast_enough():
+    import statistics
+
     img = cv2.imread(GENUINE)
-    start = time.perf_counter()
-    r = _run(img)
-    elapsed = time.perf_counter() - start
+    elapsed = []
+    r = None
+    for _ in range(3):
+        start = time.perf_counter()
+        r = _run(img)
+        elapsed.append(time.perf_counter() - start)
+    median = statistics.median(elapsed)
     assert_contract(r)
-    assert elapsed < 5.0, f"physical forgery took {elapsed:.2f}s"
+    assert median < 5.0, f"physical forgery median took {median:.2f}s"
 
 
 

@@ -475,10 +475,33 @@ def _validate_icao_blocks(fields: dict, mrz, lines=None) -> dict:
             "computed": computed,
         }
 
+    # Canonical path: parse the raw MRZ lines per ICAO 9303 (TD3 line2
+    # layout). PassportEye's parsed `number` already strips '<' fillers,
+    # which corrupts the check-digit input — the raw 9-char block (with
+    # '<' → 0, padded via ljust) is authoritative. Composite is
+    # line2[0:10]+line2[13:20]+line2[21:43] vs line2[43]; without two full
+    # raw lines it is unverifiable (never guessed).
+    raw_lines = [str(line).strip() for line in (lines or []) if str(line).strip()]
+    if len(raw_lines) >= 2 and all(len(line) >= 40 for line in raw_lines[:2]):
+        try:
+            from pipeline.checksums import validate_icao_9303 as _validate_9303
+
+            canonical = _validate_9303([line for line in raw_lines[:2]])
+            for _k in ("document_number", "date_of_birth", "date_of_expiry", "composite"):
+                if _k in canonical and isinstance(canonical[_k], dict) and "ok" in canonical[_k]:
+                    result[_k] = canonical[_k]
+            # Drop PassportEye-derived fallbacks once the canonical parse
+            # covers a block, so stripped-filler values can never shadow it.
+            return result
+        except Exception:
+            pass
 
     dnum = fields.get("document_number")
-    if dnum:
-        _add("document_number", dnum.replace("<", ""), _given("check_number"))
+    if dnum and "document_number" not in result:
+        # Preserve ICAO filler semantics: exactly 9 chars, '<'-padded,
+        # never stripped (stripping changes the weighted sum).
+        block = str(dnum).upper().ljust(9, "<")[:9]
+        _add("document_number", block, _given("check_number"))
 
 
     dob = fields.get("date_of_birth")

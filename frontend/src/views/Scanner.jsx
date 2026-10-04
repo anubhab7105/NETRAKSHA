@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Camera, Loader2, ScanLine, RefreshCw, X, Video, Image as ImageIcon, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import api, { apiErrorMessage } from '../api';
@@ -6,7 +6,7 @@ import SEO from '../components/SEO';
 import Breadcrumbs from '../components/Breadcrumbs';
 import { PageHeader, WorkflowSteps, GovNotice } from '../components/ui';
 
-function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear, onAllowBurst, stepNo }) {
+function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear, stepNo }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const retakeTimerRef = useRef(null);
@@ -96,60 +96,29 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
       setError('Camera preview is not ready yet. Try again.');
       return;
     }
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext('2d');
-
-    
-    
-    
-    if (onAllowBurst && subject === 'face') {
-      setBursting(true);
-      setError(null);
-      try {
-        
-        await new Promise((r) => setTimeout(r, 650));
-        const totalFrames = 14; 
-        const frames = [];
-        for (let i = 0; i < totalFrames; i++) {
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          frames.push(
-            new Promise((resolve) =>
-              canvas.toBlob((blob) => resolve(blob), 'image/png')
-            )
-          );
-          await new Promise((r) => setTimeout(r, 150));
-        }
-        const blobs = await Promise.all(frames);
-        const captured = new File(blobs, `${subject}_burst.zip`, {
-          type: 'application/zip',
-        });
-        captured.burst = blobs; 
-        setBursting(false);
-        onCapture(captured);
-        stopStream();
-      } catch {
-        setBursting(false);
-        setError('Capture interrupted. Please try again.');
-      }
-      return;
-    }
-
-    
-    
     const vw = video.videoWidth || 1280;
     const vh = video.videoHeight || 720;
     const scale = Math.min(1, 1280 / Math.max(vw, vh));
-    canvas.width = Math.max(2, Math.round(vw * scale));
-    canvas.height = Math.max(2, Math.round(vh * scale));
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    canvas.toBlob((blob) => {
-      if (!blob) return;
-      const captured = new File([blob], `${subject === 'document' ? 'document_capture' : 'live_capture'}.jpg`, { type: 'image/jpeg' });
-      onCapture(captured);
-      stopStream();
-    }, 'image/jpeg', 0.85);
+    const w = Math.max(2, Math.round(vw * scale));
+    const h = Math.max(2, Math.round(vh * scale));
+    // Sequential capture on a dedicated canvas per shot: awaiting each
+    // toBlob BEFORE the next drawImage avoids the classic race where N
+    // pending toBlob promises all resolve with the LAST drawn frame.
+    const snap = () => new Promise((resolve) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext('2d').drawImage(video, 0, 0, w, h);
+      canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.85);
+    });
+    const blob = await snap();
+    if (!blob) {
+      setError('Capture failed. Please try again.');
+      return;
+    }
+    const captured = new File([blob], `${subject === 'document' ? 'document_capture' : 'live_capture'}.jpg`, { type: 'image/jpeg' });
+    onCapture(captured);
+    stopStream();
   };
 
   return (
@@ -177,7 +146,7 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
               <button
                 type="button"
                 onClick={() => { stopStream(); onClear(); }}
-                className="gov-btn gov-btn-secondary !min-h-[36px] !px-3 !py-2 !text-[13px]"
+                className="gov-btn gov-btn-secondary min-h-[36px]! px-3! py-2! text-[13px]!"
               >
                 <X size={14} aria-hidden="true" />
                 Clear
@@ -185,7 +154,7 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
               <button
                 type="button"
                 onClick={handleRetake}
-                className="gov-btn gov-btn-secondary !min-h-[36px] !px-3 !py-2 !text-[13px]"
+                className="gov-btn gov-btn-secondary min-h-[36px]! px-3! py-2! text-[13px]!"
               >
                 <RefreshCw size={14} aria-hidden="true" />
                 Retake
@@ -216,7 +185,7 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
               <button
                 type="button"
                 onClick={stopStream}
-                className="gov-btn gov-btn-secondary !min-h-[36px] !px-3 !py-2 !text-[13px]"
+                className="gov-btn gov-btn-secondary min-h-[36px]! px-3! py-2! text-[13px]!"
               >
                 <X size={14} aria-hidden="true" />
                 Cancel
@@ -225,7 +194,7 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
                 type="button"
                 onClick={capturePhoto}
                 disabled={!videoReady || bursting}
-                className="gov-btn gov-btn-primary !min-h-[36px] !px-4 !py-2 !text-[13px]"
+                className="gov-btn gov-btn-primary min-h-[36px]! px-4! py-2! text-[13px]!"
               >
                 {bursting ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Camera size={14} aria-hidden="true" />}
                 {bursting ? 'Capturing…' : 'Capture Photo'}
@@ -270,6 +239,7 @@ export default function Scanner() {
   
   
   
+  const IDEMPOTENCY_STORE_KEY = 'scan:idempotency-key';
   const newIdempotencyKey = () => {
     if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
     if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
@@ -281,13 +251,27 @@ export default function Scanner() {
     }
     return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}-${Math.random().toString(36).slice(2, 10)}`;
   };
-  const [idempotencyKey, setIdempotencyKey] = useState(() => newIdempotencyKey());
+  // Per-intent UUID persisted in sessionStorage so a reload mid-intent reuses
+  // the same key (safe retry) instead of minting a duplicate screening.
+  const [idempotencyKey, setIdempotencyKey] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem(IDEMPOTENCY_STORE_KEY);
+      if (saved) return saved;
+    } catch { /* private mode — fall through */ }
+    const fresh = newIdempotencyKey();
+    try { sessionStorage.setItem(IDEMPOTENCY_STORE_KEY, fresh); } catch { /* ignore */ }
+    return fresh;
+  });
+  const rotateIdempotencyKey = useCallback(() => {
+    const fresh = newIdempotencyKey();
+    try { sessionStorage.setItem(IDEMPOTENCY_STORE_KEY, fresh); } catch { /* ignore */ }
+    setIdempotencyKey(fresh);
+  }, []);
 
-  
-  
+
   useEffect(() => {
-    setIdempotencyKey(newIdempotencyKey());
-    
+    rotateIdempotencyKey();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docFile, personCapture]);
 
   const handleScan = async () => {
@@ -363,9 +347,8 @@ export default function Scanner() {
         },
         signal: controller.signal,
       });
-      
-      
-      setIdempotencyKey(newIdempotencyKey());
+      // Intent complete — mint the next key so a re-scan never replays this case.
+      rotateIdempotencyKey();
       navigate(`/case/${res.data.case_id}`);
     } catch (err) {
       if (err?.code === 'ERR_CANCELED') {
@@ -390,9 +373,8 @@ export default function Scanner() {
         return;
       }
       if (status === 422 && /idempo/i.test(String(detail || ''))) {
-        
-        
-        setIdempotencyKey(newIdempotencyKey());
+        // Key rejected — rotate so the retry cannot replay the bad key.
+        rotateIdempotencyKey();
         setError(
           detail
             ? `Screening failed (HTTP 422): ${detail} A fresh idempotency key was generated — please retry.`

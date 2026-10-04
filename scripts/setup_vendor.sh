@@ -11,13 +11,23 @@
 #     specific.
 #
 # Safe to run repeatedly.
+#
+# Windows: this is a bash script — run it under WSL (`wsl bash
+#   scripts/setup_vendor.sh`) or Git Bash. There is no .ps1 equivalent on
+#   purpose (model download + sha256sum are POSIX); native PowerShell users
+#   should use WSL. Requires `python3` with the repo importable — the script
+#   exports PYTHONPATH=$PROJECT_ROOT so `python3 -c "import pipeline…"`
+#   works no matter where it is invoked from.
 
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PYTHONPATH="$PROJECT_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 MODEL_DIR="$PROJECT_ROOT/pipeline/vendor/models"
 TASK="$MODEL_DIR/face_landmarker.task"
 TASK_URL="https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
+# Pinned SHA-256 of the upstream face_landmarker float16 v1 bundle (verify at
+# https://developers.google.com/mediapipe/solutions/vision/face_landmarker).
 TASK_SHA256="af23fc7c1ff21d034deaa2b7fc1d56bb670ce69a4cbdc9579b6f1afd680835f4"
 
 echo "==> Screening runtime asset check"
@@ -68,6 +78,9 @@ fi
 # build/deploy time so the first screening never pays a cold download (or
 # fails every registry leg when the model zoo is unreachable). Reuses the
 # same on-disk layout the pipeline expects (<root>/models/buffalo_l/).
+# No SHA pin here: the pack is N files fetched by InsightFace itself and
+# versioned upstream — integrity is checked by the ONNX loader at startup
+# (corrupt files fail loudly in the [startup] prewarm log, never silently).
 BUFFALO_DIR="$MODEL_DIR/models/buffalo_l"
 if [[ -f "$BUFFALO_DIR/w600k_r50.onnx" && -f "$BUFFALO_DIR/det_10g.onnx" ]]; then
   echo "[ok] buffalo_l pack present ($BUFFALO_DIR)"

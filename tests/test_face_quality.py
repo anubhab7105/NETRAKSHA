@@ -10,6 +10,7 @@ Run:  python -m pytest tests/test_face_quality.py -v
 
 from __future__ import annotations
 
+import pathlib
 import types
 
 import cv2
@@ -26,6 +27,10 @@ from pipeline.face_quality import (
     occlusion_hint,
     yaw_proxy_from_kps,
 )
+
+
+_ROOT = pathlib.Path(__file__).resolve().parent.parent
+_SAMPLES = _ROOT / "samples"
 
 
 def _checkerboard(size: int = 400, squares: int = 8) -> np.ndarray:
@@ -119,7 +124,7 @@ def test_capture_passes_normal_frame():
 def test_face_rejects_blurry_crop():
 
 
-    live = cv2.imread("samples/live/blink_burst_05.png")
+    live = cv2.imread(str(_SAMPLES / "live" / "blink_burst_05.png"))
     region = live[0:700, 150:850]
     blurred = cv2.GaussianBlur(region, (31, 31), 0)
     face = _face([150, 0, 850, 700], _frontal_kps(500, 300, 250))
@@ -179,8 +184,8 @@ def test_combine_reports_recapture_shape():
 def test_matcher_requests_recapture_on_blurred_live():
     from pipeline.face_match import run_face_match
 
-    doc = cv2.imread("samples/genuine_doc.png")
-    live = cv2.imread("samples/live/blink_burst_05.png")
+    doc = cv2.imread(str(_SAMPLES / "genuine_doc.png"))
+    live = cv2.imread(str(_SAMPLES / "live" / "blink_burst_05.png"))
     live_bad = cv2.GaussianBlur(live, (31, 31), 0)
     res = run_face_match(doc, live_bad, save_evidence=False)
     assert res.status == "inconclusive" and res.score is None
@@ -193,7 +198,8 @@ def test_matcher_requests_recapture_on_blurred_live():
 def test_matcher_still_matches_good_pair():
     from pipeline.face_match import run_face_match
 
-    res = run_face_match("samples/genuine_doc.png", "samples/live/blink_burst_05.png",
+    res = run_face_match(str(_SAMPLES / "genuine_doc.png"),
+                         str(_SAMPLES / "live" / "blink_burst_05.png"),
                          save_evidence=False)
     assert res.status == "ok" and res.score is not None
     assert res.raw_output.get("quality_gate") == "passed"

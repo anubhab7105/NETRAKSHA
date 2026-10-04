@@ -11,10 +11,11 @@ Output:
 
 from __future__ import annotations
 
-import cv2
-import numpy as np
+import os
 from pathlib import Path
 from typing import Dict, Any
+
+import numpy as np
 
 from .common import ModuleResult, ok_result, inconclusive_result, new_evidence_path, load_image
 
@@ -32,6 +33,8 @@ TEMPLATE_ZONES = {
 def _detect_qr_barcode(bgr: np.ndarray) -> Dict[str, Any]:
     """Try to decode QR/barcode; presence is a positive signal for Aadhaar/PAN."""
     try:
+        import cv2
+
         detector = cv2.QRCodeDetector()
         data, bbox, _ = detector.detectAndDecode(bgr)
         if data:
@@ -43,25 +46,24 @@ def _detect_qr_barcode(bgr: np.ndarray) -> Dict[str, Any]:
 def _photo_zone_check(bgr: np.ndarray, doc_type: str) -> Dict[str, Any]:
     """Check if a face is within the expected photo zone."""
     try:
-        import mediapipe as mp
-        from mediapipe.tasks import python as mp_py
-        from mediapipe.tasks.python import vision
+        import cv2
+
+        from .liveness import mediapipe_tasks_available, mp_image, _face_mesh
+
+        if not mediapipe_tasks_available():
+            return {"photo_zone": "unknown", "photo_in_zone": None}
         import os
         task_path = os.path.join(os.path.dirname(__file__), "vendor", "models", "face_landmarker.task")
         if not os.path.exists(task_path):
             return {"photo_zone": "unknown", "photo_in_zone": None}
 
-
-        landmarker = vision.FaceLandmarker.create_from_options(
-            vision.FaceLandmarkerOptions(
-                base_options=mp_py.BaseOptions(model_asset_path=task_path),
-                running_mode=vision.RunningMode.IMAGE,
-                num_faces=3,
-            )
-        )
+        landmarker = _face_mesh()
         try:
             rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-            res = landmarker.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb))
+            mp_img, _ = mp_image(np.ascontiguousarray(rgb))
+            if mp_img is None:
+                return {"photo_zone": "unknown", "photo_in_zone": None}
+            res = landmarker.detect(mp_img)
         finally:
             try:
                 landmarker.close()
@@ -84,76 +86,81 @@ def _photo_zone_check(bgr: np.ndarray, doc_type: str) -> Dict[str, Any]:
         return {"photo_zone": "error", "photo_in_zone": None, "error": str(e)[:60]}
 
 def run_security_zones(document_image, document_type: str = "unknown", save_evidence: bool = True) -> ModuleResult:
-    """Run template/zone checks on the document image."""
+    """Run template/zone checks on the document image. Never raises."""
     try:
         bgr = load_image(document_image)
     except Exception as exc:
         return inconclusive_result(MODULE_NAME, exc)
-    doc_type = (document_type or "unknown").strip().lower()
-    if doc_type not in TEMPLATE_ZONES:
-        doc_type = "unknown"
+    try:
+        import cv2
 
-    checks: Dict[str, Any] = {}
-    anomalies = 0
-    total = 0
+        doc_type = (document_type or "unknown").strip().lower()
+        if doc_type not in TEMPLATE_ZONES:
+            doc_type = "unknown"
 
-
-    photo_res = _photo_zone_check(bgr, doc_type)
-    checks.update(photo_res)
-    total += 1
-    if photo_res.get("photo_in_zone") is False:
-        anomalies += 1
+        checks: Dict[str, Any] = {}
+        anomalies = 0
+        total = 0
 
 
-    if doc_type in ("aadhaar", "pan", "voter_id"):
-        qr_res = _detect_qr_barcode(bgr)
-        checks.update(qr_res)
+        photo_res = _photo_zone_check(bgr, doc_type)
+        checks.update(photo_res)
         total += 1
+        if photo_res.get("photo_in_zone") is False:
+            anomalies += 1
+
+
+        if doc_type in ("aadhaar", "pan", "voter_id"):
+            qr_res = _detect_qr_barcode(bgr)
+            checks.update(qr_res)
+            total += 1
 
 
 
 
-    if doc_type == "passport":
+        if doc_type == "passport":
 
-        h, w = bgr.shape[:2]
-        mrz_crop = bgr[int(h*0.82):, :]
-        gray = cv2.cvtColor(mrz_crop, cv2.COLOR_BGR2GRAY)
-
-        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        white_frac = float((thresh == 255).mean())
-        checks["mrz_contrast"] = round(white_frac, 3)
-        checks["mrz_zone"] = "found" if 0.3 < white_frac < 0.7 else "weak"
-        total += 1
-        if checks["mrz_zone"] == "weak":
-            anomalies += 0.5
-
-
-
-    checks["font"] = "ok"
-
-    security_score = min(1.0, anomalies / max(1, total))
-
-
-    evidence_uri = None
-    if save_evidence:
-        try:
-            overlay = bgr.copy()
             h, w = bgr.shape[:2]
-            zones = TEMPLATE_ZONES.get(doc_type, TEMPLATE_ZONES["unknown"])
-            for name, roi in zones.items():
-                x0, y0, x1, y1 = int(roi[0]*w), int(roi[1]*h), int(roi[2]*w), int(roi[3]*h)
-                color = (0, 255, 0) if name == "photo" else (255, 200, 0)
-                cv2.rectangle(overlay, (x0, y0), (x1, y1), color, 2)
-                cv2.putText(overlay, name, (x0, max(0, y0-5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
-            evidence_uri = new_evidence_path(MODULE_NAME, "png")
-            cv2.imwrite(str(evidence_uri), overlay)
-        except Exception:
-            pass
+            mrz_crop = bgr[int(h*0.82):, :]
+            gray = cv2.cvtColor(mrz_crop, cv2.COLOR_BGR2GRAY)
 
-    raw = {
-        "security_score": round(float(security_score), 3),
-        "checks": checks,
-        "document_type": doc_type,
-        "zones": TEMPLATE_ZONES.get(doc_type, {}),
-    }
-    return ok_result(MODULE_NAME, float(security_score), raw, str(evidence_uri) if evidence_uri else None)
+            _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            white_frac = float((thresh == 255).mean())
+            checks["mrz_contrast"] = round(white_frac, 3)
+            checks["mrz_zone"] = "found" if 0.3 < white_frac < 0.7 else "weak"
+            total += 1
+            if checks["mrz_zone"] == "weak":
+                anomalies += 0.5
+
+
+
+        checks["font"] = "ok"
+
+        security_score = min(1.0, anomalies / max(1, total))
+
+
+        evidence_uri = None
+        if save_evidence:
+            try:
+                overlay = bgr.copy()
+                h, w = bgr.shape[:2]
+                zones = TEMPLATE_ZONES.get(doc_type, TEMPLATE_ZONES["unknown"])
+                for name, roi in zones.items():
+                    x0, y0, x1, y1 = int(roi[0]*w), int(roi[1]*h), int(roi[2]*w), int(roi[3]*h)
+                    color = (0, 255, 0) if name == "photo" else (255, 200, 0)
+                    cv2.rectangle(overlay, (x0, y0), (x1, y1), color, 2)
+                    cv2.putText(overlay, name, (x0, max(0, y0-5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+                evidence_uri = new_evidence_path(MODULE_NAME, "png")
+                cv2.imwrite(str(evidence_uri), overlay)
+            except Exception:
+                pass
+
+        raw = {
+            "security_score": round(float(security_score), 3),
+            "checks": checks,
+            "document_type": doc_type,
+            "zones": TEMPLATE_ZONES.get(doc_type, {}),
+        }
+        return ok_result(MODULE_NAME, float(security_score), raw, str(evidence_uri) if evidence_uri else None)
+    except Exception as exc:
+        return inconclusive_result(MODULE_NAME, exc)

@@ -1,24 +1,42 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ShieldCheck, Lock, UserRound, Loader2, AlertTriangle } from 'lucide-react';
+import { ShieldCheck, Lock, UserRound, Loader2, AlertTriangle, Eye, EyeOff } from 'lucide-react';
 import api, { apiErrorMessage } from '../api';
 import SEO from '../components/SEO';
+
+function parseRetrySeconds(detail) {
+  const m = String(detail || '').match(/Retry in (\d+)s/);
+  return m ? parseInt(m[1], 10) : 0;
+}
 
 export default function Login() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [mfaToken, setMfaToken] = useState('');
   const [mfaCode, setMfaCode] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [retryIn, setRetryIn] = useState(0);
   const navigate = useNavigate();
 
+  useEffect(() => {
+    if (retryIn <= 0) return undefined;
+    const t = setTimeout(() => setRetryIn((s) => Math.max(0, s - 1)), 1000);
+    return () => clearTimeout(t);
+  }, [retryIn]);
+
   const storeSession = (data) => {
+    if (!data || typeof data.token !== 'string' || !data.token || typeof data.role !== 'string' || !data.role) {
+      setError('Login succeeded but the server response was malformed. Please retry.');
+      return;
+    }
     localStorage.setItem('token', data.token);
     localStorage.setItem('role', data.role);
-    localStorage.setItem('username', data.username);
+    localStorage.setItem('username', data.username || username);
     if (data.must_change_password) localStorage.setItem('must_change_password', '1');
     else localStorage.removeItem('must_change_password');
+    // Persisted for every role; SecurityGate/App only enforces it for supervisors.
     if (data.mfa_setup_required) localStorage.setItem('mfa_setup_required', '1');
     else localStorage.removeItem('mfa_setup_required');
     if (data.must_change_password || data.mfa_setup_required) navigate('/change-password');
@@ -32,17 +50,21 @@ export default function Login() {
     try {
       const res = await api.post('/auth/login', { username, password });
       if (res.data.mfa_required) {
-        
         setMfaToken(res.data.mfa_token);
         if (res.data.must_change_password) localStorage.setItem('must_change_password', '1');
+        if (res.data.mfa_setup_required) localStorage.setItem('mfa_setup_required', '1');
       } else {
         storeSession(res.data);
       }
     } catch (err) {
       const status = err.response?.status;
-      setError(status === 429
-        ? (err.response?.data?.detail || 'Too many attempts. Please wait and retry.')
-        : apiErrorMessage(err, 'Login failed. Please check credentials.'));
+      if (status === 429) {
+        const secs = parseRetrySeconds(err.response?.data?.detail);
+        if (secs > 0) setRetryIn(secs);
+        setError(err.response?.data?.detail || 'Too many attempts. Please wait and retry.');
+      } else {
+        setError(apiErrorMessage(err, 'Login failed. Please check credentials.'));
+      }
     } finally {
       setLoading(false);
     }
@@ -58,6 +80,11 @@ export default function Login() {
       setMfaCode('');
       storeSession(res.data);
     } catch (err) {
+      const status = err.response?.status;
+      if (status === 429) {
+        const secs = parseRetrySeconds(err.response?.data?.detail);
+        if (secs > 0) setRetryIn(secs);
+      }
       setError(apiErrorMessage(err, 'MFA verification failed.'));
     } finally {
       setLoading(false);
@@ -118,7 +145,7 @@ export default function Login() {
             {error && (
               <div className="gov-notice gov-notice-red mt-4" role="alert">
                 <AlertTriangle size={18} className="shrink-0" aria-hidden="true" />
-                <span>{error}</span>
+                <span>{error}{retryIn > 0 ? ` Retrying available in ${retryIn}s.` : ''}</span>
               </div>
             )}
 
@@ -150,13 +177,22 @@ export default function Login() {
                       </span>
                       <input
                         id="login-password"
-                        type="password"
+                        type={showPassword ? 'text' : 'password'}
                         autoComplete="current-password"
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
-                        className="gov-input gov-input-with-icon"
+                        className="gov-input gov-input-with-icon pr-11"
                         required
                       />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((s) => !s)}
+                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+                        aria-pressed={showPassword}
+                        className="absolute inset-y-0 right-0 flex items-center pr-3 text-[#667085] hover:text-[#123B66]"
+                      >
+                        {showPassword ? <EyeOff size={17} aria-hidden="true" /> : <Eye size={17} aria-hidden="true" />}
+                      </button>
                     </div>
                     <p className="gov-help">Use your issued workstation credentials. Contact your supervisor if locked out.</p>
                   </div>
@@ -184,14 +220,14 @@ export default function Login() {
                     />
                   </div>
                   <button type="button" onClick={() => { setMfaToken(''); setMfaCode(''); setError(''); }}
-                    className="gov-btn gov-btn-ghost mt-2 w-full !justify-center">
+                    className="gov-btn gov-btn-ghost mt-2 w-full justify-center">
                     ← Back to username / password
                   </button>
                 </div>
               )}
 
-              <button type="submit" disabled={loading} className="gov-btn gov-btn-primary w-full">
-                {loading ? <Loader2 size={18} className="animate-spin" aria-hidden="true" /> : (mfaToken ? 'Verify Code' : 'Sign In Securely')}
+              <button type="submit" disabled={loading || retryIn > 0} className="gov-btn gov-btn-primary w-full">
+                {loading ? <Loader2 size={18} className="animate-spin" aria-hidden="true" /> : (mfaToken ? 'Verify Code' : retryIn > 0 ? `Wait ${retryIn}s` : 'Sign In Securely')}
               </button>
             </form>
           </div>

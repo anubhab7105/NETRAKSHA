@@ -18,6 +18,7 @@ from typing import Optional
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     Float,
@@ -43,6 +44,9 @@ class Base(DeclarativeBase):
 
 class Officer(Base):
     __tablename__ = "officers"
+    __table_args__ = (
+        CheckConstraint("role IN ('officer', 'supervisor', 'auditor')", name="ck_officer_role"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(String(100), unique=True, nullable=False)
@@ -104,6 +108,7 @@ class CitizenRegistry(Base):
 
 
     screening_cases = relationship("ScreeningCase", back_populates="citizen")
+    iris_templates = relationship("IrisTemplate", back_populates="citizen", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"<CitizenRegistry(id={self.id}, type={self.document_type!r}, name={self.full_name!r})>"
@@ -215,6 +220,11 @@ class RegistryEnrollment(Base):
 
 class ScreeningCase(Base):
     __tablename__ = "screening_cases"
+    __table_args__ = (
+        Index("ix_screening_cases_officer", "officer_id"),
+        Index("ix_screening_cases_unit", "unit"),
+        Index("ix_screening_cases_status", "status"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     officer_id = Column(Integer, ForeignKey("officers.id"), nullable=False)
@@ -318,7 +328,7 @@ class IrisTemplate(Base):
     created_at = Column(DateTime, server_default=func.now())
     enrolled_by = Column(Integer, ForeignKey("officers.id"), nullable=True)
 
-    citizen = relationship("CitizenRegistry", backref="iris_templates")
+    citizen = relationship("CitizenRegistry", back_populates="iris_templates")
     officer = relationship("Officer")
 
     def to_dict(self, include_template: bool = False) -> dict:
@@ -342,6 +352,10 @@ class IrisTemplate(Base):
 
 class ModuleResultDB(Base):
     __tablename__ = "module_results"
+    __table_args__ = (
+        Index("ix_module_results_case", "case_id"),
+        Index("ix_module_results_evidence_uri", "evidence_uri"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     case_id = Column(Integer, ForeignKey("screening_cases.id"), nullable=False)
@@ -435,6 +449,10 @@ class OfficerAction(Base):
 
 class AuditLog(Base):
     __tablename__ = "audit_log"
+    __table_args__ = (
+        Index("ix_audit_log_actor", "actor"),
+        Index("ix_audit_log_action", "action"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     # Audit C11: free-text audit columns are Text (never String(100)) so

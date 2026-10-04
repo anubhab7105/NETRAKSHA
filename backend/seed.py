@@ -180,7 +180,7 @@ async def seed_all() -> dict:
                 "BOOTSTRAP_ADMIN_PASS to create the initial supervisor account. "
                 "Default demo credentials are never created in production.")
         try:
-            validate_new_password(boot_pass)
+            validate_new_password(boot_pass, boot_user)
         except ValueError as e:
             raise RuntimeError(f"Production seeding refused: BOOTSTRAP_ADMIN_PASS {e}")
         officers_to_seed = [{
@@ -209,11 +209,8 @@ async def seed_all() -> dict:
                 ))
                 summary["officers_created"] += 1
             else:
-
-                expected_unit = o.get("unit", "BORDER_UNIT_1")
-                if getattr(officer, "unit", None) != expected_unit or officer.role != o["role"]:
-                    officer.unit = expected_unit
-                    officer.role = o["role"]
+                # Never overwrite unit/role on existing rows (preserves admin
+                # reassignment; seed only fills on create).
                 summary["officers_existed"] += 1
 
 
@@ -225,7 +222,8 @@ async def seed_all() -> dict:
         for c in CITIZENS:
             existing = await session.execute(
                 select(CitizenRegistry).where(
-                    CitizenRegistry.document_number == c["document_number"]
+                    (CitizenRegistry.document_type == c["document_type"])
+                    & (CitizenRegistry.document_number == c["document_number"])
                 )
             )
             if existing.scalar_one_or_none() is None:

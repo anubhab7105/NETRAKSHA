@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Loader2, Search, ChevronLeft, ChevronRight, ShieldCheck, AlertTriangle } from 'lucide-react';
-import api from '../api';
+import api, { apiErrorMessage } from '../api';
 import SEO from '../components/SEO';
 import Breadcrumbs from '../components/Breadcrumbs';
 import { PageHeader } from '../components/ui';
@@ -8,11 +8,13 @@ import { PageHeader } from '../components/ui';
 export default function AuditTrail() {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState('');
   const [actorFilter, setActorFilter] = useState('');
   const [entityFilter, setEntityFilter] = useState('');
   const [offset, setOffset] = useState(0);
   const [count, setCount] = useState(0);
   const [verifyResult, setVerifyResult] = useState(null);
+  const [verifying, setVerifying] = useState(false);
   const abortRef = useRef(null);
   const debounceRef = useRef(null);
   const limit = 50;
@@ -22,6 +24,7 @@ export default function AuditTrail() {
     const controller = new AbortController();
     abortRef.current = controller;
     setLoading(true);
+    setFetchError('');
     try {
       const params = { limit, offset };
       if (actorFilter.trim()) params.actor = actorFilter.trim();
@@ -32,6 +35,7 @@ export default function AuditTrail() {
     } catch (err) {
       if (err?.code === 'ERR_CANCELED') return;
       if (import.meta.env.DEV) console.error('Failed to fetch audit logs:', err);
+      setFetchError(apiErrorMessage(err, 'Could not load audit logs.'));
     } finally {
       if (abortRef.current === controller) {
         abortRef.current = null;
@@ -54,18 +58,26 @@ export default function AuditTrail() {
 
   const handleSearch = (e) => {
     e.preventDefault();
+    // Reset paging and let the debounced fetchLogs effect do the single fetch
+    // (calling fetchLogs() here as well would double-fetch).
     setOffset(0);
-    fetchLogs();
   };
 
   const handleVerify = async () => {
+    if (verifying) return;
+    setVerifying(true);
     try {
       const res = await api.get('/audit/verify');
       setVerifyResult(res.data);
     } catch (err) {
       setVerifyResult({ valid: false, reason: err.response?.data?.detail || 'Verification failed' });
+    } finally {
+      setVerifying(false);
     }
   };
+
+  const rangeStart = count === 0 ? 0 : Math.min(offset + 1, count);
+  const rangeEnd = Math.min(offset + limit, count);
 
   return (
     <div className="animate-fade-in space-y-5">
@@ -79,8 +91,9 @@ export default function AuditTrail() {
         title="Audit Logs"
         subtitle="Immutable event ledger — every automated check and officer decision. Hash-chained for tamper evidence."
         actions={
-          <button onClick={handleVerify} className="gov-btn gov-btn-secondary">
-            <ShieldCheck size={16} aria-hidden="true" /> Verify Chain
+          <button onClick={handleVerify} disabled={verifying} className="gov-btn gov-btn-secondary disabled:opacity-60">
+            {verifying ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <ShieldCheck size={16} aria-hidden="true" />}
+            {verifying ? 'Verifying…' : 'Verify Chain'}
           </button>
         }
       />
@@ -101,7 +114,7 @@ export default function AuditTrail() {
       {}
       <form onSubmit={handleSearch} className="gov-card-padded flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
         <div className="min-w-0 flex-1 sm:min-w-[200px]">
-          <label htmlFor="audit-actor" className="gov-label !mb-1 !text-[13px]">Actor</label>
+          <label htmlFor="audit-actor" className="gov-label mb-1! text-[13px]!">Actor</label>
           <input
             id="audit-actor"
             type="text"
@@ -112,7 +125,7 @@ export default function AuditTrail() {
           />
         </div>
         <div className="min-w-0 flex-1 sm:min-w-[200px]">
-          <label htmlFor="audit-entity" className="gov-label !mb-1 !text-[13px]">Entity</label>
+          <label htmlFor="audit-entity" className="gov-label mb-1! text-[13px]!">Entity</label>
           <input
             id="audit-entity"
             type="text"
@@ -129,6 +142,14 @@ export default function AuditTrail() {
           <Search size={16} aria-hidden="true" /> Apply Filters
         </button>
       </form>
+
+      {fetchError && (
+        <div className="gov-notice gov-notice-red" role="alert">
+          <AlertTriangle size={18} className="mt-0.5 shrink-0" aria-hidden="true" />
+          <span className="flex-1">{fetchError}</span>
+          <button onClick={fetchLogs} className="gov-btn gov-btn-secondary shrink-0">Retry</button>
+        </div>
+      )}
 
       {}
       <div className="gov-table-wrap">
@@ -178,14 +199,14 @@ export default function AuditTrail() {
         {!loading && count > 0 && (
           <div className="flex flex-col gap-3 border-t border-[#D9DEE7] bg-[#F7F8FA] px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
             <span className="text-xs text-[#667085]">
-              Showing {offset + 1}–{Math.min(offset + limit, count)} entries
+              Showing {rangeStart}–{rangeEnd} of {count} entries
             </span>
             <div className="flex gap-2">
               <button
                 onClick={() => setOffset(Math.max(0, offset - limit))}
                 disabled={offset === 0}
                 aria-label="Previous page"
-                className="gov-icon-btn !h-8 !w-8 disabled:cursor-not-allowed disabled:opacity-40"
+                className="gov-icon-btn h-8! w-8! disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <ChevronLeft size={16} aria-hidden="true" />
               </button>
@@ -193,7 +214,7 @@ export default function AuditTrail() {
                 onClick={() => setOffset(offset + limit)}
                 disabled={offset + limit >= count}
                 aria-label="Next page"
-                className="gov-icon-btn !h-8 !w-8 disabled:cursor-not-allowed disabled:opacity-40"
+                className="gov-icon-btn h-8! w-8! disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <ChevronRight size={16} aria-hidden="true" />
               </button>

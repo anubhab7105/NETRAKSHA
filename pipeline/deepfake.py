@@ -124,6 +124,13 @@ def run_deepfake(face_image) -> ModuleResult:
         return inconclusive_result(MODULE_NAME, exc)
 
     try:
+        _crop_reason = _requires_face_crop(img)
+    except Exception:
+        _crop_reason = None
+    if _crop_reason:
+        return inconclusive_result(MODULE_NAME, _crop_reason)
+
+    try:
         metrics = _fft_metrics(img)
         if "error" in metrics:
             return inconclusive_result(MODULE_NAME, metrics["error"])
@@ -134,10 +141,13 @@ def run_deepfake(face_image) -> ModuleResult:
     peak = metrics["spectral_peakedness"]
     roll = metrics["rolloff_ratio"]
 
-
-
+    # Calibrated on synthetic samples (genuine face ~0.3-0.45, clean captures
+    # stay well under the 0.7 flag threshold). NOTE: `spectral_peakedness`
+    # is measured on log1p-compressed magnitudes, so its operating range is
+    # ~1.0-1.8 — the old (peak-2.0)/6.0 band could never fire (always 0).
+    # The corrected band below matches the log domain.
     score_hf = np.clip((hf - 0.10) / 0.25, 0.0, 1.0)
-    score_peak = np.clip((peak - 2.0) / 6.0, 0.0, 1.0)
+    score_peak = np.clip((peak - 1.10) / 1.20, 0.0, 1.0)
     score_roll = np.clip((roll - 0.5) / 3.0, 0.0, 1.0)
     deepfake_score = round(
         float(0.5 * score_hf + 0.3 * score_peak + 0.2 * score_roll), 4
@@ -147,6 +157,7 @@ def run_deepfake(face_image) -> ModuleResult:
         "deepfake_score": deepfake_score,
         "method": "fft_frequency_artifact_heuristic",
         "classifier_integrated": False,
+        "calibration": "heuristic-uncalibrated-prototype (flag threshold 0.7 from thresholds.json)",
         # TODO(classifier): integrate a trained forgery classifier
         # (e.g. EfficientNet-b0 on FaceForensics++) when GPU inference is
         # available; the FFT heuristic above is the intentional MVP
@@ -154,3 +165,37 @@ def run_deepfake(face_image) -> ModuleResult:
         "metrics": metrics,
     }
     return ok_result(MODULE_NAME, deepfake_score, raw, evidence_uri=None)
+
+
+def _requires_face_crop(img: np.ndarray) -> Optional[str]:
+    """Reject full-document scans: the FFT heuristic is only valid on faces.
+
+    Returns an inconclusive reason string, or None when the input is an
+    acceptable face crop/frame. Faces in this deployment are small crops
+    (~96-400px); full document stills (700x1000+) without a dominant face
+    are document texture, not facial upsampling artifacts.
+    """
+    try:
+        h, w = img.shape[:2]
+        if max(h, w) < 500 and h * w < 400_000:
+            return None
+        import cv2
+
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        if cascade.empty():
+            return ("full-document-sized input without a verifiable face crop — "
+                    "deepfake FFT requires a face crop, not a full document still")
+        small = gray
+        if max(h, w) > 800:
+            _s = 800.0 / max(h, w)
+            small = cv2.resize(gray, (int(w * _s), int(h * _s)))
+        faces = cascade.detectMultiScale(small, scaleFactor=1.1, minNeighbors=5,
+                                         minSize=(60, 60))
+        if len(faces) == 0:
+            return ("no face found in a document-sized image — deepfake FFT "
+                    "requires a face crop, not a full document still")
+        return None
+    except Exception:
+        return None

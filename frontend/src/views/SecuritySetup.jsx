@@ -1,8 +1,14 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ShieldCheck, Lock, Loader2, KeyRound, Smartphone, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { ShieldCheck, Lock, Loader2, KeyRound, Smartphone, AlertTriangle, CheckCircle2, LogOut } from 'lucide-react';
 import api, { apiErrorMessage } from '../api';
 import SEO from '../components/SEO';
+
+const KNOWN_SESSION_KEYS = ['token', 'role', 'username', 'must_change_password', 'mfa_setup_required'];
+
+function clearSession() {
+  KNOWN_SESSION_KEYS.forEach((k) => localStorage.removeItem(k));
+}
 
 export default function SecuritySetup() {
   const navigate = useNavigate();
@@ -82,6 +88,11 @@ export default function SecuritySetup() {
       await api.post('/auth/mfa/verify', { code: mfaCode });
       localStorage.removeItem('mfa_setup_required');
       setMfaMsg('MFA enabled for your supervisor account.');
+      // Clear enrollment material on success so the key/QR never linger in state.
+      setMfaKey('');
+      setMfaUri('');
+      setMfaQr('');
+      setMfaServerTime('');
       setMfaCode('');
       maybeDone(false, true);
     } catch (err) {
@@ -89,6 +100,16 @@ export default function SecuritySetup() {
     } finally {
       setMfaLoading(false);
     }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await api.post('/auth/logout');
+    } catch {
+      // Still wipe local session even if the server call fails.
+    }
+    clearSession();
+    navigate('/login');
   };
 
   return (
@@ -188,7 +209,7 @@ export default function SecuritySetup() {
                   </button>
                   <button type="button" onClick={() => { setMfaCode(''); setMfaErr(''); startMfa(); }}
                     disabled={mfaLoading}
-                    className="gov-btn gov-btn-ghost w-full !justify-center disabled:opacity-60">
+                    className="gov-btn gov-btn-ghost w-full justify-center! disabled:opacity-60">
                     Codes never match? Discard this QR and get a fresh one — then scan only the new code.
                   </button>
                 </form>
@@ -197,10 +218,13 @@ export default function SecuritySetup() {
           )}
 
           {!needsPassword && !needsMfa && (
-            <button onClick={() => navigate('/')} className="gov-btn gov-btn-ghost w-full !justify-center">
+            <button onClick={() => navigate('/')} className="gov-btn gov-btn-ghost w-full justify-center">
               ← Back to dashboard
             </button>
           )}
+          <button onClick={handleSignOut} aria-label="Sign out" className="gov-btn gov-btn-ghost w-full justify-center">
+            <LogOut size={16} aria-hidden="true" /> Sign Out
+          </button>
         </div>
       </div>
     </div>

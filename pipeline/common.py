@@ -45,11 +45,59 @@ INSIGHTFACE_MODEL_ROOT = (_VENDOR / "models").resolve()
 _THRESHOLDS_CACHE: Optional[dict] = None
 
 
+# Env-var overrides for the single thresholds source of truth. Each key may
+# be overridden via PIPELINE_<UPPER_KEY>, e.g. PIPELINE_FACE_MATCH=0.6.
+# Legacy per-module names are honoured where they already exist in the wild.
+_THRESHOLD_ENV_ALIASES = {
+    "face_match": ("PIPELINE_FACE_MATCH", "FACE_MATCH_THRESHOLD"),
+    "face_low_conf_low": ("PIPELINE_FACE_LOW_CONF_LOW",),
+    "face_low_conf_high": ("PIPELINE_FACE_LOW_CONF_HIGH",),
+    "tamper_high": ("PIPELINE_TAMPER_HIGH",),
+    "tamper_moderate": ("PIPELINE_TAMPER_MODERATE",),
+    "physical_high": ("PIPELINE_PHYSICAL_HIGH", "PHYS_HIGH"),
+    "physical_moderate": ("PIPELINE_PHYSICAL_MODERATE", "PHYS_MODERATE"),
+    "deepfake_high": ("PIPELINE_DEEPFAKE_HIGH",),
+    "liveness": ("PIPELINE_LIVENESS", "LIVENESS_THRESHOLD"),
+    "name_match": ("PIPELINE_NAME_MATCH",),
+    "address_match": ("PIPELINE_ADDRESS_MATCH",),
+    "risk_red": ("PIPELINE_RISK_RED",),
+    "risk_yellow": ("PIPELINE_RISK_YELLOW",),
+    "watchlist_fuzzy": ("PIPELINE_WATCHLIST_FUZZY",),
+    "document_quality_blur": ("PIPELINE_DOC_QUALITY_BLUR",),
+    "document_quality_dark": ("PIPELINE_DOC_QUALITY_DARK",),
+    "iris_match": ("PIPELINE_IRIS_MATCH",),
+    "iris_low_conf_low": ("PIPELINE_IRIS_LOW_CONF_LOW",),
+    "iris_low_conf_high": ("PIPELINE_IRIS_LOW_CONF_HIGH",),
+}
+
+
+def _apply_threshold_env_overrides(merged: dict) -> dict:
+    for key, names in _THRESHOLD_ENV_ALIASES.items():
+        for env_name in names:
+            raw = os.environ.get(env_name)
+            if raw is None or str(raw).strip() == "":
+                continue
+            try:
+                merged[key] = float(str(raw).strip())
+            except (TypeError, ValueError):
+                pass
+            break
+    return merged
+
+
+def reload_thresholds() -> dict:
+    """Force re-read of thresholds.json + env overrides (tests use this)."""
+    global _THRESHOLDS_CACHE
+    _THRESHOLDS_CACHE = None
+    return load_thresholds()
+
+
 def load_thresholds() -> dict:
     """Load pipeline/thresholds.json (cached). Missing file/keys fall back to code defaults.
 
     This is the single source of truth for decision thresholds — modules must
     read their band through here instead of hardcoding magic numbers.
+    Env vars (see _THRESHOLD_ENV_ALIASES) override file values.
     """
     global _THRESHOLDS_CACHE
     if _THRESHOLDS_CACHE is not None:
@@ -71,13 +119,19 @@ def load_thresholds() -> dict:
         "watchlist_fuzzy": 0.8,
         "document_quality_blur": 35.0,
         "document_quality_dark": 35.0,
+        "iris_match": 0.32,
+        "iris_low_conf_low": 0.28,
+        "iris_low_conf_high": 0.36,
     }
     try:
         with open(_ROOT / "thresholds.json", "r", encoding="utf-8") as fh:
             file_values = json.load(fh)
         merged = {**defaults, **{k: v for k, v in file_values.items() if k in defaults}}
+        # Iris thresholds are prototype placeholders (see thresholds.json
+        # calibration_note) — never silently adopt them without the marker.
     except Exception:
         merged = dict(defaults)
+    merged = _apply_threshold_env_overrides(merged)
     _THRESHOLDS_CACHE = merged
     return merged
 
@@ -236,15 +290,41 @@ def _summarise_reason(reason: Any) -> str:
 def _rel_uri(path: Optional[str]) -> Optional[str]:
     if not path:
         return None
-    return str(path)
+    try:
+        # Prefer a repo-relative URI (no absolute server path in API/DB
+        # payloads; backend resolves via basename and tests can still
+        # Path(uri).exists() from the repo root). Files written outside the
+        # repo (e.g. pytest tmp_path evidence dirs) keep their absolute path
+        # so existence checks still resolve.
+        p = pathlib.Path(str(path))
+        try:
+            return str(p.resolve().relative_to(_ROOT.parent.resolve()))
+        except Exception:
+            return str(p)
+    except Exception:
+        return None
 
 
 def _json_safe(obj: Any) -> Any:
     """Recursively convert numpy types / non-serialisable values for JSON."""
+    import datetime as _dt
+
     if isinstance(obj, dict):
         return {str(k): _json_safe(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
         return [_json_safe(v) for v in obj]
+    if isinstance(obj, (set, frozenset)):
+        return [_json_safe(v) for v in sorted(obj, key=repr)]
+    if isinstance(obj, (bytes, bytearray)):
+        try:
+            return {"__bytes_b64__": __import__("base64").b64encode(bytes(obj)).decode("ascii")}
+        except Exception:
+            return f"<bytes {len(bytes(obj))}>"
+    if isinstance(obj, (_dt.datetime, _dt.date, _dt.time)):
+        try:
+            return obj.isoformat()
+        except Exception:
+            return str(obj)
     if isinstance(obj, (np.integer,)):
         return int(obj)
     if isinstance(obj, (np.floating,)):
@@ -277,11 +357,30 @@ def load_image(src: Any) -> np.ndarray:
     a PIL Image, or an ndarray. Raises ValueError on unreadable input.
     Decompression bombs are rejected: source files over 50 MB or images
     over 100 megapixels raise ValueError (callers degrade to inconclusive).
+    Channel contract: always returns HxWx3 BGR uint8 (2-D gray and 4-channel
+    BGRA inputs are converted; anything else raises ValueError).
     """
     _MAX_FILE_BYTES = 50_000_000
     _MAX_PIXELS = 100_000_000
     if isinstance(src, np.ndarray):
-        arr = src.astype(np.uint8)
+        import cv2 as _cv2
+
+        if src.size == 0:
+            raise ValueError("empty image array")
+        if src.size > _MAX_PIXELS:
+            raise ValueError(f"image too large: {src.size} pixels")
+        if src.ndim == 2:
+            arr = np.ascontiguousarray(src, dtype=np.uint8)
+            return _cv2.cvtColor(arr, _cv2.COLOR_GRAY2BGR)
+        if src.ndim != 3 or src.shape[2] not in (3, 4):
+            raise ValueError(f"unsupported channel count: {getattr(src, 'shape', None)}")
+        if src.shape[2] == 4:
+            arr = np.ascontiguousarray(src, dtype=np.uint8)
+            return _cv2.cvtColor(arr, _cv2.COLOR_BGRA2BGR)
+        if src.dtype != np.uint8:
+            arr = np.clip(np.asarray(src, dtype=np.float64), 0, 255).astype(np.uint8)
+        else:
+            arr = np.ascontiguousarray(src)
         if arr.size > _MAX_PIXELS:
             raise ValueError(f"image too large: {arr.size} pixels")
         return arr

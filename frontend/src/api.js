@@ -1,47 +1,69 @@
 import axios from 'axios';
 
+// NOTE on auth storage: the session JWT lives in localStorage (`token`) so the
+// kiosk survives a reload; every request still sends it as `Authorization:
+// Bearer`. XSS would leak it — the backend therefore also sets an HttpOnly
+// `nc_session` cookie fallback, and CSP/HSTS headers are enforced server-side
+// (see backend/app.py `_security_headers_middleware`) + vercel.json. Never log
+// the token; `resolveBaseURL` below only logs the (non-secret) base URL.
+
 const envBase = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
 
+// Hosts that are always served same-origin (Vite dev proxy or backend SPA).
+// Extend via VITE_API_ALLOWLIST="host1,host2" instead of hardcoding more.
+const allowlistExtra = (import.meta.env.VITE_API_ALLOWLIST || '')
+  .split(',')
+  .map((h) => h.trim().toLowerCase())
+  .filter(Boolean);
+const SAME_ORIGIN_HOSTS = new Set([
+  'netraksha.xyz',
+  'www.netraksha.xyz',
+  'sih-weld-psi.vercel.app',
+  ...allowlistExtra,
+]);
+
+function ensureApiSuffix(url) {
+  if (!url) return '/api';
+  return url.endsWith('/api') ? url : `${url}/api`;
+}
+
 function resolveBaseURL() {
-  if (typeof window === 'undefined') {
-    return envBase && envBase.endsWith('/api') ? envBase : `${envBase || 'http://localhost:8000'}/api`;
-  }
-
-  
-  if (import.meta.env.DEV) {
+  // Same-origin when the page itself is served by the backend (:8000) or the
+  // Vite dev server (proxy `/api` -> 127.0.0.1:8000) — unless an explicit
+  // VITE_API_BASE_URL is set, which now wins everywhere including DEV.
+  if (typeof window !== 'undefined') {
+    const port = window.location.port;
+    const host = window.location.hostname.toLowerCase();
+    const isBackendOrigin = port === '8000' || host.endsWith('.up.railway.app');
+    if (!envBase && (import.meta.env.DEV || isBackendOrigin || SAME_ORIGIN_HOSTS.has(host))) {
+      return '/api';
+    }
+  } else if (!envBase) {
     return '/api';
   }
 
-  
-  if (window.location.port === '8000') {
-    return '/api';
-  }
-
-  
-  
-  
-  
-  const host = window.location.hostname.toLowerCase();
-  if (host === 'netraksha.xyz' || host === 'www.netraksha.xyz' || host === 'sih-weld-psi.vercel.app') {
-    return '/api';
-  }
-
-  
-  
-  
-  if (envBase && (envBase.startsWith('http://') || envBase.startsWith('https://'))) {
-    return envBase.endsWith('/api') ? envBase : `${envBase}/api`;
-  }
-  
-  if (host.endsWith('.up.railway.app')) {
-    return '/api';
+  if (envBase) {
+    if (!(envBase.startsWith('http://') || envBase.startsWith('https://'))) {
+      console.warn(`[api] VITE_API_BASE_URL ignored (must be absolute http(s)): ${envBase}`);
+      return '/api';
+    }
+    if (!envBase.endsWith('/api')) {
+      console.warn(`[api] VITE_API_BASE_URL should end with /api — appending: ${envBase}`);
+    }
+    return ensureApiSuffix(envBase);
   }
   return '/api';
 }
 
+const baseURL = resolveBaseURL();
+if (typeof window !== 'undefined') {
+  // eslint-disable-next-line no-console
+  console.info(`[api] baseURL=${baseURL}`);
+}
+
 const api = axios.create({
-  baseURL: resolveBaseURL(), 
-  timeout: 90000, 
+  baseURL,
+  timeout: 90000,
   withCredentials: true,
 });
 
@@ -52,8 +74,6 @@ api.interceptors.request.use((config) => {
   }
   return config;
 });
-
-
 
 
 
@@ -86,8 +106,6 @@ api.interceptors.response.use(
 );
 
 export default api;
-
-
 
 
 

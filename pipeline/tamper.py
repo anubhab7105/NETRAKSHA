@@ -103,6 +103,8 @@ def _copy_move_detect(
     stride: int = 8,
     min_dist: float = 140.0,
     min_std: float = 10.0,
+    deadline: Optional[float] = None,
+    max_per_hash: int = 50,
 ) -> dict:
     """Detect copied-region forgeries by exact-duplicate block hashing.
 
@@ -118,12 +120,14 @@ def _copy_move_detect(
     count clusters with ``|dy| >= 2`` blocks as copy-move evidence, which cleanly
     separates a pasted duplicate from a page's natural repeated structure.
 
-    Runs on the native-resolution gray image; sub-0.3s on the specimen pages.
-    A deterministic pair budget (200k) bounds the O(k^2) pairing step on
-    pathological inputs — exhaustion is reported as `truncated: True` and the
-    accumulated offsets are still scored (fail-operational, never hangs).
+    Bounded by design (<1.5s module budget): the caller downscales to
+    <=1200px max-dim, at most `max_per_hash` positions are sampled per hash
+    (natural repeats share one hash thousands of times), pairing stops at
+    the deadline and reports `timed_out: True` so the caller falls back to
+    ELA-only scoring (fail-operational, never hangs).
     """
     import hashlib
+    import time as _time
     from collections import defaultdict
 
     _MAX_PAIRS = 200_000
@@ -144,13 +148,23 @@ def _copy_move_detect(
     horiz_pairs = 0
     pairs_seen = 0
     truncated = False
+    timed_out = False
     for positions in locs.values():
-        if truncated:
+        if truncated or timed_out:
             break
+        # Sample at most max_per_hash positions per hash: genuine page
+        # structure (repeated glyphs/bands) can share one hash thousands of
+        # times; the paste displacement survives deterministic sampling.
+        if len(positions) > max_per_hash:
+            step = len(positions) / max_per_hash
+            positions = [positions[int(i * step)] for i in range(max_per_hash)]
         for i in range(len(positions)):
             for j in range(i + 1, len(positions)):
                 if pairs_seen >= _MAX_PAIRS:
                     truncated = True
+                    break
+                if deadline is not None and _time.perf_counter() >= deadline:
+                    timed_out = True
                     break
                 pairs_seen += 1
                 dx = positions[j][0] - positions[i][0]
@@ -178,6 +192,7 @@ def _copy_move_detect(
         "analysis_resolution": f"{W}x{H}",
         "pairs_examined": pairs_seen,
         "truncated": truncated,
+        "timed_out": timed_out,
     }
 
 
@@ -194,18 +209,30 @@ def run_tamper(document_image, save_evidence: bool = True) -> ModuleResult:
     ``document_image`` is a path (str/Path), bytes buffer, PIL Image, or BGR
     ndarray. Returns a result with status "ok" or "inconclusive". Never raises.
     """
+    import time as _time
+
+    _t0 = _time.perf_counter()
+    _BUDGET = 1.5  # hard module budget (tests assert <1.5s)
     try:
         img = load_image(document_image)
         if img.size == 0 or img is None:
             raise ValueError("empty image")
         import cv2 as _cv2
 
-        if img.ndim == 2:
-            gray = img.astype(np.uint8)
-            rgb = np.stack([gray] * 3, axis=-1)
+        # load_image now normalises to HxWx3 BGR; keep a gray copy for hashing.
+        gray_full = _cv2.cvtColor(img, _cv2.COLOR_BGR2GRAY)
+        # Cap the copy-move analysis at 1200px max-dim (ELA stays full-res).
+        # Large phone captures are 3-4K; hashing those natively blows the
+        # 1.5s budget with no forensic gain (paste offsets survive downscale).
+        _h, _w = gray_full.shape[:2]
+        _max_dim = max(_h, _w)
+        if _max_dim > 1200:
+            _scale = 1200.0 / _max_dim
+            gray = _cv2.resize(gray_full, (int(_w * _scale), int(_h * _scale)),
+                               interpolation=_cv2.INTER_AREA)
         else:
-            gray = _cv2.cvtColor(img, _cv2.COLOR_BGR2GRAY)
-            rgb = img[:, :, ::-1]
+            gray = gray_full
+        rgb = img[:, :, ::-1]
     except Exception as exc:
         return inconclusive_result(MODULE_NAME, exc)
 
@@ -218,10 +245,12 @@ def run_tamper(document_image, save_evidence: bool = True) -> ModuleResult:
 
 
     try:
-        cm = _copy_move_detect(gray)
+        _elapsed = _time.perf_counter() - _t0
+        _cm_budget = max(0.2, _BUDGET - _elapsed - 0.25)  # reserve time for overlay
+        cm = _copy_move_detect(gray, deadline=_t0 + _BUDGET - 0.20)
     except Exception as exc:
         cm = {"error": str(exc), "dominant_offset_count": 0, "regions": 0,
-              "blocks_matched": 0, "offset_groups": []}
+              "blocks_matched": 0, "offset_groups": [], "timed_out": False}
 
 
 
@@ -232,12 +261,18 @@ def run_tamper(document_image, save_evidence: bool = True) -> ModuleResult:
     COPY_FLOOR = 10
     COPY_SAT = 90
     ela_signal = np.clip((ela["mean_residual"] - 1.5) / 2.5, 0.0, 1.0)
-    copy_signal = np.clip(
-        (cm.get("dominant_offset_count", 0) - COPY_FLOOR) / (COPY_SAT - COPY_FLOOR),
-        0.0,
-        1.0,
-    )
-    tamper_score = round(0.60 * copy_signal + 0.40 * ela_signal, 4)
+    if cm.get("timed_out"):
+        # Deadline hit mid-pairing: score ELA-only (fail-operational) and
+        # say so, instead of presenting a half-counted copy-move signal.
+        copy_signal = 0.0
+        tamper_score = round(float(ela_signal), 4)
+    else:
+        copy_signal = np.clip(
+            (cm.get("dominant_offset_count", 0) - COPY_FLOOR) / (COPY_SAT - COPY_FLOOR),
+            0.0,
+            1.0,
+        )
+        tamper_score = round(0.60 * copy_signal + 0.40 * ela_signal, 4)
 
 
     evidence_uri = None
@@ -255,6 +290,7 @@ def run_tamper(document_image, save_evidence: bool = True) -> ModuleResult:
         "copy_move_region_count": cm.get("regions", 0),
         "dominant_offset_count": cm.get("dominant_offset_count", 0),
         "dominant_offset": cm.get("dominant_offset"),
+        "copy_move_timed_out": bool(cm.get("timed_out")),
         "ela": ela,
         "copy_move": {
             "blocks_matched": cm.get("blocks_matched", 0),
@@ -263,6 +299,8 @@ def run_tamper(document_image, save_evidence: bool = True) -> ModuleResult:
             "regions": cm.get("regions", 0),
             "horizontal_lattice_pairs": cm.get("horizontal_lattice_pairs", 0),
             "offset_groups": cm.get("offset_groups", []),
+            "timed_out": bool(cm.get("timed_out")),
+            "truncated": bool(cm.get("truncated")),
         },
     }
     return ok_result(MODULE_NAME, tamper_score, raw, evidence_uri)

@@ -71,9 +71,9 @@ Document quality gate: both document and crop are checked (Laplacian blur / brig
 | `GET` | `/api/audit` | Append-only trail with filters (`?actor=&action=&entity=&limit=&offset=`) |
 | `GET` | `/api/audit/verify` | Hash-chain integrity check |
 | `GET` | `/api/fairness/report` | In-memory fairness ledger |
-| `POST` | `/api/evidence/token` | Mint signed URL for an evidence file (`expires_in` 30–3600 s) |
-| `GET` | `/api/evidence/view?token=` | Authenticated evidence view (no public `/evidence/*` mount) |
-| `GET` | `/api/evidence/{filename}` | Signed direct fetch |
+| `GET` | `/api/evidence/token/{filename}?expires_in=` | Mint signed URL token for an evidence file (`expires_in` 30–`EVIDENCE_TOKEN_MAX_TTL` default 3600 s; over-max → 422) |
+| `GET` | `/api/evidence/view?token=` | Serve evidence via short-lived signed token (no auth header needed) |
+| `GET` | `/api/evidence/{filename}` | Authenticated direct fetch (case ownership enforced) |
 
 ### Registry (controlled enrollment)
 
@@ -83,7 +83,7 @@ Document quality gate: both document and crop are checked (Laplacian blur / brig
 | `GET` | `/api/registry/enrollments` | List enrollments (status filter) |
 | `POST` | `/api/registry/enrollments/{id}/approve` | **Different** supervisor approves (four-eyes) — writes `citizens_registry` |
 | `POST` | `/api/registry/enrollments/{id}/reject` | Reject with `review_note` |
-| `POST` | `/api/registry/import` | HMAC-signed authority batch import (header `X-Registry-Signature`) |
+| `POST` | `/api/citizens/import` | HMAC-signed authority batch import (header `X-Import-Signature` = hex HMAC-SHA256 over raw body; sign with `scripts/sign_registry_import.py`) |
 | `GET` | `/api/citizens/orphans` | List orphan biometric files |
 | `POST` | `/api/citizens/orphans/cleanup` | Supervisor erases orphans |
 

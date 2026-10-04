@@ -34,6 +34,8 @@ Never raises: any failure degrades to status="inconclusive", score=None.
 from __future__ import annotations
 
 import os
+import threading
+import time as _time
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -42,11 +44,36 @@ from .common import (
     ModuleResult,
     inconclusive_result,
     load_image,
+    load_thresholds,
     new_evidence_path,
     ok_result,
 )
 
 MODULE_NAME = "physical_forgery"
+
+
+# Shared MediaPipe FaceLandmarker for the photo-presence fallback. Creating
+# one per screening (~300ms + model parse) dominated runtime; the cached
+# instance is guarded by a lock because Landmarker.detect is not thread-safe.
+_landmarker_lock = threading.Lock()
+_landmarker = None
+_landmarker_error: Optional[str] = None
+
+
+def _get_cached_landmarker():
+    global _landmarker, _landmarker_error
+    with _landmarker_lock:
+        if _landmarker is not None:
+            return _landmarker
+        try:
+            from .liveness import _face_mesh
+
+            _landmarker = _face_mesh()
+            _landmarker_error = None
+            return _landmarker
+        except Exception as exc:
+            _landmarker_error = f"{type(exc).__name__}: {str(exc)[:120]}"
+            raise
 
 
 
@@ -76,8 +103,17 @@ _WEIGHTS = {
     "print_scan": 0.20, "qr_barcode": 0.10, "security_features": 0.10,
 }
 
-PHYS_HIGH = _env_float("PHYS_HIGH", 0.70)
-PHYS_MODERATE = _env_float("PHYS_MODERATE", 0.40)
+def _phys_thresholds() -> Tuple[float, float]:
+    try:
+        _thr = load_thresholds()
+        high = float(_thr.get("physical_high", 0.7))
+        mod = float(_thr.get("physical_moderate", 0.4))
+    except Exception:
+        high, mod = 0.70, 0.40
+    # Legacy env overrides keep working (PHYS_HIGH/PHYS_MODERATE).
+    high = _env_float("PHYS_HIGH", high)
+    mod = _env_float("PHYS_MODERATE", mod)
+    return high, mod
 
 _CHECK_ORDER = ["layout", "font_consistency", "photo_boundary",
                 "print_scan", "qr_barcode", "security_features"]
@@ -399,31 +435,25 @@ def _portrait_face_present(bgr: np.ndarray) -> bool:
     Used only when no closed frame quad is found, to distinguish a
     frameless design / tilted capture (face present, low suspicion) from
     a missing/destroyed photo (no face either, genuinely alarming).
-    Uses the MediaPipe FaceLandmarker (same model as liveness) — Haar
-    cascades are absent from headless OpenCV builds.
+    Uses the cached MediaPipe FaceLandmarker (same model as liveness) — Haar
+    cascades are absent from headless OpenCV builds. Never raises.
     """
     try:
-        import mediapipe as mp
+        from .liveness import mp_image as _mp_image
 
-        from .liveness import _face_mesh
-
-        landmarker = _face_mesh()
-        try:
+        landmarker = _get_cached_landmarker()
+        with _landmarker_lock:
             h, w = bgr.shape[:2]
             for x0 in (0, w // 2):
                 half = bgr[0:int(h * 0.7), x0:x0 + w // 2]
                 rgb = half[:, :, ::-1]
-                res = landmarker.detect(
-                    mp.Image(image_format=mp.ImageFormat.SRGB,
-                             data=np.ascontiguousarray(rgb, dtype=np.uint8)))
+                mp_img, _ = _mp_image(np.ascontiguousarray(rgb, dtype=np.uint8))
+                if mp_img is None:
+                    return False
+                res = landmarker.detect(mp_img)
                 if res and res.face_landmarks:
                     return True
             return False
-        finally:
-            try:
-                landmarker.close()
-            except Exception:
-                pass
     except Exception:
         return False
 
@@ -705,7 +735,8 @@ def _render_evidence(bgr: np.ndarray, gray: np.ndarray, per_check: dict,
     cv2.putText(canvas, "PHOTO", (w - pw + 6, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 160), 2, cv2.LINE_AA)
 
     bar = np.zeros((54, w, 3), np.uint8)
-    colour = (60, 60, 200) if score >= PHYS_HIGH else ((0, 170, 230) if score >= PHYS_MODERATE else (40, 160, 60))
+    _hi, _mo = _phys_thresholds()
+    colour = (60, 60, 200) if score >= _hi else ((0, 170, 230) if score >= _mo else (40, 160, 60))
     cv2.rectangle(bar, (0, 0), (w, 54), colour, -1)
     fired = [k for k, v in per_check.items() if v.get("status") == "ok" and v.get("score", 0) >= 0.5]
     txt = f"physical forgery {score:.2f} | " + (", ".join(fired) if fired else "no check fired")
@@ -750,8 +781,20 @@ def run_physical_forgery(
         return inconclusive_result(MODULE_NAME, exc)
 
     doc_type = _norm_type(document_type_hint)
+    _t0 = _time.perf_counter()
+    _BUDGET = 5.0  # hard module budget (tests assert <5s)
+    _PER_CHECK = 1.5
     per_check: Dict[str, dict] = {}
     for name in _CHECK_ORDER:
+        # Total-budget guard: stop starting new checks once the budget is
+        # nearly exhausted; remaining legs report timed_out (excluded from
+        # scoring exactly like any other unavailable leg).
+        if _time.perf_counter() - _t0 >= _BUDGET - 0.3:
+            per_check[name] = {"score": 0.0, "status": "inconclusive",
+                               "details": {"reason": "timed_out: total budget exhausted"},
+                               "weight": _WEIGHTS[name]}
+            continue
+        _c0 = _time.perf_counter()
         try:
             if name == "layout":
                 s, st, d = _check_layout(bgr, gray, doc_type)
@@ -765,10 +808,17 @@ def run_physical_forgery(
                 s, st, d = _check_qr(bgr, doc_number_hint)
             else:
                 s, st, d = _check_security_features(bgr, gray)
+            if _time.perf_counter() - _c0 > _PER_CHECK:
+                d = {**(d or {}), "timed_out": True,
+                     "note": "per-check budget exceeded — result kept, review advised"}
+            # Contract: per-check status is ok (scored) or inconclusive
+            # (excluded from scoring); never a third "error" state.
+            if st not in ("ok", "not_available"):
+                st = "inconclusive"
             per_check[name] = {"score": round(_clamp01(s), 4), "status": st, "details": d,
                                "weight": _WEIGHTS[name]}
         except Exception as exc:
-            per_check[name] = {"score": 0.0, "status": "error",
+            per_check[name] = {"score": 0.0, "status": "inconclusive",
                                "details": {"error": f"{type(exc).__name__}"}, "weight": _WEIGHTS[name]}
 
     available = {k: v for k, v in per_check.items() if v["status"] == "ok"}

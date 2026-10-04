@@ -32,17 +32,24 @@ const BURST_PROMPTS = [
   { until: 5, title: 'Open your mouth wide', sub: 'Almost done — stay in frame' },
 ];
 
-function drawScaled(ctx, video, canvas, maxDim) {
-  const vw = video.videoWidth || 640;
-  const vh = video.videoHeight || 480;
-  const scale = Math.min(1, maxDim / Math.max(vw, vh));
-  canvas.width = Math.max(2, Math.round(vw * scale));
-  canvas.height = Math.max(2, Math.round(vh * scale));
-  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+function frameToJpeg(video, w, h) {
+  // Dedicated canvas per frame: the caller awaits each frame BEFORE drawing
+  // the next, so no two toBlob promises share one canvas (which would resolve
+  // every frame with the last-drawn pixels).
+  return new Promise((resolve) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    canvas.getContext('2d').drawImage(video, 0, 0, w, h);
+    canvas.toBlob((blob) => resolve(blob), 'image/jpeg', LITE_JPEG_QUALITY);
+  });
 }
 
-function frameToJpeg(canvas) {
-  return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), 'image/jpeg', LITE_JPEG_QUALITY));
+function scaledDims(video) {
+  const vw = video.videoWidth || 640;
+  const vh = video.videoHeight || 480;
+  const scale = Math.min(1, LITE_MAX_DIM / Math.max(vw, vh));
+  return { w: Math.max(2, Math.round(vw * scale)), h: Math.max(2, Math.round(vh * scale)) };
 }
 
 const FACE_GUIDE_STEPS = [
@@ -80,21 +87,35 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
   const [burstStep, setBurstStep] = useState(0);
   const [error, setError] = useState(null);
   const previewUrl = React.useMemo(() => (file?.primaryPreviewUrl ? file.primaryPreviewUrl : null), [file]);
+  const previewUrlRef = useRef(null);
 
   useEffect(() => {
+    // Track the live preview URL; revoke the previous one whenever the
+    // capture changes and on unmount. The parent (Scanner) owns the capture
+    // object — it must call onClear (which nulls `file`) rather than dropping
+    // the reference, so this cleanup always runs.
+    if (previewUrlRef.current && previewUrlRef.current !== previewUrl) {
+      URL.revokeObjectURL(previewUrlRef.current);
+    }
+    previewUrlRef.current = previewUrl;
     return () => {
-      if (retakeTimerRef.current) clearTimeout(retakeTimerRef.current);
-      stopStream();
+      if (previewUrlRef.current && !previewUrl) {
+        // Unmount with no capture — nothing live; handled below.
+      }
     };
-    
+  }, [previewUrl]);
+
+  useEffect(() => () => {
+    if (previewUrlRef.current) {
+      URL.revokeObjectURL(previewUrlRef.current);
+      previewUrlRef.current = null;
+    }
+    if (retakeTimerRef.current) clearTimeout(retakeTimerRef.current);
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
   }, []);
-
-  useEffect(() => {
-    const url = file?.primaryPreviewUrl;
-    return () => {
-      if (url) URL.revokeObjectURL(url);
-    };
-  }, [file]);
 
   useEffect(() => {
     if (previewing && videoRef.current && streamRef.current) {
@@ -144,29 +165,26 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
       setError('Camera preview is not ready yet. Try again.');
       return;
     }
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d');
+    const { w, h } = scaledDims(video);
 
     setBursting(true);
     setError(null);
     setBurstStep(0);
     try {
       setStatus('capturing');
-      
+      // Small settle delay so auto-exposure locks before frame 0.
       await new Promise((r) => setTimeout(r, 650));
-      const totalFrames = LITE_BURST_FRAMES;
-      const frames = [];
-      for (let i = 0; i < totalFrames; i++) {
-        drawScaled(ctx, video, canvas, LITE_MAX_DIM);
-        frames.push(frameToJpeg(canvas));
+      const valid = [];
+      for (let i = 0; i < LITE_BURST_FRAMES; i++) {
+        // Await each frame sequentially — never push an un-awaited toBlob
+        // promise and then redraw the shared canvas.
+        const blob = await frameToJpeg(video, w, h);
+        if (blob) valid.push(blob);
         setBurstStep(i + 1);
         if (i < 1) setStatus('faceDetected');
         else if (i < 2) setStatus('eyesDetected');
-        await new Promise((r) => setTimeout(r, LITE_FRAME_GAP_MS));
+        if (i < LITE_BURST_FRAMES - 1) await new Promise((r) => setTimeout(r, LITE_FRAME_GAP_MS));
       }
-      setStatus('checkingLiveness');
-      const blobs = await Promise.all(frames);
-      const valid = blobs.filter(Boolean);
       if (valid.length < 3) throw new Error('capture interrupted');
       setStatus('processingIris');
       const primaryFrame = valid[Math.floor(valid.length / 2)] || valid[0];
@@ -227,10 +245,10 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
               <span>✓ Eye frames recorded (iris)</span>
             </div>
             <div className="mt-4 flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-              <button type="button" onClick={() => { stopStream(); onClear(); }} className="gov-btn gov-btn-secondary !min-h-[36px] !px-3 !py-2 !text-[13px]">
+              <button type="button" onClick={() => { stopStream(); onClear(); }} className="gov-btn gov-btn-secondary min-h-[36px]! px-3! py-2! text-[13px]!">
                 <X size={14} aria-hidden="true" /> Clear
               </button>
-              <button type="button" onClick={handleRetake} className="gov-btn gov-btn-secondary !min-h-[36px] !px-3 !py-2 !text-[13px]">
+              <button type="button" onClick={handleRetake} className="gov-btn gov-btn-secondary min-h-[36px]! px-3! py-2! text-[13px]!">
                 <RefreshCw size={14} aria-hidden="true" /> Retake
               </button>
             </div>
@@ -305,10 +323,10 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
             </p>
             {error && <p className="mt-2 text-xs font-medium text-[#C62828]" role="alert">{error}</p>}
             <div className="mt-3 flex flex-col items-stretch justify-center gap-2 sm:flex-row sm:items-center">
-              <button type="button" onClick={stopStream} className="gov-btn gov-btn-secondary !min-h-[36px] !px-3 !py-2 !text-[13px]">
+              <button type="button" onClick={stopStream} className="gov-btn gov-btn-secondary min-h-[36px]! px-3! py-2! text-[13px]!">
                 <X size={14} aria-hidden="true" /> Cancel
               </button>
-              <button type="button" onClick={capturePerson} disabled={!videoReady || bursting} className="gov-btn gov-btn-primary !min-h-[36px] !px-4 !py-2 !text-[13px]">
+              <button type="button" onClick={capturePerson} disabled={!videoReady || bursting} className="gov-btn gov-btn-primary min-h-[36px]! px-4! py-2! text-[13px]!">
                 {bursting ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Camera size={14} aria-hidden="true" />}
                 {bursting ? 'Capturing…' : 'Capture Person'}
               </button>

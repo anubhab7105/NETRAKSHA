@@ -29,17 +29,24 @@ function setCanonical(href) {
   el.setAttribute('href', href);
 }
 
-
-
-
+function resolveSiteBase() {
+  // SITE_URL is build-time; fall back to the runtime origin (preview deploys,
+  // Railway, localhost) so canonical/OG tags are never empty or localhost-hardcoded.
+  if (SITE_URL) return SITE_URL.replace(/\/+$/, '');
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin.replace(/\/+$/, '');
+  }
+  return '';
+}
 
 
 
 
 export default function SEO({ title, description = DEFAULT_DESCRIPTION, path = '/', noindex = false }) {
   useEffect(() => {
+    const base = resolveSiteBase();
     const fullTitle = title ? `${title} — ${SITE_NAME}` : `${SITE_NAME} — ${SITE_TAGLINE}`;
-    const canonical = `${SITE_URL}${path}`;
+    const canonical = `${base}${path}`;
 
     document.title = fullTitle;
     setMeta('name', 'description', description);

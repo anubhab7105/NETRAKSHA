@@ -216,18 +216,33 @@ class MockWatchlistProvider(DBWatchlistProvider):
 
 
 _default_provider: Optional[WatchlistProvider] = None
+_provider_lock: Optional[object] = None
+
+
+def _get_lock():
+    global _provider_lock
+    if _provider_lock is None:
+        import threading as _th
+        _provider_lock = _th.Lock()
+    return _provider_lock
 
 
 def get_watchlist_provider() -> WatchlistProvider:
     """Get the global watchlist provider (creates MockWatchlistProvider on first call)."""
     global _default_provider
     if _default_provider is None:
-        _default_provider = MockWatchlistProvider()
+        with _get_lock():
+            if _default_provider is None:
+                _default_provider = MockWatchlistProvider()
     return _default_provider
 
 
 def set_watchlist_provider(provider: WatchlistProvider) -> None:
-    """Override the global watchlist provider (e.g. for production deployment).
+    """Override the global watchlist provider (copy-on-write + lock).
+
+    The whole provider object is swapped atomically under a lock; readers
+    always see a complete list, never a partially-mutated one. Never mutate
+    ``provider._entries`` in place after publishing.
 
     Production note (audit P2 §2): In a production deployment, call this at
     startup with a ``DBWatchlistProvider`` instance backed by the
@@ -237,7 +252,8 @@ def set_watchlist_provider(provider: WatchlistProvider) -> None:
     against SQLAlchemy's ``WatchlistEntry`` model.
     """
     global _default_provider
-    _default_provider = provider
+    with _get_lock():
+        _default_provider = provider
 
 
 def check_watchlist(

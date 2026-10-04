@@ -1,18 +1,27 @@
 """Generate specimen/sample test data for the ML/CV pipeline modules.
 
-East-member script — NOT part of the runtime pipeline.
+Test-support script — NOT part of the runtime pipeline.
 
 Produces, under ``samples/``:
   * faces/                 : sample face photos (openly-licensed academic data)
   * genuine_doc.png        : synthetic passport page w/ ICAO-valid MRZ + a face
   * tampered_doc.png       : the same doc, with a copied region (duplicate) and
                              re-encoded, to exercise ELA + SHA1 exact-duplicate copy-move
-  * live_faces/            : frames used for face-match / liveness test assets
+  * live/                  : liveness bursts (blink_burst_*.png, static_burst_*.png)
+                             used for face-match / liveness test assets
+  * evidence/              : output dir for pipeline evidence overlays (created
+                             empty; the pipeline writes here at runtime)
 
 Only sample/specimen data is used — never a real person's government ID.
 
 The face photos come from the Olivetti faces dataset (publicly-licensed
 academic sample photographs; fetched via scikit-learn and cached here).
+
+Usage:
+    python samples/make_samples.py [--skip-liveness]
+
+Pass --skip-liveness on machines without the MediaPipe face_landmarker model
+or offline (skips blink/static burst synthesis, keeps docs + faces).
 """
 
 from __future__ import annotations
@@ -73,19 +82,34 @@ def fetch_faces() -> None:
 
 def _font(size):
     for cand in ["/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]:
+                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                 "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+                 "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf"]:
         if os.path.exists(cand):
             return ImageFont.truetype(cand, size)
+    # Linux bundle hint: MRZ needs a monospace TTF; the Pillow bitmap fallback
+    # renders unreadable MRZ. Install one with:
+    #   sudo apt-get install -y fonts-dejavu-core
+    print("[warn] no monospace TTF found — MRZ will use Pillow's bitmap font "
+          "(install fonts-dejavu-core for readable specimens)", file=sys.stderr)
     return ImageFont.load_default()
 
 
 def _build_mrz(surname="SPECIMEN", given="JASMINE", doc_no="L898902C3",
                country="UTO", nationality="UTO", dob="691204", sex="F",
                expiry="280312", personal="Z3456789"):
-    """Construct two valid ICAO TD3 MRZ lines (44 chars each)."""
+    """Construct two valid ICAO TD3 MRZ lines (44 chars each).
+
+    Per ICAO 9303 TD3, the final (composite) check digit covers line-2
+    positions 1-10 (document number + its check), 14-20 (DOB + check) and
+    22-43 (expiry + check + personal number) — 1-indexed. In 0-indexed
+    slices that is line2[0:10] + line2[13:20] + line2[21:43]. Line 1 is
+    NOT part of the TD3 composite (TD1 differs — do not mix them up).
+    """
 
     line1 = "P<" + country + surname + "<<" + given + "<" * 3
     line1 = line1.ljust(44, "<")
+    assert len(line1) == 44, f"MRZ line1 must be 44 chars, got {len(line1)}"
 
 
     doc_block = doc_no
@@ -109,6 +133,7 @@ def _build_mrz(surname="SPECIMEN", given="JASMINE", doc_no="L898902C3",
     comp = str(check_digit(composite_block))
     line2 = line2[:43] + comp
     line2 = line2.ljust(44, "<")
+    assert len(line2) == 44, f"MRZ line2 must be 44 chars, got {len(line2)}"
     return line1, line2, doc_block, dob_block, exp_block
 
 
@@ -324,7 +349,7 @@ def _write_burst(frames, stem: pathlib.Path):
 
 
 
-def main():
+def main(skip_liveness: bool = False):
     _ensure_dirs()
     imgs = _get_olivetti()
 
@@ -343,6 +368,10 @@ def main():
     cv2.imwrite(str(SAMPLES / "tampered_doc.png"), tampered)
     print("documents written")
 
+    if skip_liveness:
+        print("skipping liveness bursts (--skip-liveness)")
+        print("sample assets ready under", SAMPLES)
+        return
 
 
     burst_face = _face_bgr(imgs, 3, 0, size=(512, 512))
@@ -352,4 +381,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    _ap = argparse.ArgumentParser(description="Generate specimen/sample test data.")
+    _ap.add_argument("--skip-liveness", action="store_true",
+                     help="Skip MediaPipe liveness-burst synthesis (offline / no model).")
+    _args = _ap.parse_args()
+    main(skip_liveness=_args.skip_liveness)

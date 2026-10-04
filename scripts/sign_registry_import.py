@@ -47,13 +47,44 @@ def _load_secret(explicit: str | None) -> str:
     if env:
         return env
 
+    # Minimal .env parser (no dependency): KEY=VALUE, skips blanks/comments,
+    # strips matching single/double quotes. For full dotenv semantics use
+    # python-dotenv; this covers the generated root .env shape.
     dotenv = Path(__file__).resolve().parent.parent / ".env"
     if dotenv.is_file():
         for line in dotenv.read_text().splitlines():
             line = line.strip()
-            if line.startswith("REGISTRY_IMPORT_SECRET="):
-                return line.split("=", 1)[1].strip().strip('"').strip("'")
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            if key.strip() != "REGISTRY_IMPORT_SECRET":
+                continue
+            val = val.strip()
+            if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+                val = val[1:-1]
+            # tolerate `export KEY=...`
+            return val.strip()
     raise SystemExit("REGISTRY_IMPORT_SECRET not found: pass --secret or set the env var.")
+
+
+# Caps: the import endpoint pages in memory — refuse absurd batches early.
+MAX_RECORDS = 5000
+REQUIRED_RECORD_KEYS = ("document_type", "document_number", "full_name")
+
+
+def _validate_batch(payload: dict) -> list:
+    if not isinstance(payload, dict) or not payload.get("batch_ref") or not isinstance(payload.get("records"), list):
+        raise SystemExit("Batch must be {batch_ref: str, records: [...]}")
+    records = payload["records"]
+    if len(records) > MAX_RECORDS:
+        raise SystemExit(f"Batch too large: {len(records)} records (max {MAX_RECORDS}). Split it.")
+    for i, rec in enumerate(records):
+        if not isinstance(rec, dict):
+            raise SystemExit(f"records[{i}]: must be an object")
+        missing = [k for k in REQUIRED_RECORD_KEYS if not rec.get(k)]
+        if missing:
+            raise SystemExit(f"records[{i}]: missing required keys: {', '.join(missing)}")
+    return records
 
 
 def main() -> int:
@@ -68,8 +99,7 @@ def main() -> int:
         payload = json.loads(raw_in.decode())
     except Exception as e:
         raise SystemExit(f"Invalid JSON in {args.batch_file}: {e}")
-    if not isinstance(payload, dict) or not payload.get("batch_ref") or not isinstance(payload.get("records"), list):
-        raise SystemExit("Batch must be {batch_ref: str, records: [...]}")
+    records = _validate_batch(payload)
 
 
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -83,7 +113,7 @@ def main() -> int:
     out = Path(args.batch_file).with_suffix(".canonical.json")
     out.write_bytes(canonical)
     print(f"canonical body : {out} ({len(canonical)} bytes)")
-    print(f"records        : {len(payload['records'])}  batch: {payload['batch_ref']}")
+    print(f"records        : {len(records)}  batch: {payload['batch_ref']}")
     print(f"X-Import-Signature: {sig}")
     print("POST the canonical file bytes unchanged with that header.")
     return 0

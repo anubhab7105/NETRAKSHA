@@ -60,6 +60,14 @@ _face_analysis_lock = threading.Lock()
 _face_analysis = None
 _provider_used = None
 
+# ONNX Runtime sessions are not thread-safe — all app.get() inference goes
+# through this lock. Embeddings are also memoised per image hash so the
+# 3-way comparison embeds each input once instead of 2x.
+_infer_lock = threading.Lock()
+_emb_cache: dict = {}
+_emb_cache_lock = threading.Lock()
+_EMB_CACHE_MAX = 64
+
 
 
 
@@ -162,6 +170,16 @@ def _get_face_analysis():
             providers=providers,
             allowed_modules=["detection", "recognition"],
         )
+        # Bind ONNX sessions to CPU. ctx_id=-1 forces CPUExecutionProvider
+        # inside each model session (CPU-only policy) and keeps insightface's
+        # auto multi-scale det sizes [(128,128),(640,640)]. Do NOT pass an
+        # explicit det_size=(640,640): single-scale 640 misses faces in small
+        # registry thumbnails (measured: 0 faces on 96px samples vs 1 with
+        # auto sizes), which regresses run_face_match to inconclusive.
+        try:
+            app.prepare(ctx_id=-1)
+        except Exception:
+            pass
 
         bound = app.models.get("recognition")
         provider_used = "unknown"
@@ -238,8 +256,24 @@ def prewarm_local_engine() -> bool:
 
 
 def _detect_faces(app, image_bgr: np.ndarray):
-    """Detect the largest face; return (face, normalized_embedding) or (None,None)."""
-    faces = app.get(image_bgr)
+    """Detect the largest face; return (face, normalized_embedding) or (None,None).
+
+    Thread-safe (ONNX is not) + memoised: repeated comparisons of the same
+    image bytes (the 3-way match embeds doc/live/db twice each) reuse the
+    cached embedding instead of re-running detection.
+    """
+    try:
+        import hashlib
+
+        key = (image_bgr.shape, hashlib.sha1(np.ascontiguousarray(image_bgr).tobytes()).hexdigest())
+        with _emb_cache_lock:
+            hit = _emb_cache.get(key)
+            if hit is not None:
+                return hit
+    except Exception:
+        key = None
+    with _infer_lock:
+        faces = app.get(image_bgr)
     if not faces:
         return None, None, None
 
@@ -252,7 +286,16 @@ def _detect_faces(app, image_bgr: np.ndarray):
     best = max(faces, key=_area)
     emb = np.asarray(best.embedding).reshape(-1)
     norm = emb / (np.linalg.norm(emb) + 1e-9)
-    return best, norm, len(faces)
+    out = (best, norm, len(faces))
+    if key is not None:
+        try:
+            with _emb_cache_lock:
+                if len(_emb_cache) >= _EMB_CACHE_MAX:
+                    _emb_cache.pop(next(iter(_emb_cache)))
+                _emb_cache[key] = out
+        except Exception:
+            pass
+    return out
 
 
 def _render_side_by_side(jpg_doc: np.ndarray, jpg_live: np.ndarray, out_path) -> str:

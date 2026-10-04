@@ -72,7 +72,7 @@ At land border checkpoints, officers manually inspect passports, VISA, Aadhaar, 
 | **CV / Forensics** | OpenCV (`headless`), NumPy, Pillow, PassportEye, pytesseract, scikit-learn | System Tesseract required; no vendored binary |
 | **Face** | InsightFace `buffalo_l` (ArcFace `w600k_r50` + `det_10g`), ONNX Runtime `CPUExecutionProvider` | ~300 MB, gitignored, background prewarm (`backend/app.py:458`) |
 | **Liveness** | MediaPipe `face_landmarker.task` (468-pt, committed at `pipeline/vendor/models/face_landmarker.task`) | EAR + motion + FFT moiré + yaw/mouth |
-| **Iris** | Classical Hough + polar unwrap + Gabor → 512-byte template, Hamming 0.32 (`pipeline/thresholds.json:12`) | `backend/biometric/iris/` |
+| **Iris** | Classical Hough + polar unwrap + Gabor → 512-byte template, Hamming 0.32 (band 0.28–0.36, **experimental uncalibrated prototype**) (`pipeline/thresholds.json:12`) | `backend/biometric/iris/` |
 | **AI Cloud** | `google-genai` SDK, cascade `gemini-flash-lite-latest → gemini-3.5-flash → gemini-3-flash-preview` (`pipeline/gemini_scanner.py:52`) + offline simulation (`is_simulated`) | Never Red-forcing in simulation |
 | **Frontend** | React 19, Vite 8, Tailwind 4, React Router 7, Axios, lucide-react, `oxlint` | JS/JSX only, no TS (`frontend/package.json:1`) |
 | **Infra** | Vercel (SPA + `/api` rewrite → Railway), Railway (FastAPI), Supabase (DB + Storage bucket `img`) | `vercel.json`, `railway.toml`, `Dockerfile` |
@@ -280,11 +280,19 @@ python -m pytest tests/ -v
 
 | Suite | Covers | Key asserts |
 |---|---|---|
-| `tests/test_pipeline.py` | Checksums (Verhoeff/PAN/EPIC/ICAO), demographic (fuzzy/DoB), watchlist, risk engine (Green→Red escalation), Gemini offline simulation, tamper speed | Tamper **< 1.5 s** on both `genuine_doc.png` and `tampered_doc.png` |
+| `tests/test_pipeline.py` | Checksums (Verhoeff/PAN/EPIC/ICAO), demographic (fuzzy/DoB), watchlist, risk engine (Green→Red escalation + boundary floors), Gemini offline simulation, tamper speed (median-of-3, flaky-tolerant) | Tamper **< 1.5 s** median on both `genuine_doc.png` and `tampered_doc.png` |
+| `tests/test_api_contracts.py` | `/screen` idempotency matrix (replay/422/409), RBAC override matrix, `/audit/verify` chain, HMAC registry import, signed evidence bounds + `/evidence/*` 404, Aadhaar masking, boundaries (deepfake/trust/recapture/tamper/face/name/addr), document_quality/fairness/Gemini-parse/OCR-no-Tesseract | Isolated `:memory:` SQLite; heavy pipeline mocked — fast + deterministic |
 | `tests/test_auth_security.py` | Password policy, TOTP (`totp_at`/`verify_totp`/`match_window`), `RateLimiter`, `secret_error`, `is_production` | Isolated `:memory:` SQLite engines — never touches the app DB |
-| `tests/test_face_quality.py` | Capture/face quality gates | Blur/brightness/pose thresholds |
-| `tests/test_physical_forgery.py` | 6 sub-checks (layout/font/frame/moiré/QR/guilloche) | **< 5 s** end-to-end |
-| `tests/test_three_way.py` | `run_three_way_match` completeness + simulated-exclusion | Only `evidence=="local"` registry mismatches force Red |
+| `tests/test_face_quality.py` | Capture/face quality gates | Blur/brightness/pose thresholds (repo-relative `Path(__file__)` samples) |
+| `tests/test_physical_forgery.py` | 6 sub-checks (layout/font/frame/moiré/QR/guilloche) | **< 5 s** median-of-3 end-to-end |
+| `tests/test_three_way.py` | `run_three_way_match` completeness + simulated-exclusion (skips engine legs without `buffalo_l`, still asserts partial/unavailable paths) | Only `evidence=="local"` registry mismatches force Red |
+| `tests/test_liveness_challenge.py` | Liveness challenges (blink/head_turn/mouth_open), static-vs-blink bursts | Blink burst `live`, static burst not-live / `challenge_not_observed` |
+| `tests/test_security_zones.py` | Legacy zone ROIs (template + unknown-type + score bounds) | `security_score` 0–1, `checks` shape, unknown-type never Red-forcing |
+| `tests/test_iris.py` | RGB prototype enroll/match (Hamming threshold + 0.28/0.32/0.36 boundaries, **marked uncalibrated**) | Prototype placeholder — re-calibrate before production |
+| `tests/test_face_engine.py` | Local engine status (never downloads) + late-Gemini gate | `local_engine_status()` shape, `_needs_late_gemini_face` matrix |
+| `tests/test_screen_flow.py` | Full `/api/screen` integration (requires system Tesseract; skipped otherwise) | Verdict set, modules persisted, idempotent replay |
+| `tests/test_registry_photo.py` | Registry photo resolver (local/remote/traversal) | Explicit `db_pairs_unavailable_reason`, never raises |
+| `tests/test_pdf_report.py` | Forensic PDF generation | Valid `%PDF` bytes, masked PII |
 
 The default `GEMINI_API_KEY=""` in `.env.example` is intentional — tests assert `is_simulated=True` and that simulated scores never force Red. CPU-only; InsightFace uses `CPUExecutionProvider`; sub-2.5 s end-to-end (sequential OCR + 3× local face + Gemini) is aspirational.
 
@@ -324,8 +332,8 @@ Specimen `samples/genuine_doc.png` / `samples/tampered_doc.png` (ICAO MRZ `L8989
 
 Preserved honestly — do not claim these as done until implemented:
 
-- **Violet `MOCKED DATA` badge** and **Aadhaar `XXXX-XXXX-1234` masking** are spec'd but **unimplemented** (the badge currently renders as `HIT`/`CLEAR` chips + `is_mocked` notice).
-- `VITE_SITE_URL` has a triple-default (`vite.config.js` / `vercel.json` / docs) — not yet single-sourced.
+- **Violet `MOCKED DATA` badge** is partially implemented (renders as `HIT`/`CLEAR` chips + `is_mocked` notice; full violet badge still open). **Aadhaar `XXXX-XXXX-1234` masking** is implemented server-side (`mask_document_number()` in `backend/app.py`, applied in `GET /api/cases/{id}`).
+- `VITE_SITE_URL` default (`https://netraksha.xyz`) is defined once in `frontend/vite.config.js:8` (overridable via env); `vercel.json` sets no `SITE_URL` and docs mirror the default — keep them in sync on domain change.
 - `og-image` extension mismatch and `public/%SITE_URL%` placeholder are open bugs.
 - `EvidenceImage` component hardcodes `/api` instead of `api.defaults.baseURL`.
 - `handleVerify` is duplicated in two views.

@@ -2,7 +2,7 @@
 
 Sends a single multi-image request to a configured Google Gemini model
 (see GEMINI_MODELS / GEMINI_MODEL, default cascade:
-  gemini-flash-lite-latest → gemini-3.5-flash → gemini-3-flash-preview)
+  gemini-3.6-flash → gemini-flash-lite-latest → gemini-3.5-flash)
 containing:
   1. Uploaded Document Image
   2. Live Webcam Capture Still
@@ -21,7 +21,7 @@ Misconfiguration note: a non-Google key (valid Google keys start with
 `AIza`) or all models failing fails exactly like a network outage —
 `is_simulated=True` + `cloud_unavailable=True` — and the case is floored
 at Yellow. Check the `[gemini_scanner]` log line and `.env`
-(`GEMINI_API_KEY`, `GEMINI_MODELS=gemini-flash-lite-latest,gemini-3.5-flash`)
+(`GEMINI_API_KEY`, `GEMINI_MODELS=gemini-3.6-flash,gemini-flash-lite-latest`)
 first when the UI shows "CLOUD UNAVAILABLE — Local Checks Only".
 """
 
@@ -439,11 +439,105 @@ def _call_gemini(
 
     text = response.text.strip()
 
-    if text.startswith("```"):
-        text = text.split("\n", 1)[1]
-        if text.endswith("```"):
-            text = text[:-3]
-    return json.loads(text)
+    return _parse_gemini_json(text)
+
+
+_FENCE_RE = None
+
+
+def _fence_re():
+    global _FENCE_RE
+    if _FENCE_RE is None:
+        import re as _re
+
+        # Matches ```json ... ``` / ``` ... ``` / bare JSON, tolerating
+        # leading prose and trailing whitespace. DOTALL so multi-line
+        # payloads survive; non-greedy so trailing commentary is dropped.
+        _FENCE_RE = _re.compile(
+            r"```(?:json)?\s*(?P<fenced>\{.*?\})\s*```|(?P<bare>\{.*\})",
+            _re.DOTALL | _re.IGNORECASE,
+        )
+    return _FENCE_RE
+
+
+_REQUIRED_TOP_KEYS = (
+    "document_type", "classification_confidence", "demographics",
+    "three_way_face_match", "photo_tamper_anomaly",
+)
+
+
+def _parse_gemini_json(text: str) -> dict:
+    """Strip code fences (regex) + schema-validate the cloud payload.
+
+    Never raises: fence misses or schema violations raise ValueError so the
+    cascade treats the model as failed and tries the next model / offline
+    simulation (fail-closed, never a half-parsed verdict).
+    """
+    import re as _re
+
+    raw = (text or "").strip()
+    if not raw:
+        raise ValueError("empty Gemini response")
+    m = _fence_re().search(raw)
+    candidate = None
+    if m:
+        candidate = m.group("fenced") or m.group("bare") or raw
+    else:
+        candidate = raw
+    # Tolerate a second fence layer / surrounding prose remnants.
+    candidate = candidate.strip()
+    if candidate.startswith("```"):
+        candidate = _re.sub(r"^```(?:json)?\s*", "", candidate, flags=_re.IGNORECASE)
+        candidate = _re.sub(r"\s*```$", "", candidate)
+    payload = json.loads(candidate)
+    if not isinstance(payload, dict):
+        raise ValueError("Gemini payload is not a JSON object")
+    missing = [k for k in _REQUIRED_TOP_KEYS if k not in payload]
+    if missing:
+        raise ValueError(f"Gemini payload missing keys: {missing}")
+    demo = payload.get("demographics")
+    fm = payload.get("three_way_face_match")
+    if not isinstance(demo, dict) or not isinstance(fm, dict):
+        raise ValueError("Gemini demographics/face block malformed")
+    return payload
+
+
+def scan_document_module(
+    document_image_path,
+    live_capture_path=None,
+    db_reference_path=None,
+    timeout: float = 10.0,
+):
+    """ModuleResult-wrapped scan for pipeline callers (never raises).
+
+    Real cloud verdicts → ok; offline simulation / unparsable cloud →
+    inconclusive with the simulated payload preserved in raw_output for the
+    DEMO path (which caps simulated signals at Yellow downstream).
+    """
+    try:
+        from .common import inconclusive_result as _inconclusive, ok_result as _ok
+    except Exception:  # pragma: no cover — package import invariant
+        from pipeline.common import inconclusive_result as _inconclusive, ok_result as _ok
+    try:
+        result = scan_document(
+            document_image_path, live_capture_path, db_reference_path, timeout=timeout)
+    except Exception as exc:
+        return _inconclusive("gemini_ai", exc)
+    try:
+        if result.get("is_simulated"):
+            return _inconclusive(
+                "gemini_ai",
+                f"offline simulation ({result.get('cloud_fallback_reason', 'no_api_key')}) — "
+                "cloud verdicts unavailable, manual review required",
+            )
+        conf = result.get("classification_confidence", 0.0)
+        try:
+            score = float(conf)
+        except (TypeError, ValueError):
+            score = 0.0
+        return _ok("gemini_ai", score, result, None)
+    except Exception as exc:
+        return _inconclusive("gemini_ai", exc)
 
 
 
