@@ -279,13 +279,13 @@ export default function PersonBiometricCapture({ file, onCapture, onClear, facin
         ) : (
           <>
             <div className="relative">
-              <video ref={videoRef} autoPlay playsInline muted onLoadedMetadata={() => setVideoReady(true)} className="h-[180px] w-full rounded-lg border border-[#D9DEE7] bg-[#172033] object-contain sm:h-[220px] md:h-[180px]" />
+              <video ref={videoRef} autoPlay playsInline muted onLoadedMetadata={() => setVideoReady(true)} className="aspect-video h-auto max-h-[260px] w-full rounded-lg border border-[#D9DEE7] bg-[#172033] object-contain" />
               {}
               <div className="pointer-events-none absolute inset-0 flex items-center justify-center" aria-hidden="true">
-                <div className="h-52 w-40 rounded-2xl border-2 border-[#1769AA]/70" />
-                <div className="absolute top-[38%] flex gap-6">
-                  <div className="h-6 w-10 rounded-full border border-white/60" />
-                  <div className="h-6 w-10 rounded-full border border-white/60" />
+                <div className="aspect-[3/4] h-[85%] max-h-full w-auto max-w-[60%] rounded-2xl border-2 border-[#1769AA]/70" />
+                <div className="absolute top-[38%] flex w-[36%] max-w-[180px] justify-between">
+                  <div className="aspect-[5/3] w-[30%] rounded-full border border-white/60" />
+                  <div className="aspect-[5/3] w-[30%] rounded-full border border-white/60" />
                 </div>
               </div>
               {bursting && (

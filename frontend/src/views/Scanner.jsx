@@ -140,7 +140,7 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
             <p className="flex items-center gap-1.5 text-sm font-semibold text-[#16803C]">
               <CheckCircle2 size={15} aria-hidden="true" /> Captured
             </p>
-            <p className="mt-1 max-w-full truncate text-sm font-medium text-[#172033] sm:max-w-[260px]">{file.name}</p>
+            <p className="mt-1 max-w-full text-sm font-medium break-all text-[#172033] sm:max-w-[260px]" title={file.name}>{file.name}</p>
             <p className="mt-1 text-xs text-[#98A2B3]">{(file.size / 1024).toFixed(1)} KB</p>
             <div className="mt-4 flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
               <button
@@ -170,7 +170,7 @@ function WebcamCapture({ label, hint, facing, subject, file, onCapture, onClear,
               playsInline
               muted
               onLoadedMetadata={() => setVideoReady(true)}
-              className="h-[180px] w-full rounded-lg border border-[#D9DEE7] bg-[#172033] object-contain sm:h-[220px] md:h-[180px]"
+              className="aspect-video h-auto max-h-[260px] w-full rounded-lg border border-[#D9DEE7] bg-[#172033] object-contain"
             />
             {bursting && (
               <div className="absolute inset-0 flex flex-col items-center justify-center rounded-lg bg-[#172033]/80">
@@ -419,7 +419,7 @@ export default function Scanner() {
         <h2 className="gov-card-title">Verification Workflow</h2>
         <p className="gov-meta mt-0.5">Stages run automatically after you initiate screening. Technical evidence appears in the case report.</p>
         <div className="mt-4">
-          <WorkflowSteps activeIndex={scanning ? 4 : 0} />
+          <WorkflowSteps activeIndex={scanning ? 4 : 0} compact />
         </div>
       </section>
 

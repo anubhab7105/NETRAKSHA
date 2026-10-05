@@ -41,7 +41,7 @@ function GovTopBar() {
             Government of India · Ministry of Home Affairs
           </p>
           <p className="truncate text-[15px] font-bold text-[#123B66]">
-            NETRAKSHA <span className="font-medium text-[#667085]">— AI-Based Identity Verification</span>
+            NETRAKSHA <span className="hidden font-medium text-[#667085] min-[420px]:inline">— AI-Based Identity Verification</span>
           </p>
         </div>
         <div className="ml-auto hidden items-center gap-3 sm:flex">

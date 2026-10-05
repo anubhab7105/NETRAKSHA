@@ -50,7 +50,7 @@ export function PageHeader({ title, subtitle, actions }) {
         <h1 className="gov-page-title">{title}</h1>
         {subtitle && <p className="gov-subtitle">{subtitle}</p>}
       </div>
-      {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
+      {actions && <div className="flex min-w-0 flex-wrap items-center gap-2">{actions}</div>}
     </header>
   );
 }
@@ -102,17 +102,19 @@ export function WorkflowSteps({ activeIndex = 0, compact = false }) {
         const done = i < activeIndex;
         const current = i === activeIndex;
         return (
-          <li key={label} className="flex min-w-0 flex-1 items-start" style={{ minWidth: 92 }}>
+          <li key={label} className="flex min-w-0 flex-1 items-start" style={{ minWidth: compact ? 40 : 76 }}>
             <div className="flex w-full flex-col items-center gap-1.5 text-center">
               <span className={`gov-step-dot ${done ? 'gov-step-done' : current ? 'gov-step-current' : ''}`} aria-hidden="true">
                 {done ? '✓' : i + 1}
               </span>
+              {!compact && (
               <span
-                className={`text-[11px] leading-tight ${current ? 'font-semibold text-[#123B66]' : done ? 'font-medium text-[#172033]' : 'text-[#98A2B3]'}`}
+                className={`text-[10px] leading-tight min-[480px]:text-[11px] ${current ? 'font-semibold text-[#123B66]' : done ? 'font-medium text-[#172033]' : 'text-[#98A2B3]'}`}
                 aria-current={current ? 'step' : undefined}
               >
                 {label}
               </span>
+              )}
             </div>
             {i < VERIFICATION_STEPS.length - 1 && (
               <div className={`mx-1 mt-3 h-px flex-1 ${done ? 'bg-[#123B66]' : 'bg-[#D9DEE7]'}`} aria-hidden="true" />

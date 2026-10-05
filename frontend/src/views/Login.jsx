@@ -214,7 +214,7 @@ export default function Login() {
                       autoComplete="one-time-code"
                       value={mfaCode}
                       onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                      className="gov-input gov-input-with-icon text-center tracking-[0.5em]"
+                      className="gov-input gov-input-with-icon text-center tracking-[0.3em] min-[380px]:tracking-[0.5em]"
                       placeholder="••••••"
                       required
                     />

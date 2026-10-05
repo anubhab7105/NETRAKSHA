@@ -147,6 +147,11 @@
     cursor: pointer;
     transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
     white-space: nowrap;
+    max-width: 100%;
+  }
+  /* Narrow phones: let long button labels wrap instead of overflowing the card */
+  @media (max-width: 380px) {
+    .gov-btn { white-space: normal; text-align: center; line-height: 1.4; }
   }
   .gov-btn:disabled { opacity: 0.55; cursor: not-allowed; }
   .gov-btn-primary {
@@ -239,7 +244,7 @@
     box-shadow: var(--shadow-gov);
     overflow: hidden;
   }
-  .gov-table-scroll { overflow-x: auto; }
+  .gov-table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: thin; }
   table.gov-table { width: 100%; border-collapse: collapse; font-size: 14px; }
   table.gov-table thead th {
     background: #F1F4F9;
@@ -274,7 +279,10 @@
     border-radius: 6px;
     border: 1px solid transparent;
     white-space: nowrap;
+    max-width: 100%;
   }
+  /* Opt-in wrapping badge for long dynamic text (keeps icon + text together) */
+  .gov-badge-wrap { white-space: normal; text-align: left; line-height: 1.4; }
   .gov-badge-green { background: var(--color-success-bg); color: var(--color-success); border-color: rgb(22 128 60 / 0.28); }
   .gov-badge-amber { background: var(--color-warning-bg); color: var(--color-warning); border-color: rgb(183 121 31 / 0.3); }
   .gov-badge-red { background: var(--color-danger-bg); color: var(--color-danger); border-color: rgb(198 40 40 / 0.28); }

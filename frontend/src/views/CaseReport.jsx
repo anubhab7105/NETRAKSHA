@@ -64,7 +64,7 @@ const VerdictCard = ({ verdict, riskScore, anomalyCount, similarity }) => {
         </div>
         {
 }
-        <dl className="grid w-full shrink-0 grid-cols-1 gap-2 min-[480px]:grid-cols-3 sm:w-auto sm:grid-cols-1 sm:min-w-[190px] lg:grid-cols-3 lg:min-w-[320px]">
+        <dl className="grid w-full shrink-0 grid-cols-1 gap-2 min-[480px]:grid-cols-3 lg:min-w-[320px]">
           <div className="rounded-lg border border-[#D9DEE7] bg-[#F7F8FA] px-3 py-2 text-center">
             <dt className="text-[11px] font-semibold uppercase tracking-wide text-[#667085]">Risk Score</dt>
             <dd className="text-lg font-bold text-[#172033]">{riskScore != null ? `${Math.round(Number(riskScore) > 1 ? Number(riskScore) : Number(riskScore) * 100)} / 100` : '—'}</dd>
@@ -426,7 +426,7 @@ export default function CaseReport() {
           <h2 className="gov-card-title">Verification Summary</h2>
           <span className="gov-badge gov-badge-grey">Verification Engine</span>
         </div>
-        <div className="grid grid-cols-1 gap-x-8 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-x-8 sm:grid-cols-2">
           {summaryRows.map((r) => (
             <CheckRow key={r.label} label={r.label} state={r.state} detail={r.detail} />
           ))}
@@ -667,7 +667,7 @@ export default function CaseReport() {
                       <span>unavailable</span>
                     )}
                     {faceMatch.pair_sources && (
-                      <div className="mt-1 font-mono text-[11px]">
+                      <div className="mt-1 font-mono text-[11px] break-all">
                         live↔doc: {faceMatch.pair_sources.live_vs_doc || 'n/a'} · doc↔db: {faceMatch.pair_sources.doc_vs_db || 'n/a'} · live↔db: {faceMatch.pair_sources.live_vs_db || 'n/a'}
                       </div>
                     )}
@@ -764,7 +764,7 @@ export default function CaseReport() {
       {}
       <section aria-label="Analysis details" className="space-y-3">
         <h2 className="gov-section-title">Analysis Details</h2>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <Details title="Deepfake Detection">
             {deepfakeModule ? (
               <div className="space-y-2 text-sm">
@@ -991,7 +991,7 @@ export default function CaseReport() {
             <p className="text-sm text-[#667085]">No provenance recorded for this case (created before provenance tracking).</p>
           ) : (
             <div className="space-y-3 font-mono text-xs">
-              <div className="grid grid-cols-2 gap-3 text-[#172033]">
+              <div className="grid grid-cols-1 gap-3 text-[#172033] sm:grid-cols-2">
                 <div><span className="text-[#667085]">Code:</span> {provenance.provenance.code_version?.slice(0, 12) || '—'}</div>
                 <div><span className="text-[#667085]">At:</span> {provenance.provenance.timestamp ? new Date(provenance.provenance.timestamp).toLocaleString('en-IN') : '—'}</div>
                 <div><span className="text-[#667085]">Face thr:</span> {provenance.provenance.thresholds?.face_match}</div>

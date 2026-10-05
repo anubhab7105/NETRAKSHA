@@ -137,7 +137,7 @@ export default function AuditTrail() {
         </div>
         <button
           type="submit"
-          className="gov-btn gov-btn-primary"
+          className="gov-btn gov-btn-primary w-full sm:w-auto"
         >
           <Search size={16} aria-hidden="true" /> Apply Filters
         </button>

@@ -183,7 +183,7 @@ export default function SecuritySetup() {
                     {mfaQr && (
                       <div className="mb-3 flex flex-col items-center">
                         <img src={mfaQr} alt="MFA enrollment QR code — scan with your authenticator app"
-                          className="h-44 w-44 rounded-lg border border-[#D9DEE7] bg-white p-2" />
+                          className="h-44 max-h-full w-44 max-w-full rounded-lg border border-[#D9DEE7] bg-white p-2" />
                         <p className="gov-help mt-2 text-center">
                           Scan this with your authenticator app — no typing needed.
                         </p>
