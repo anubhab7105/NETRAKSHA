@@ -36,6 +36,15 @@ _IS_PROD = _APP_ENV == "production"
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
+try:
+    # Explicit repo-root .env (override=False): explicit process env keeps
+    # precedence; fixes CWD-dependent bare load_dotenv() misses.
+    from dotenv import load_dotenv as _load_dotenv
+
+    _load_dotenv(_PROJECT_ROOT / ".env")
+except Exception:
+    pass
+
 _RAW_URL = os.environ.get("DATABASE_URL", "").strip()
 
 IS_SQLITE = False
@@ -161,10 +170,9 @@ async def init_db() -> None:
         await ensure_auth_columns()
     except Exception as e:
         print(f"[init_db] auth-column migration warning: {e}")
-    try:
-        await ensure_audit_text_columns()
-    except Exception as e:
-        print(f"[init_db] audit text-column migration warning: {e}")
+    # NOTE: there is intentionally no ensure_audit_text_columns() — AuditLog
+    # text widening is covered by the generic ensure_model_columns() drift
+    # reconciliation above. Do not re-add a dedicated call.
 
 
 async def _sqlite_table_columns(conn, table_name: str) -> set:

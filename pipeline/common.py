@@ -157,6 +157,12 @@ for _cand in (
 _SYSTEM_TESSBIN = None
 if _SYSTEM_TESSDATA is None:
     _win_candidates = [shutil.which("tesseract")]
+    # Configurable override (cross-platform): TESSERACT_CMD may point at the
+    # binary directly, e.g. C:\Program Files\Tesseract-OCR\tesseract.exe.
+    # Checked before the standard Windows install path below.
+    _env_tess = (os.environ.get("TESSERACT_CMD") or "").strip().strip('"')
+    if _env_tess:
+        _win_candidates.insert(0, _env_tess)
     for _pf in (os.environ.get("ProgramFiles", r"C:\Program Files"),
                 os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")):
         _win_candidates.append(str(pathlib.Path(_pf) / "Tesseract-OCR" / "tesseract.exe"))

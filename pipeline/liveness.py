@@ -94,12 +94,18 @@ _FACELANDMARKER_TASK = os.path.join(
 
 
 def mediapipe_tasks_available() -> bool:
-    """True when the mediapipe>=1.0 tasks API (FaceLandmarker) is importable."""
+    """True when the mediapipe>=1.0 tasks API (FaceLandmarker) is importable.
+
+    Catches ImportError (not installed) AND OSError (native C-bindings
+    blocked — e.g. Windows Application Control / AppLocker / Smart App
+    Control refusing mediapipe_c_bindings) so a native loading failure
+    degrades to inconclusive instead of crashing callers or startup.
+    """
     try:
         from mediapipe.tasks import python as _mp_py  # noqa: F401
         from mediapipe.tasks.python import vision as _vision  # noqa: F401
         return True
-    except Exception:
+    except (ImportError, OSError):
         return False
 
 
@@ -178,8 +184,14 @@ def _face_mesh():
         raise ImportError(
             "mediapipe tasks API (mediapipe>=1.0) is not installed"
         )
-    from mediapipe.tasks import python as mp_py
-    from mediapipe.tasks.python import vision
+    try:
+        from mediapipe.tasks import python as mp_py
+        from mediapipe.tasks.python import vision
+    except (ImportError, OSError) as exc:
+        # TOCTOU: availability gate passed but native bindings failed to load
+        # (e.g. blocked by Windows Application Control). Normalize to
+        # ImportError, which callers already degrade to inconclusive.
+        raise ImportError(f"mediapipe tasks API unavailable: {exc}") from exc
 
     if not os.path.exists(_FACELANDMARKER_TASK):
         raise FileNotFoundError(
@@ -379,6 +391,8 @@ def _screen_artifact_score(frame: np.ndarray, bbox) -> float:
 
 def _analyse_burst(frames: List[np.ndarray]) -> dict:
     """Extract EAR, motion and screen-artifact signals across the burst."""
+    if not mediapipe_tasks_available():
+        raise ImportError("mediapipe tasks API unavailable (not installed or native bindings blocked)")
     import mediapipe as mp
 
     landmarker = _face_mesh()

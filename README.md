@@ -157,7 +157,7 @@ At land border checkpoints, officers manually inspect passports, VISA, Aadhaar, 
 |---|---|
 | **Python** | 3.11+ (recommended via `uv`) |
 | **Node.js** | 18+ and npm |
-| **System Tesseract** | Windows: `winget install UB-Mannheim.TesseractOCR` · Debian: `sudo apt-get install -y tesseract-ocr tesseract-ocr-eng` — no vendored binary is shipped |
+| **System Tesseract** | Windows: `winget install UB-Mannheim.TesseractOCR` · Debian: `sudo apt-get install -y tesseract-ocr tesseract-ocr-eng` — no vendored binary is shipped. Windows: auto-detected at `C:\Program Files\Tesseract-OCR\tesseract.exe` even when missing from `PATH`; override with `TESSERACT_CMD` env var (any OS) |
 | **Gemini API Key** | Optional — without it the scanner runs **offline simulation** (`is_simulated=True`, `cloud_unavailable` banner, verdict floored at Yellow). Free key: https://aistudio.google.com/apikey (must start with `AIza`) |
 | **Supabase PostgreSQL** | **Required in production** (`APP_ENV=production` fails fast without `DATABASE_URL`). In dev, absence falls back to local SQLite (`./local_dev.db` or `LOCAL_DB_PATH`) |
 
