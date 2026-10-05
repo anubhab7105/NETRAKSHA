@@ -61,9 +61,14 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
+    // Deferred (like AuditTrail's debounced fetch) so mount-time state updates
+    // run asynchronously — never as synchronous setState inside the effect.
     const controller = new AbortController();
-    fetchCases(controller.signal);
-    return () => controller.abort();
+    const timer = setTimeout(() => fetchCases(controller.signal), 0);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
   }, [fetchCases]);
 
   const safeCases = useMemo(() => (Array.isArray(cases) ? cases : []), [cases]);
