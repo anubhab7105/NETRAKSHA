@@ -26,6 +26,32 @@ the human officer.
 
 __version__ = "0.1.0"
 
+import warnings as _warnings
+
+# AUD-06: narrow, documented suppression of known third-party deprecation
+# FutureWarnings. insightface 2.0 and PassportEye 2.2.2 are installed
+# dependencies (site-packages — not vendored, not project-owned), so their
+# internal scikit-image calls cannot be migrated in-repo:
+#   * insightface/utils/face_align.py uses SimilarityTransform.estimate()
+#     (deprecated since scikit-image 0.26, removal in 2.2)
+#   * passporteye/mrz/image.py uses skimage.morphology.square() (deprecated
+#     since 0.25, removal in 0.27) and skimage.io.imread(plugin=...)
+# Pinning scikit-image <0.25 was rejected (transitive downgrade with numpy-2
+# compat risk). Each filter matches one exact message + module so genuine
+# project warnings still surface.
+for _msg, _mod in (
+    (r"`estimate` is deprecated.*", "insightface\\.utils\\.face_align"),
+    (r"`square` is deprecated.*", "passporteye\\.mrz\\.image"),
+    # Emitted from passporteye/mrz/image.py (attributed to that module):
+    # skimage.io plugin-infrastructure deprecation.
+    (r".*plugin.*deprecated.*", "passporteye\\.mrz\\.image"),
+):
+    _warnings.filterwarnings(
+        "ignore", message=_msg, category=FutureWarning, module=_mod
+    )
+del _msg, _mod
+del _warnings
+
 from .common import ModuleResult
 
 _LAZY_MODULES = {

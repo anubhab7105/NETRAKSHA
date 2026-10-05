@@ -42,24 +42,33 @@ export default function Dashboard() {
   const role = (localStorage.getItem('role') || '').toLowerCase();
   const canScan = role === 'officer' || role === 'supervisor';
 
-  const fetchCases = useCallback(async () => {
+  const fetchCases = useCallback(async (signal) => {
     setLoading(true);
     setFetchError('');
     try {
-      const res = await api.get('/cases');
+      const res = await api.get('/cases', { signal });
       const payload = res.data;
       const list = Array.isArray(payload?.cases) ? payload.cases : Array.isArray(payload) ? payload : [];
+      if (signal?.aborted) return;
       setCases(list);
     } catch (e) {
+      if (signal?.aborted) return;
       if (import.meta.env.DEV) console.error(e);
       setFetchError(apiErrorMessage(e, 'Could not load cases.'));
     } finally {
-      setLoading(false);
+      if (!signal?.aborted) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchCases();
+    // Deferred (like AuditTrail's debounced fetch) so mount-time state updates
+    // run asynchronously — never as synchronous setState inside the effect.
+    const controller = new AbortController();
+    const timer = setTimeout(() => fetchCases(controller.signal), 0);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
   }, [fetchCases]);
 
   const safeCases = useMemo(() => (Array.isArray(cases) ? cases : []), [cases]);
@@ -100,7 +109,7 @@ export default function Dashboard() {
               <ScanLine size={16} aria-hidden="true" /> New Verification
             </Link>
             )}
-            <button onClick={fetchCases} aria-label="Refresh case list" className="gov-icon-btn" title="Refresh case list">
+            <button onClick={() => fetchCases()} aria-label="Refresh case list" className="gov-icon-btn" title="Refresh case list">
               <RefreshCw size={18} className={loading ? 'animate-spin' : ''} aria-hidden="true" />
             </button>
           </>
@@ -111,7 +120,7 @@ export default function Dashboard() {
         <div className="gov-notice gov-notice-red" role="alert">
           <AlertTriangle size={18} className="mt-0.5 shrink-0" aria-hidden="true" />
           <span className="flex-1">{fetchError}</span>
-          <button onClick={fetchCases} className="gov-btn gov-btn-secondary shrink-0">
+          <button onClick={() => fetchCases()} className="gov-btn gov-btn-secondary shrink-0">
             <RefreshCw size={14} aria-hidden="true" /> Retry
           </button>
         </div>

@@ -1,5 +1,6 @@
 import React from 'react';
 import { AlertTriangle, CheckCircle2, ShieldAlert, Info, XCircle } from 'lucide-react';
+import { VERIFICATION_STEPS } from '../config/constants';
 
 
 
@@ -79,18 +80,6 @@ export function KpiCard({ label, value, sub, icon, accent = '#1769AA' }) {
   );
 }
 
-
-export const VERIFICATION_STEPS = [
-  'Capture',
-  'Document Validation',
-  'OCR / MRZ',
-  'Registry Check',
-  'Vision Analysis',
-  'Face Match',
-  'Demographics',
-  'Risk Engine',
-  'Final Verdict',
-];
 
 export function WorkflowSteps({ activeIndex = 0, compact = false }) {
   return (
