@@ -241,11 +241,15 @@ def generate_case_pdf(
                 Paragraph("Status", cell_header),
             ]
         ]
-        has_registry = citizen_data is not None
+        has_registry = citizen_data is not None or any(bool(f.get('database_value')) for f in extracted_fields)
         for f in extracted_fields:
             fname = str(f.get('field_name', 'Field')).replace('_', ' ').title()
             val = str(f.get('extracted_value') or '—')
-            exp = str(f.get('expected_value') or ('—' if has_registry else 'No DB Record'))
+            db_val = f.get('database_value') if f.get('database_value') is not None else f.get('expected_value')
+            if db_val is not None and str(db_val).strip():
+                exp = str(db_val)
+            else:
+                exp = '—' if has_registry else 'No DB Record'
             m_status = str(f.get('match_status') or 'unknown').lower()
 
             if m_status == 'match':
@@ -281,7 +285,33 @@ def generate_case_pdf(
 
     # Helper to parse module results
     def find_mod(name):
-        return next((m for m in module_results if m.get('module_name') == name), None)
+        mod = next((m for m in module_results if m.get('module_name') == name), None)
+        if not mod and name == 'face_match':
+            # Check if 3-way face verification is nested inside gemini_ai module
+            gem = next((m for m in module_results if m.get('module_name') == 'gemini_ai'), None)
+            if gem:
+                g_raw = gem.get('raw_output') or {}
+                if isinstance(g_raw, str):
+                    try:
+                        g_raw = json.loads(g_raw)
+                    except Exception:
+                        g_raw = {}
+                tw = g_raw.get('three_way_face_match') or {}
+                if tw:
+                    sim = tw.get('similarity_score')
+                    has_verdict = (
+                        sim is not None
+                        or tw.get('live_vs_doc_match') is not None
+                        or tw.get('doc_vs_db_match') is not None
+                        or tw.get('live_vs_db_match') is not None
+                    )
+                    mod = {
+                        'module_name': 'face_match',
+                        'score': sim,
+                        'status': 'ok' if has_verdict else gem.get('status', 'ok'),
+                        'raw_output': tw,
+                    }
+        return mod
 
     modules_to_report = [
         ('tamper', 'Document Tamper Analysis (ELA + Copy-Move)'),
@@ -317,12 +347,62 @@ def generate_case_pdf(
 
         status = (m.get('status') or 'SKIPPED').lower() if m else 'skipped'
         score = m.get('score') if m else None
+        if score is None and raw and raw.get('similarity_score') is not None:
+            score = raw.get('similarity_score')
         score_str = f"{score * 100:.1f}%" if (score is not None and score <= 1.0) else f"{score}" if score is not None else "N/A"
 
         # Determine badge & message
         if not m:
             res_p = Paragraph("NOT CAPTURED", badge_review)
             notes = "Module skipped or evidence was not provided."
+        elif mod_key == 'face_match':
+            l_doc = raw.get('live_vs_doc_match')
+            d_db = raw.get('doc_vs_db_match')
+            l_db = raw.get('live_vs_db_match')
+            match_bool = raw.get('match') if raw.get('match') is not None else l_doc
+
+            legs = []
+            if l_doc is not None:
+                legs.append(f"Live↔Doc: {'Match' if l_doc else 'Mismatch'}")
+            if d_db is not None:
+                legs.append(f"Doc↔DB: {'Match' if d_db else 'Mismatch'}")
+            if l_db is not None:
+                legs.append(f"Live↔DB: {'Match' if l_db else 'Mismatch'}")
+            legs_str = " | ".join(legs)
+
+            if match_bool is True:
+                res_p = Paragraph("MATCH", badge_pass)
+                notes = f"Biometric match verified ({score_str}). {legs_str}" if legs_str else f"Biometric match established ({score_str})."
+            elif match_bool is False:
+                res_p = Paragraph("MISMATCH", badge_fail)
+                notes = f"Biometric similarity below threshold ({score_str}). {legs_str}" if legs_str else f"ArcFace similarity below threshold ({score_str}). Imposter risk flagged."
+            elif status == 'inconclusive':
+                res_p = Paragraph("INCONCLUSIVE", badge_review)
+                notes = raw.get('reason') or (f"Partial biometric comparison. {legs_str}" if legs_str else "Biometric quality threshold unmet or image inconclusive.")
+            else:
+                res_p = Paragraph("REVIEW", badge_review)
+                notes = raw.get('reason') or (f"Partial biometric legs: {legs_str}" if legs_str else "One or more biometric legs missing for comparison.")
+        elif mod_key == 'liveness':
+            is_live = raw.get('live')
+            if status == 'inconclusive' or is_live is None:
+                res_p = Paragraph("INCONCLUSIVE", badge_review)
+                raw_reason = str(raw.get('reason') or '').strip()
+                if 'libEGL' in raw_reason or 'shared object' in raw_reason:
+                    notes = "Liveness engine dependency unmet on server (libEGL required); manual review required."
+                elif 'expected a frame burst' in raw_reason or 'no live capture provided' in raw_reason:
+                    notes = "Single photo or no burst provided; temporal liveness requires >=3 camera frames."
+                elif 'face_landmarker.task' in raw_reason:
+                    notes = "Liveness model not installed; manual officer review required."
+                elif raw_reason:
+                    notes = raw_reason
+                else:
+                    notes = "Insufficient frames or challenge unverified; manual review required."
+            elif is_live is True:
+                res_p = Paragraph("GENUINE LIVE", badge_pass)
+                notes = "Dynamic EAR blink challenge and natural facial motion confirmed."
+            else:
+                res_p = Paragraph("SPOOF / REPLAY", badge_fail)
+                notes = "Static photo, screen replay, or 3D mask artifact detected."
         elif status == 'inconclusive':
             res_p = Paragraph("INCONCLUSIVE", badge_review)
             notes = raw.get('reason') or "Quality threshold unmet or image inconclusive."
@@ -334,28 +414,6 @@ def generate_case_pdf(
             is_hit = raw.get('is_hit', False)
             res_p = Paragraph("LOOKOUT HIT", badge_fail) if is_hit else Paragraph("CLEAR", badge_pass)
             notes = f"Matches recorded lookout subject: {raw.get('hit_name', '')}" if is_hit else "Subject cleared against all active lookout entries."
-        elif mod_key == 'face_match':
-            match_bool = raw.get('match') or raw.get('live_vs_doc_match')
-            if match_bool is True:
-                res_p = Paragraph("MATCH", badge_pass)
-                notes = f"High ArcFace cosine confidence ({score_str}). Biometric match established."
-            elif match_bool is False:
-                res_p = Paragraph("MISMATCH", badge_fail)
-                notes = "ArcFace similarity below confidence threshold (0.55). Imposter risk flagged."
-            else:
-                res_p = Paragraph("REVIEW", badge_review)
-                notes = raw.get('reason') or "One or more biometric legs missing for comparison."
-        elif mod_key == 'liveness':
-            is_live = raw.get('live')
-            if is_live is True:
-                res_p = Paragraph("GENUINE LIVE", badge_pass)
-                notes = "Dynamic EAR blink challenge and natural facial motion confirmed."
-            elif is_live is False:
-                res_p = Paragraph("SPOOF / REPLAY", badge_fail)
-                notes = "Static photo, screen replay, or 3D mask artifact detected."
-            else:
-                res_p = Paragraph("INCONCLUSIVE", badge_review)
-                notes = "Insufficient frames or challenge unverified."
         elif mod_key == 'deepfake':
             is_fake = (score or 0) >= 0.7
             res_p = Paragraph("HIGH SYNTHETIC RISK", badge_fail) if is_fake else Paragraph("NATURAL", badge_pass)
@@ -368,7 +426,7 @@ def generate_case_pdf(
             Paragraph(mod_label, cell_bold),
             Paragraph(score_str, cell_style),
             res_p,
-            Paragraph(str(notes)[:120], cell_style),
+            Paragraph(str(notes)[:160], cell_style),
         ])
 
     forensic_table = Table(forensic_rows, colWidths=[150, 65, 85, 230])

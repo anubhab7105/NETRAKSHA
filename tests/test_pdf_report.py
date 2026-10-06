@@ -68,3 +68,44 @@ def test_generate_pdf_handles_none_gracefully():
     )
     assert pdf_bytes.startswith(b"%PDF")
     assert len(pdf_bytes) > 1000
+
+def test_generate_pdf_with_nested_gemini_face_match():
+    import io, pypdf
+    case = {"id": 200, "verdict": "Green", "risk_score": 15.0}
+    modules = [
+        {
+            "module_name": "gemini_ai",
+            "score": 0.99,
+            "status": "ok",
+            "raw_output": {
+                "three_way_face_match": {
+                    "live_vs_doc_match": True,
+                    "doc_vs_db_match": True,
+                    "live_vs_db_match": True,
+                    "similarity_score": 0.88,
+                }
+            },
+        },
+        {
+            "module_name": "liveness",
+            "score": None,
+            "status": "inconclusive",
+            "raw_output": {
+                "error": "inconclusive",
+                "reason": "expected a frame burst (>= 3 frames); got 1",
+            },
+        },
+    ]
+    pdf_bytes = generate_case_pdf(
+        case_data=case,
+        extracted_fields=[],
+        module_results=modules,
+    )
+    assert pdf_bytes.startswith(b"%PDF")
+    reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
+    text = "".join(page.extract_text() for page in reader.pages)
+    assert "3-Way Face Biometric" in text
+    assert "88.0%" in text
+    assert "Biometric match verified" in text
+    assert "Single photo or no burst provided" in text
+

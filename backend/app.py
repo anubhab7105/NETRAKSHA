@@ -3440,9 +3440,19 @@ async def get_case_pdf(case_id: int, request: Request):
         except Exception:
             prov_obj = None
 
+    fields_dicts = []
+    for f in fields:
+        fd = f.to_dict()
+        for key in ("extracted_value", "database_value"):
+            if fd.get(key) is not None:
+                fd[key] = mask_document_number(
+                    case.document_type, fd.get("field_name"), fd.get(key)
+                )
+        fields_dicts.append(fd)
+
     pdf_bytes = generate_case_pdf(
         case_data=case.to_dict(),
-        extracted_fields=[f.to_dict() for f in fields],
+        extracted_fields=fields_dicts,
         module_results=[m.to_dict() for m in modules],
         citizen_data=citizen_data,
         officer_actions=[a.to_dict() for a in actions],
